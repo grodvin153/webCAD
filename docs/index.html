@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="webCAD: editor CAD 2D sobre canvas con DXF.">
+  <title>webCAD</title>
+  <script type="module" crossorigin src="./assets/main-BMDtcyiO.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/main-BxRTRVus.css">
+</head>
+<body>
+  <header class="menu-bar">
+    <div class="menu-left">
+      <div class="menu-brand">webCAD</div>
+      <nav class="app-menu" aria-label="Menu principal">
+        <div class="menu-item">
+          <button class="menu-title" type="button">Archivo</button>
+          <div class="submenu" role="menu">
+            <button class="submenu-item" type="button" data-command="new">Nuevo dibujo</button>
+            <button class="submenu-item" type="button" data-command="import-dxf">Importar DXF</button>
+            <button class="submenu-item" type="button" data-command="export-dxf">Exportar DXF</button>
+          </div>
+        </div>
+        <div class="menu-item">
+          <button class="menu-title" type="button">Editar</button>
+          <div class="submenu" role="menu">
+            <button class="submenu-item" type="button" data-command="select">Seleccionar</button>
+            <button class="submenu-item" type="button" data-command="toggle-ortho">Modo ortogonal</button>
+            <button class="submenu-item" type="button" data-command="toggle-grid">Snap a rejilla</button>
+          </div>
+        </div>
+        <div class="menu-item">
+          <button class="menu-title" type="button">Dibujar</button>
+          <div class="submenu" role="menu">
+            <button class="submenu-item" type="button" data-command="line">Linea</button>
+            <button class="submenu-item" type="button" data-command="circle-center">Circulo centro-radio</button>
+            <button class="submenu-item" type="button" data-command="circle-3p">Circulo 3 puntos</button>
+            <button class="submenu-item" type="button" data-command="arc-center-radius">Arco centro-radio</button>
+            <button class="submenu-item" type="button" data-command="arc-3p">Arco 3 puntos</button>
+            <button class="submenu-item" type="button" data-command="arc-center-start-end">Arco centro-inicio-final</button>
+          </div>
+        </div>
+        <div class="menu-item">
+          <button class="menu-title" type="button">Modificar</button>
+          <div class="submenu" role="menu">
+            <button class="submenu-item" type="button" data-command="trim">Recortar</button>
+            <button class="submenu-item" type="button" data-command="erase">Borrar</button>
+          </div>
+        </div>
+        <div class="menu-item">
+          <button class="menu-title" type="button">Ver</button>
+          <div class="submenu" role="menu">
+            <button class="submenu-item" type="button" data-command="fit">Ajustar vista</button>
+          </div>
+        </div>
+        <div class="menu-item">
+          <button class="menu-title" type="button">Ayuda</button>
+          <div class="submenu" role="menu">
+            <button class="submenu-item" type="button" data-command="about">Autor: Gonzalo Rodriguez</button>
+          </div>
+        </div>
+      </nav>
+    </div>
+    <nav class="menu-actions" aria-label="Acciones principales">
+      <div class="line-style-control" title="Capa / grosor activo">
+        <span>Grosor</span>
+        <div class="line-style-picker">
+          <button
+            id="line-style-toggle"
+            class="line-style-toggle"
+            type="button"
+            aria-label="Grosor de linea activo"
+            aria-expanded="false"
+          >
+            <span id="line-style-label">Normal</span>
+          </button>
+          <div class="line-style-options" role="menu" aria-label="Grosores de linea">
+            <button class="line-style-option" type="button" data-line-style="auxiliar" role="menuitem">Auxiliar</button>
+            <button class="line-style-option is-active" type="button" data-line-style="normal" role="menuitem">Normal</button>
+            <button class="line-style-option" type="button" data-line-style="gruesa" role="menuitem">Gruesa</button>
+          </div>
+        </div>
+      </div>
+      <button id="action-new" class="menu-button" type="button" title="Nuevo dibujo" aria-label="Nuevo dibujo">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M6 3h8l4 4v14H6z"></path>
+          <path d="M14 3v5h5"></path>
+        </svg>
+      </button>
+      <button id="action-import-dxf" class="menu-button" type="button" title="Importar DXF" aria-label="Importar DXF">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 3v12"></path>
+          <path d="m7 10 5 5 5-5"></path>
+          <path d="M5 21h14"></path>
+        </svg>
+      </button>
+      <button id="action-export-dxf" class="menu-button" type="button" title="Exportar DXF" aria-label="Exportar DXF">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 21V9"></path>
+          <path d="m7 14 5-5 5 5"></path>
+          <path d="M5 3h14"></path>
+        </svg>
+      </button>
+      <button id="action-fit" class="menu-button" type="button" title="Ajustar vista" aria-label="Ajustar vista">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 9V4h5"></path>
+          <path d="M20 9V4h-5"></path>
+          <path d="M4 15v5h5"></path>
+          <path d="M20 15v5h-5"></path>
+        </svg>
+      </button>
+    </nav>
+  </header>
+
+  <main class="workspace">
+    <aside class="toolbox" aria-label="Herramientas de dibujo">
+      <button
+        id="tool-select"
+        class="tool-button is-active"
+        type="button"
+        data-tool="select"
+        title="Seleccionar"
+        aria-label="Seleccionar"
+      >
+        <svg viewBox="0 0 48 48" aria-hidden="true">
+          <path d="M15 8 34 27 24 29 19 40z"></path>
+          <path d="M26 28 35 39"></path>
+        </svg>
+      </button>
+      <button
+        id="tool-line"
+        class="tool-button"
+        type="button"
+        data-tool="line"
+        title="Linea por dos puntos"
+        aria-label="Linea por dos puntos"
+      >
+        <svg viewBox="0 0 48 48" aria-hidden="true">
+          <path d="M10 38 38 10"></path>
+          <circle cx="10" cy="38" r="3"></circle>
+          <circle cx="38" cy="10" r="3"></circle>
+        </svg>
+      </button>
+      <div class="tool-group" data-tool-group="circle">
+        <button
+          id="tool-circle"
+          class="tool-button tool-button-main"
+          type="button"
+          data-tool="circle-center"
+          title="Circulo"
+          aria-label="Circulo"
+        >
+          <svg viewBox="0 0 48 48" aria-hidden="true">
+            <circle cx="24" cy="24" r="14"></circle>
+            <circle cx="24" cy="24" r="2.5"></circle>
+            <path d="M24 24h14"></path>
+          </svg>
+        </button>
+        <button
+          id="tool-circle-menu"
+          class="tool-menu-button"
+          type="button"
+          title="Mas herramientas de circulo"
+          aria-label="Mas herramientas de circulo"
+          aria-expanded="false"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="m7 9 5 5 5-5"></path>
+          </svg>
+        </button>
+        <div class="tool-flyout" role="menu" aria-label="Herramientas de circulo">
+          <button class="tool-flyout-item" type="button" data-command="circle-center">Centro-radio</button>
+          <button class="tool-flyout-item" type="button" data-command="circle-3p">3 puntos</button>
+        </div>
+      </div>
+      <div class="tool-group" data-tool-group="arc">
+        <button
+          id="tool-arc"
+          class="tool-button tool-button-main"
+          type="button"
+          data-tool="arc-center-start-end"
+          title="Arco"
+          aria-label="Arco"
+        >
+          <svg viewBox="0 0 48 48" aria-hidden="true">
+            <path d="M12 32a16 16 0 0 1 24-14"></path>
+            <circle cx="12" cy="32" r="2.5"></circle>
+            <circle cx="36" cy="18" r="2.5"></circle>
+          </svg>
+        </button>
+        <button
+          id="tool-arc-menu"
+          class="tool-menu-button"
+          type="button"
+          title="Mas herramientas de arco"
+          aria-label="Mas herramientas de arco"
+          aria-expanded="false"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="m7 9 5 5 5-5"></path>
+          </svg>
+        </button>
+        <div class="tool-flyout" role="menu" aria-label="Herramientas de arco">
+          <button class="tool-flyout-item" type="button" data-command="arc-center-radius">Centro-radio</button>
+          <button class="tool-flyout-item" type="button" data-command="arc-3p">3 puntos</button>
+          <button class="tool-flyout-item" type="button" data-command="arc-center-start-end">Centro-inicio-final</button>
+        </div>
+      </div>
+      <button
+        id="tool-trim"
+        class="tool-button"
+        type="button"
+        data-tool="trim"
+        title="Recortar"
+        aria-label="Recortar"
+      >
+        <svg viewBox="0 0 48 48" aria-hidden="true">
+          <path d="M9 34 39 14"></path>
+          <path d="M12 14 22 24"></path>
+          <path d="M28 30 36 38"></path>
+          <circle cx="14" cy="14" r="4"></circle>
+          <circle cx="34" cy="38" r="4"></circle>
+        </svg>
+      </button>
+      <button
+        id="tool-erase"
+        class="tool-button"
+        type="button"
+        data-tool="erase"
+        title="Borrar"
+        aria-label="Borrar"
+      >
+        <svg viewBox="0 0 48 48" aria-hidden="true">
+          <rect x="11" y="11" width="26" height="26" rx="3"></rect>
+          <path d="M16 16 32 32"></path>
+          <path d="M32 16 16 32"></path>
+        </svg>
+      </button>
+    </aside>
+
+    <section class="canvas-panel" aria-label="Area de dibujo">
+      <div class="canvas-wrap">
+        <canvas id="cad-canvas" class="cad-canvas" tabindex="0"></canvas>
+        <div id="cursor-input" class="cursor-input" aria-hidden="true"></div>
+      </div>
+      <footer class="status-bar" aria-label="Barra de estado">
+        <button
+          id="status-ortho"
+          class="status-toggle"
+          type="button"
+          title="Modo ortogonal"
+          aria-label="Modo ortogonal"
+          aria-pressed="false"
+        >
+          <svg viewBox="0 0 32 32" aria-hidden="true">
+            <path d="M8 24h16"></path>
+            <path d="M8 24V8"></path>
+          </svg>
+        </button>
+        <button
+          id="status-grid"
+          class="status-toggle"
+          type="button"
+          title="Rejilla y snap"
+          aria-label="Rejilla y snap"
+          aria-pressed="true"
+        >
+          <svg viewBox="0 0 32 32" aria-hidden="true">
+            <path d="M8 8h16"></path>
+            <path d="M8 16h16"></path>
+            <path d="M8 24h16"></path>
+            <path d="M8 8v16"></path>
+            <path d="M16 8v16"></path>
+            <path d="M24 8v16"></path>
+          </svg>
+        </button>
+        <span id="status-tool">Herramienta: Linea 2P</span>
+        <span id="status-cursor">Cursor: -</span>
+        <span id="status-entities">Entidades: 0</span>
+        <span id="status-length">Longitud: -</span>
+        <span id="status-layer">Capa: Normal</span>
+        <span id="status-message">Listo</span>
+        <span id="status-dxf">DXF: LINE</span>
+      </footer>
+    </section>
+  </main>
+
+  <input id="import-dxf-input" type="file" accept=".dxf,text/plain" hidden>
+
+</body>
+</html>
