@@ -260,6 +260,19 @@ input {
   color: var(--accent);
 }
 
+.menu-button:disabled,
+.submenu-item:disabled {
+  color: #9aaab2;
+  cursor: default;
+  opacity: 0.58;
+}
+
+.menu-button:disabled:hover,
+.submenu-item:disabled:hover {
+  background: transparent;
+  color: #9aaab2;
+}
+
 .menu-button:focus-visible,
 .tool-button:focus-visible,
 .tool-menu-button:focus-visible,
@@ -278,11 +291,13 @@ input {
 }
 
 .toolbox {
+  position: relative;
+  z-index: 20;
   display: flex;
   flex-direction: column;
   gap: 6px;
   padding: 8px 6px;
-  overflow-y: auto;
+  overflow: visible;
   border-right: 1px solid var(--border);
   background: linear-gradient(180deg, #ffffff 0%, var(--panel-bg) 100%);
   box-shadow: inset -1px 0 0 #edf1f4;
@@ -291,7 +306,7 @@ input {
 .tool-group {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 15px;
+  grid-template-columns: minmax(0, 1fr) 18px;
   width: 100%;
   aspect-ratio: 1;
   border: 1px solid transparent;
@@ -324,7 +339,7 @@ input {
 }
 
 .tool-menu-button {
-  min-width: 15px;
+  min-width: 18px;
   padding: 0;
   border-radius: 0 8px 8px 0;
   color: inherit;
@@ -412,12 +427,16 @@ input {
 
 .cad-canvas.is-line-tool,
 .cad-canvas.is-circle-tool,
-.cad-canvas.is-arc-tool {
+.cad-canvas.is-arc-tool,
+.cad-canvas.is-point-input-tool {
   cursor: crosshair;
 }
 
 .cad-canvas.is-trim-tool,
-.cad-canvas.is-erase-tool {
+.cad-canvas.is-extend-tool,
+.cad-canvas.is-erase-tool,
+.cad-canvas.is-copy-tool,
+.cad-canvas.is-move-tool {
   cursor:
     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Crect x='7' y='7' width='10' height='10' fill='rgba(208,90,31,0.18)' stroke='%23d05a1f' stroke-width='3'/%3E%3Crect x='8.5' y='8.5' width='7' height='7' fill='none' stroke='%23fff4df' stroke-width='1'/%3E%3C/svg%3E") 12 12,
     crosshair;

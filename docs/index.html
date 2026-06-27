@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="webCAD: editor CAD 2D sobre canvas con DXF.">
   <title>webCAD</title>
-  <script type="module" crossorigin src="./assets/main-BMDtcyiO.js"></script>
-  <link rel="stylesheet" crossorigin href="./assets/main-BxRTRVus.css">
+  <script type="module" crossorigin src="./assets/main-VrnR6Ik2.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/main-C9f2seKR.css">
 </head>
 <body>
   <header class="menu-bar">
@@ -24,6 +24,8 @@
         <div class="menu-item">
           <button class="menu-title" type="button">Editar</button>
           <div class="submenu" role="menu">
+            <button class="submenu-item" type="button" data-command="undo">Deshacer</button>
+            <button class="submenu-item" type="button" data-command="redo">Rehacer</button>
             <button class="submenu-item" type="button" data-command="select">Seleccionar</button>
             <button class="submenu-item" type="button" data-command="toggle-ortho">Modo ortogonal</button>
             <button class="submenu-item" type="button" data-command="toggle-grid">Snap a rejilla</button>
@@ -33,6 +35,7 @@
           <button class="menu-title" type="button">Dibujar</button>
           <div class="submenu" role="menu">
             <button class="submenu-item" type="button" data-command="line">Linea</button>
+            <button class="submenu-item" type="button" data-command="rectangle">Rectangulo</button>
             <button class="submenu-item" type="button" data-command="circle-center">Circulo centro-radio</button>
             <button class="submenu-item" type="button" data-command="circle-3p">Circulo 3 puntos</button>
             <button class="submenu-item" type="button" data-command="arc-center-radius">Arco centro-radio</button>
@@ -43,7 +46,10 @@
         <div class="menu-item">
           <button class="menu-title" type="button">Modificar</button>
           <div class="submenu" role="menu">
+            <button class="submenu-item" type="button" data-command="copy">Copiar</button>
+            <button class="submenu-item" type="button" data-command="move">Desplazar</button>
             <button class="submenu-item" type="button" data-command="trim">Recortar</button>
+            <button class="submenu-item" type="button" data-command="extend">Alargar</button>
             <button class="submenu-item" type="button" data-command="erase">Borrar</button>
           </div>
         </div>
@@ -81,6 +87,18 @@
           </div>
         </div>
       </div>
+      <button id="action-undo" class="menu-button" type="button" title="Deshacer" aria-label="Deshacer">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M9 7 4 12l5 5"></path>
+          <path d="M5 12h9a5 5 0 0 1 5 5v1"></path>
+        </svg>
+      </button>
+      <button id="action-redo" class="menu-button" type="button" title="Rehacer" aria-label="Rehacer">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="m15 7 5 5-5 5"></path>
+          <path d="M19 12h-9a5 5 0 0 0-5 5v1"></path>
+        </svg>
+      </button>
       <button id="action-new" class="menu-button" type="button" title="Nuevo dibujo" aria-label="Nuevo dibujo">
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <path d="M6 3h8l4 4v14H6z"></path>
@@ -139,6 +157,20 @@
           <path d="M10 38 38 10"></path>
           <circle cx="10" cy="38" r="3"></circle>
           <circle cx="38" cy="10" r="3"></circle>
+        </svg>
+      </button>
+      <button
+        id="tool-rectangle"
+        class="tool-button"
+        type="button"
+        data-tool="rectangle"
+        title="Rectangulo"
+        aria-label="Rectangulo"
+      >
+        <svg viewBox="0 0 48 48" aria-hidden="true">
+          <rect x="11" y="13" width="26" height="22" rx="1"></rect>
+          <circle cx="11" cy="13" r="2.5"></circle>
+          <circle cx="37" cy="35" r="2.5"></circle>
         </svg>
       </button>
       <div class="tool-group" data-tool-group="circle">
@@ -220,6 +252,57 @@
           <path d="M28 30 36 38"></path>
           <circle cx="14" cy="14" r="4"></circle>
           <circle cx="34" cy="38" r="4"></circle>
+        </svg>
+      </button>
+      <button
+        id="tool-extend"
+        class="tool-button"
+        type="button"
+        data-tool="extend"
+        title="Alargar"
+        aria-label="Alargar"
+      >
+        <svg viewBox="0 0 48 48" aria-hidden="true">
+          <path d="M10 35h18"></path>
+          <path d="M28 35h10"></path>
+          <path d="M38 12v28"></path>
+          <path d="M24 35 35 24"></path>
+          <path d="M29 24h6v6"></path>
+        </svg>
+      </button>
+      <button
+        id="tool-copy"
+        class="tool-button"
+        type="button"
+        data-tool="copy"
+        title="Copiar"
+        aria-label="Copiar"
+      >
+        <svg viewBox="0 0 48 48" aria-hidden="true">
+          <rect x="11" y="15" width="20" height="20" rx="2"></rect>
+          <rect x="17" y="9" width="20" height="20" rx="2"></rect>
+          <path d="M14 39h20"></path>
+        </svg>
+      </button>
+      <button
+        id="tool-move"
+        class="tool-button"
+        type="button"
+        data-tool="move"
+        title="Desplazar"
+        aria-label="Desplazar"
+      >
+        <svg viewBox="0 0 48 48" aria-hidden="true">
+          <path d="M24 8v32"></path>
+          <path d="M8 24h32"></path>
+          <path d="m24 8-6 6"></path>
+          <path d="m24 8 6 6"></path>
+          <path d="m40 24-6-6"></path>
+          <path d="m40 24-6 6"></path>
+          <path d="m24 40-6-6"></path>
+          <path d="m24 40 6-6"></path>
+          <path d="m8 24 6-6"></path>
+          <path d="m8 24 6 6"></path>
         </svg>
       </button>
       <button

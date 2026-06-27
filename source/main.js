@@ -1,13 +1,19 @@
 const canvas = document.getElementById('cad-canvas');
 const selectToolButton = document.getElementById('tool-select');
 const lineToolButton = document.getElementById('tool-line');
+const rectangleToolButton = document.getElementById('tool-rectangle');
 const circleToolButton = document.getElementById('tool-circle');
 const circleToolMenuButton = document.getElementById('tool-circle-menu');
 const arcToolButton = document.getElementById('tool-arc');
 const arcToolMenuButton = document.getElementById('tool-arc-menu');
 const trimToolButton = document.getElementById('tool-trim');
+const extendToolButton = document.getElementById('tool-extend');
+const copyToolButton = document.getElementById('tool-copy');
+const moveToolButton = document.getElementById('tool-move');
 const eraseToolButton = document.getElementById('tool-erase');
 const fitButton = document.getElementById('action-fit');
+const undoButton = document.getElementById('action-undo');
+const redoButton = document.getElementById('action-redo');
 const newButton = document.getElementById('action-new');
 const exportDxfButton = document.getElementById('action-export-dxf');
 const importDxfButton = document.getElementById('action-import-dxf');
@@ -17,6 +23,8 @@ const lineStyleToggle = document.getElementById('line-style-toggle');
 const lineStyleLabel = document.getElementById('line-style-label');
 const lineStyleOptionButtons = document.querySelectorAll('[data-line-style]');
 const menuCommandButtons = document.querySelectorAll('[data-command]');
+const undoCommandButtons = document.querySelectorAll('[data-command="undo"]');
+const redoCommandButtons = document.querySelectorAll('[data-command="redo"]');
 const toolGroupElements = document.querySelectorAll('.tool-group');
 const toolFlyoutCommandButtons = document.querySelectorAll('.tool-flyout-item[data-command]');
 const cursorInput = document.getElementById('cursor-input');
@@ -38,6 +46,24 @@ const VIEW_SCALE_FACTOR = 1.15;
 const SNAP_THRESHOLD = 0.001;
 const FIT_PADDING = 48;
 const DEFAULT_DRAWING_SIZE = 200;
+const SPATIAL_CELL_SIZE = 100;
+const SPATIAL_MAX_ENTITY_CELLS = 256;
+const SPATIAL_MAX_QUERY_CELLS = 12000;
+const HISTORY_LIMIT = 50;
+const REPEATABLE_COMMANDS = new Set([
+  'line',
+  'rectangle',
+  'circle-center',
+  'circle-3p',
+  'arc-center-radius',
+  'arc-3p',
+  'arc-center-start-end',
+  'copy',
+  'move',
+  'trim',
+  'extend',
+  'erase',
+]);
 const UNITS_LABEL = 'mm';
 const BACKGROUND_COLOR = '#f8f7f2';
 const LINE_COLOR = '#18262a';
@@ -74,6 +100,13 @@ const LINE_STYLES = {
     dxfLineWeight: 80,
   },
 };
+let nextEntityGroupId = 1;
+
+function createEntityGroupId(prefix = 'group') {
+  const id = `${prefix}-${nextEntityGroupId}`;
+  nextEntityGroupId += 1;
+  return id;
+}
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
@@ -87,6 +120,13 @@ function snapPoint(point, step = GRID_BASE) {
   return {
     x: snap(point.x, step),
     y: snap(point.y, step),
+  };
+}
+
+function offsetPoint(point, vector) {
+  return {
+    x: point.x + vector.x,
+    y: point.y + vector.y,
   };
 }
 
@@ -147,6 +187,16 @@ function lineParameter(entity, point) {
     0,
     1,
   );
+}
+
+function rawLineParameter(entity, point) {
+  const deltaX = entity.end.x - entity.start.x;
+  const deltaY = entity.end.y - entity.start.y;
+  const lengthSquared = deltaX * deltaX + deltaY * deltaY;
+  if (lengthSquared <= SNAP_THRESHOLD) {
+    return 0;
+  }
+  return ((point.x - entity.start.x) * deltaX + (point.y - entity.start.y) * deltaY) / lengthSquared;
 }
 
 function pointAtLineParameter(entity, parameter) {
@@ -284,6 +334,64 @@ function infiniteLineSegmentIntersection(axisPoint, axisDirection, entity) {
   };
 }
 
+function infiniteLineLineIntersection(firstPoint, firstDirection, secondPoint, secondDirection) {
+  if (!firstPoint || !firstDirection || !secondPoint || !secondDirection) {
+    return null;
+  }
+
+  const denominator = firstDirection.x * secondDirection.y - firstDirection.y * secondDirection.x;
+  if (Math.abs(denominator) <= SNAP_THRESHOLD) {
+    return null;
+  }
+
+  const startDeltaX = secondPoint.x - firstPoint.x;
+  const startDeltaY = secondPoint.y - firstPoint.y;
+  const firstFactor = (startDeltaX * secondDirection.y - startDeltaY * secondDirection.x) / denominator;
+  return {
+    x: firstPoint.x + firstDirection.x * firstFactor,
+    y: firstPoint.y + firstDirection.y * firstFactor,
+  };
+}
+
+function infiniteLineCircularIntersectionPoints(axisPoint, axisDirection, entity, respectArc = true) {
+  if (!axisPoint || !axisDirection || !isCircularEntity(entity)) {
+    return [];
+  }
+
+  const a = axisDirection.x * axisDirection.x + axisDirection.y * axisDirection.y;
+  if (a <= SNAP_THRESHOLD) {
+    return [];
+  }
+
+  const fromCenterX = axisPoint.x - entity.center.x;
+  const fromCenterY = axisPoint.y - entity.center.y;
+  const b = 2 * (fromCenterX * axisDirection.x + fromCenterY * axisDirection.y);
+  const c = fromCenterX * fromCenterX + fromCenterY * fromCenterY - entity.radius * entity.radius;
+  const discriminant = b * b - 4 * a * c;
+  if (discriminant < -SNAP_THRESHOLD) {
+    return [];
+  }
+
+  if (Math.abs(discriminant) <= SNAP_THRESHOLD) {
+    const factor = -b / (2 * a);
+    return [{
+      x: axisPoint.x + axisDirection.x * factor,
+      y: axisPoint.y + axisDirection.y * factor,
+    }].filter((point) => !respectArc || pointOnCircularEntity(point, entity));
+  }
+
+  const root = Math.sqrt(discriminant);
+  return [
+    (-b - root) / (2 * a),
+    (-b + root) / (2 * a),
+  ]
+    .map((factor) => ({
+      x: axisPoint.x + axisDirection.x * factor,
+      y: axisPoint.y + axisDirection.y * factor,
+    }))
+    .filter((point) => !respectArc || pointOnCircularEntity(point, entity));
+}
+
 function distancePointToInfiniteLine(point, linePoint, direction) {
   const length = Math.hypot(direction.x, direction.y);
   if (length <= SNAP_THRESHOLD) {
@@ -343,8 +451,15 @@ function objectSnapPoint(point, state, options = {}) {
 
   const tolerance = (state.snapPixelTolerance || 10) / state.viewScale;
   let bestSnap = null;
-  const lineEntities = state.doc.entities.filter((entity) => entity.type === 'LINE');
-  const snapEntities = state.doc.entities.filter((entity) => entity.type === 'LINE' || isCircularEntity(entity));
+  const cursorBounds = expandBounds(createBounds(point.x, point.y, point.x, point.y), tolerance);
+  const snapEntities = state.doc
+    .queryBounds(cursorBounds)
+    .filter((entity) => entity.type === 'LINE' || isCircularEntity(entity));
+  const nearbySnapEntities = snapEntities.filter((entity) =>
+    entity !== options.ignoreEntity && entityIsNearPoint(entity, point, tolerance),
+  );
+  const lineEntities = snapEntities.filter((entity) => entity.type === 'LINE');
+  const nearbyLineEntities = nearbySnapEntities.filter((entity) => entity.type === 'LINE');
 
   for (const entity of lineEntities) {
     const ignoredKey = entity === options.ignoreEntity ? options.ignoreKey : null;
@@ -365,18 +480,11 @@ function objectSnapPoint(point, state, options = {}) {
     }
   }
 
-  for (let firstIndex = 0; firstIndex < snapEntities.length - 1; firstIndex += 1) {
-    const first = snapEntities[firstIndex];
-    if (first === options.ignoreEntity) {
-      continue;
-    }
+  for (let firstIndex = 0; firstIndex < nearbySnapEntities.length - 1; firstIndex += 1) {
+    const first = nearbySnapEntities[firstIndex];
 
-    for (let secondIndex = firstIndex + 1; secondIndex < snapEntities.length; secondIndex += 1) {
-      const second = snapEntities[secondIndex];
-      if (second === options.ignoreEntity) {
-        continue;
-      }
-
+    for (let secondIndex = firstIndex + 1; secondIndex < nearbySnapEntities.length; secondIndex += 1) {
+      const second = nearbySnapEntities[secondIndex];
       for (const intersection of entityIntersectionPoints(first, second)) {
         if (
           options.axisLine &&
@@ -396,11 +504,7 @@ function objectSnapPoint(point, state, options = {}) {
   }
 
   if (options.axisLine) {
-    for (const entity of lineEntities) {
-      if (entity === options.ignoreEntity) {
-        continue;
-      }
-
+    for (const entity of nearbyLineEntities) {
       const axisIntersection = infiniteLineSegmentIntersection(
         options.axisLine.point,
         options.axisLine.direction,
@@ -420,11 +524,7 @@ function objectSnapPoint(point, state, options = {}) {
   }
 
   if (options.origin) {
-    for (const entity of lineEntities) {
-      if (entity === options.ignoreEntity) {
-        continue;
-      }
-
+    for (const entity of nearbyLineEntities) {
       const perpendicularFoot = perpendicularFootOnSegment(options.origin, entity);
       if (!perpendicularFoot) {
         continue;
@@ -465,6 +565,9 @@ function activeDraftOrigin(state) {
   if (state.pendingLineStart) {
     return state.pendingLineStart;
   }
+  if (state.rectangleDraft?.firstPoint) {
+    return state.rectangleDraft.firstPoint;
+  }
   if (state.circleDraft?.mode === 'center-radius' && state.circleDraft.points.length === 1) {
     return state.circleDraft.points[0];
   }
@@ -473,6 +576,12 @@ function activeDraftOrigin(state) {
     state.arcDraft.points.length >= 1
   ) {
     return state.arcDraft.points[0];
+  }
+  if (state.copyDraft?.basePoint) {
+    return state.copyDraft.basePoint;
+  }
+  if (state.moveDraft?.basePoint) {
+    return state.moveDraft.basePoint;
   }
   return null;
 }
@@ -518,6 +627,34 @@ function parseDistanceInput(value) {
   const normalized = value.replace(',', '.');
   const distanceValue = Number(normalized);
   return Number.isFinite(distanceValue) && distanceValue > 0 ? distanceValue : null;
+}
+
+function parseRelativeCoordinateInput(value) {
+  const match = value.trim().match(/^([+-]?(?:\d+(?:\.\d+)?|\.\d+))\s*,\s*([+-]?(?:\d+(?:\.\d+)?|\.\d+))$/);
+  if (!match) {
+    return null;
+  }
+
+  const x = Number(match[1]);
+  const y = Number(match[2]);
+  return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null;
+}
+
+function pointFromRelativeCoordinates(origin, value) {
+  const relative = parseRelativeCoordinateInput(value);
+  return relative && origin
+    ? { x: origin.x + relative.x, y: origin.y + relative.y }
+    : null;
+}
+
+function parseCopyMultiplier(value) {
+  const match = value.trim().match(/^x(\d+)$/i);
+  if (!match) {
+    return null;
+  }
+
+  const count = Number(match[1]);
+  return Number.isInteger(count) && count >= 2 ? count : null;
 }
 
 function pointFromDistance(start, directionPoint, distanceValue) {
@@ -611,6 +748,28 @@ function formatNumber(value) {
   return Math.abs(value) >= 1000
     ? value.toFixed(0)
     : value.toFixed(2).replace(/\.00$/, '');
+}
+
+function formatSnapType(type) {
+  if (type === 'endpoint') {
+    return 'Punto final';
+  }
+  if (type === 'midpoint') {
+    return 'Punto medio';
+  }
+  if (type === 'intersection') {
+    return 'Interseccion';
+  }
+  if (type === 'perpendicular') {
+    return 'Perpendicular';
+  }
+  if (type === 'center') {
+    return 'Centro';
+  }
+  if (type === 'quadrant') {
+    return 'Cuadrante';
+  }
+  return 'Snap';
 }
 
 function distance(a, b) {
@@ -790,6 +949,30 @@ function pointOnCircularEntity(point, entity) {
   return entity.type === 'CIRCLE' || angleOnArc(angleOfPoint(entity.center, point), entity);
 }
 
+function lineFullCircleIntersectionPoints(line, circularEntity) {
+  const direction = {
+    x: line.end.x - line.start.x,
+    y: line.end.y - line.start.y,
+  };
+  return infiniteLineCircularIntersectionPoints(line.start, direction, circularEntity, false);
+}
+
+function fullCircleBoundaryIntersectionPoints(circularEntity, boundary) {
+  if (!isCircularEntity(circularEntity) || !boundary || boundary === circularEntity) {
+    return [];
+  }
+
+  if (boundary.type === 'LINE') {
+    return lineFullCircleIntersectionPoints(boundary, circularEntity);
+  }
+
+  if (isCircularEntity(boundary)) {
+    return circleCircleIntersectionPoints(circularEntity, boundary);
+  }
+
+  return [];
+}
+
 function entityIntersectionPoints(first, second) {
   if (first.type === 'LINE' && second.type === 'LINE') {
     const intersection = lineSegmentIntersection(first, second);
@@ -833,11 +1016,84 @@ function mergeBounds(current, next) {
   );
 }
 
+function normalizeBoundsFromPoints(first, second) {
+  return createBounds(
+    Math.min(first.x, second.x),
+    Math.min(first.y, second.y),
+    Math.max(first.x, second.x),
+    Math.max(first.y, second.y),
+  );
+}
+
+function boundsContainsBounds(container, candidate) {
+  return candidate.minX >= container.minX - SNAP_THRESHOLD &&
+    candidate.maxX <= container.maxX + SNAP_THRESHOLD &&
+    candidate.minY >= container.minY - SNAP_THRESHOLD &&
+    candidate.maxY <= container.maxY + SNAP_THRESHOLD;
+}
+
+function boundsIntersectsBounds(first, second) {
+  return first.minX <= second.maxX + SNAP_THRESHOLD &&
+    first.maxX >= second.minX - SNAP_THRESHOLD &&
+    first.minY <= second.maxY + SNAP_THRESHOLD &&
+    first.maxY >= second.minY - SNAP_THRESHOLD;
+}
+
+function expandBounds(bounds, padding) {
+  return createBounds(
+    bounds.minX - padding,
+    bounds.minY - padding,
+    bounds.maxX + padding,
+    bounds.maxY + padding,
+  );
+}
+
+function offsetBounds(bounds, vector) {
+  return createBounds(
+    bounds.minX + vector.x,
+    bounds.minY + vector.y,
+    bounds.maxX + vector.x,
+    bounds.maxY + vector.y,
+  );
+}
+
+function boundsContainsPoint(bounds, point) {
+  return point.x >= bounds.minX - SNAP_THRESHOLD &&
+    point.x <= bounds.maxX + SNAP_THRESHOLD &&
+    point.y >= bounds.minY - SNAP_THRESHOLD &&
+    point.y <= bounds.maxY + SNAP_THRESHOLD;
+}
+
+function entityDistanceToPoint(entity, point) {
+  if (entity.type === 'LINE') {
+    return distancePointToSegment(point, entity.start, entity.end);
+  }
+  if (entity.type === 'CIRCLE') {
+    return distancePointToCircle(point, entity);
+  }
+  if (entity.type === 'ARC') {
+    return distancePointToArc(point, entity);
+  }
+  return Infinity;
+}
+
+function entityIsNearPoint(entity, point, tolerance) {
+  if (!boundsContainsPoint(expandBounds(entity.bounds(), tolerance), point)) {
+    return false;
+  }
+  return entityDistanceToPoint(entity, point) <= tolerance;
+}
+
+function selectionWindowMode(selectionWindow) {
+  return selectionWindow.currentWorld.x >= selectionWindow.startWorld.x ? 'window' : 'capture';
+}
+
 class LineEntity {
   constructor(start, end, options = {}) {
     this.type = 'LINE';
     this.start = { x: start.x, y: start.y };
     this.end = { x: end.x, y: end.y };
+    this.groupId = options.groupId || null;
     applyLineStyleToEntity(this, options.lineStyle || options.layer || DEFAULT_LINE_STYLE);
   }
 
@@ -860,6 +1116,7 @@ class CircleEntity {
     this.type = 'CIRCLE';
     this.center = { x: center.x, y: center.y };
     this.radius = radius;
+    this.groupId = options.groupId || null;
     applyLineStyleToEntity(this, options.lineStyle || options.layer || DEFAULT_LINE_STYLE);
   }
 
@@ -884,6 +1141,7 @@ class ArcEntity {
     this.radius = radius;
     this.startAngle = normalizeAngle(startAngle);
     this.endAngle = normalizeAngle(endAngle);
+    this.groupId = options.groupId || null;
     applyLineStyleToEntity(this, options.lineStyle || options.layer || DEFAULT_LINE_STYLE);
   }
 
@@ -911,52 +1169,385 @@ class ArcEntity {
   }
 }
 
+function cloneEntityWithOffset(entity, vector, options = {}) {
+  const groupId = Object.prototype.hasOwnProperty.call(options, 'groupId') ? options.groupId : entity.groupId;
+  if (entity.type === 'LINE') {
+    return new LineEntity(
+      offsetPoint(entity.start, vector),
+      offsetPoint(entity.end, vector),
+      { lineStyle: entity.lineStyle, groupId },
+    );
+  }
+
+  if (entity.type === 'CIRCLE') {
+    return new CircleEntity(
+      offsetPoint(entity.center, vector),
+      entity.radius,
+      { lineStyle: entity.lineStyle, groupId },
+    );
+  }
+
+  if (entity.type === 'ARC') {
+    return new ArcEntity(
+      offsetPoint(entity.center, vector),
+      entity.radius,
+      entity.startAngle,
+      entity.endAngle,
+      { lineStyle: entity.lineStyle, groupId },
+    );
+  }
+
+  return null;
+}
+
+function cloneEntity(entity) {
+  return cloneEntityWithOffset(entity, { x: 0, y: 0 });
+}
+
+function cloneEntitiesWithOffset(entities, vector, options = {}) {
+  const groupMap = new Map();
+  return entities
+    .map((entity) => {
+      let groupId = entity.groupId || null;
+      if (options.remapGroups && groupId) {
+        if (!groupMap.has(groupId)) {
+          groupMap.set(groupId, createEntityGroupId('polyline'));
+        }
+        groupId = groupMap.get(groupId);
+      }
+      return cloneEntityWithOffset(entity, vector, { groupId });
+    })
+    .filter(Boolean);
+}
+
+function moveEntityByVector(entity, vector) {
+  if (entity.type === 'LINE') {
+    entity.start = offsetPoint(entity.start, vector);
+    entity.end = offsetPoint(entity.end, vector);
+    return true;
+  }
+
+  if (entity.type === 'CIRCLE' || entity.type === 'ARC') {
+    entity.center = offsetPoint(entity.center, vector);
+    return true;
+  }
+
+  return false;
+}
+
 class CadDocument {
   constructor() {
     this.entities = [];
     this.selectedEntity = null;
+    this.selectedEntities = new Set();
+    this.cachedBounds = null;
+    this.boundsDirty = true;
+    this.spatialDirty = true;
+    this.spatialCells = new Map();
+    this.spatialOverflow = new Set();
+    this.spatialBounds = new Map();
+    this.spatialOrder = new Map();
+    this.undoStack = [];
+    this.redoStack = [];
   }
 
-  clear() {
+  markDirty() {
+    this.boundsDirty = true;
+    this.spatialDirty = true;
+  }
+
+  snapshot() {
+    return this.entities.map((entity) => cloneEntity(entity)).filter(Boolean);
+  }
+
+  restoreSnapshot(snapshot) {
+    this.entities = snapshot.map((entity) => cloneEntity(entity)).filter(Boolean);
+    this.clearSelection();
+    this.markDirty();
+  }
+
+  recordHistory() {
+    this.undoStack.push(this.snapshot());
+    if (this.undoStack.length > HISTORY_LIMIT) {
+      this.undoStack.shift();
+    }
+    this.redoStack = [];
+  }
+
+  canUndo() {
+    return this.undoStack.length > 0;
+  }
+
+  canRedo() {
+    return this.redoStack.length > 0;
+  }
+
+  undo() {
+    if (!this.canUndo()) {
+      return false;
+    }
+
+    this.redoStack.push(this.snapshot());
+    this.restoreSnapshot(this.undoStack.pop());
+    return true;
+  }
+
+  redo() {
+    if (!this.canRedo()) {
+      return false;
+    }
+
+    this.undoStack.push(this.snapshot());
+    if (this.undoStack.length > HISTORY_LIMIT) {
+      this.undoStack.shift();
+    }
+    this.restoreSnapshot(this.redoStack.pop());
+    return true;
+  }
+
+  clear(options = {}) {
+    if (options.recordHistory !== false && this.entities.length) {
+      this.recordHistory();
+    }
     this.entities = [];
-    this.selectedEntity = null;
+    this.clearSelection();
+    this.markDirty();
   }
 
-  addEntity(entity) {
+  addEntity(entity, options = {}) {
+    if (options.recordHistory !== false) {
+      this.recordHistory();
+    }
     this.entities.push(entity);
+    this.markDirty();
   }
 
-  replaceEntity(entity, replacements) {
+  addEntities(entities, options = {}) {
+    const validEntities = entities.filter(Boolean);
+    if (!validEntities.length) {
+      return false;
+    }
+    if (options.recordHistory !== false) {
+      this.recordHistory();
+    }
+    this.entities.push(...validEntities);
+    this.markDirty();
+    return true;
+  }
+
+  replaceEntity(entity, replacements, options = {}) {
     const index = this.entities.indexOf(entity);
     if (index < 0) {
       return false;
     }
-    this.entities.splice(index, 1, ...replacements);
-    if (this.selectedEntity === entity) {
-      this.selectedEntity = null;
+    if (options.recordHistory !== false) {
+      this.recordHistory();
     }
+    this.entities.splice(index, 1, ...replacements);
+    if (this.selectedEntities.has(entity)) {
+      this.selectedEntities.delete(entity);
+      replacements.forEach((replacement) => this.selectedEntities.add(replacement));
+      this.selectedEntity = replacements[0] || null;
+    }
+    this.markDirty();
     return true;
   }
 
-  removeEntity(entity) {
-    return this.replaceEntity(entity, []);
+  replaceEntities(entities, replacements, options = {}) {
+    const replaceSet = new Set(entities.filter((entity) => this.entities.includes(entity)));
+    if (!replaceSet.size) {
+      return false;
+    }
+    if (options.recordHistory !== false) {
+      this.recordHistory();
+    }
+
+    const firstIndex = this.entities.findIndex((entity) => replaceSet.has(entity));
+    const wasSelected = [...replaceSet].some((entity) => this.selectedEntities.has(entity));
+    this.entities = this.entities.filter((entity) => !replaceSet.has(entity));
+    this.entities.splice(firstIndex, 0, ...replacements);
+    replaceSet.forEach((entity) => this.selectedEntities.delete(entity));
+    if (wasSelected) {
+      replacements.forEach((replacement) => this.selectedEntities.add(replacement));
+    }
+    this.selectedEntity = [...this.selectedEntities][0] || null;
+    this.markDirty();
+    return true;
   }
 
-  setEntities(entities) {
+  removeEntity(entity, options = {}) {
+    return this.replaceEntity(entity, [], options);
+  }
+
+  removeEntities(entities, options = {}) {
+    const removeSet = new Set(this.expandEntityGroups(entities).filter(Boolean));
+    if (!removeSet.size) {
+      return 0;
+    }
+    if (options.recordHistory !== false) {
+      this.recordHistory();
+    }
+    const beforeCount = this.entities.length;
+    this.entities = this.entities.filter((entity) => !removeSet.has(entity));
+    removeSet.forEach((entity) => this.selectedEntities.delete(entity));
+    this.selectedEntity = [...this.selectedEntities][0] || null;
+    this.markDirty();
+    return beforeCount - this.entities.length;
+  }
+
+  setEntities(entities, options = {}) {
+    if (options.recordHistory !== false) {
+      this.recordHistory();
+    }
     this.entities = [...entities];
-    this.selectedEntity = null;
+    this.clearSelection();
+    this.markDirty();
   }
 
   bounds() {
+    if (!this.boundsDirty) {
+      return this.cachedBounds ? { ...this.cachedBounds } : null;
+    }
+
     let bounds = null;
     for (const entity of this.entities) {
       bounds = mergeBounds(bounds, entity.bounds());
     }
-    return bounds;
+    this.cachedBounds = bounds ? { ...bounds } : null;
+    this.boundsDirty = false;
+    return this.cachedBounds ? { ...this.cachedBounds } : null;
+  }
+
+  spatialCellRange(bounds) {
+    return {
+      minX: Math.floor(bounds.minX / SPATIAL_CELL_SIZE),
+      minY: Math.floor(bounds.minY / SPATIAL_CELL_SIZE),
+      maxX: Math.floor(bounds.maxX / SPATIAL_CELL_SIZE),
+      maxY: Math.floor(bounds.maxY / SPATIAL_CELL_SIZE),
+    };
+  }
+
+  spatialCellKey(x, y) {
+    return `${x}:${y}`;
+  }
+
+  rebuildSpatialIndex() {
+    this.spatialCells = new Map();
+    this.spatialOverflow = new Set();
+    this.spatialBounds = new Map();
+    this.spatialOrder = new Map();
+
+    this.entities.forEach((entity, index) => {
+      const bounds = entity.bounds();
+      const range = this.spatialCellRange(bounds);
+      const cellCount = (range.maxX - range.minX + 1) * (range.maxY - range.minY + 1);
+      this.spatialBounds.set(entity, bounds);
+      this.spatialOrder.set(entity, index);
+
+      if (cellCount > SPATIAL_MAX_ENTITY_CELLS) {
+        this.spatialOverflow.add(entity);
+        return;
+      }
+
+      for (let x = range.minX; x <= range.maxX; x += 1) {
+        for (let y = range.minY; y <= range.maxY; y += 1) {
+          const key = this.spatialCellKey(x, y);
+          if (!this.spatialCells.has(key)) {
+            this.spatialCells.set(key, new Set());
+          }
+          this.spatialCells.get(key).add(entity);
+        }
+      }
+    });
+
+    this.spatialDirty = false;
+  }
+
+  queryBounds(bounds) {
+    if (!bounds) {
+      return [];
+    }
+    if (this.spatialDirty) {
+      this.rebuildSpatialIndex();
+    }
+
+    const range = this.spatialCellRange(bounds);
+    const cellCount = (range.maxX - range.minX + 1) * (range.maxY - range.minY + 1);
+    if (cellCount > SPATIAL_MAX_QUERY_CELLS) {
+      return this.entities.filter((entity) => boundsIntersectsBounds(this.spatialBounds.get(entity), bounds));
+    }
+
+    const matches = new Set();
+    for (let x = range.minX; x <= range.maxX; x += 1) {
+      for (let y = range.minY; y <= range.maxY; y += 1) {
+        const cell = this.spatialCells.get(this.spatialCellKey(x, y));
+        if (!cell) {
+          continue;
+        }
+        cell.forEach((entity) => {
+          if (boundsIntersectsBounds(this.spatialBounds.get(entity), bounds)) {
+            matches.add(entity);
+          }
+        });
+      }
+    }
+
+    this.spatialOverflow.forEach((entity) => {
+      if (boundsIntersectsBounds(this.spatialBounds.get(entity), bounds)) {
+        matches.add(entity);
+      }
+    });
+
+    return [...matches].sort((first, second) =>
+      (this.spatialOrder.get(first) || 0) - (this.spatialOrder.get(second) || 0),
+    );
+  }
+
+  groupEntities(entity) {
+    if (!entity?.groupId) {
+      return entity ? [entity] : [];
+    }
+    return this.entities.filter((candidate) => candidate.groupId === entity.groupId);
+  }
+
+  expandEntityGroups(entities) {
+    const expanded = new Set();
+    entities.forEach((entity) => {
+      this.groupEntities(entity).forEach((groupEntity) => expanded.add(groupEntity));
+    });
+    return [...expanded];
   }
 
   selectEntity(entity) {
-    this.selectedEntity = entity || null;
+    this.selectedEntities.clear();
+    this.expandEntityGroups([entity]).forEach((selectedEntity) => {
+      this.selectedEntities.add(selectedEntity);
+    });
+    this.selectedEntity = [...this.selectedEntities][0] || null;
+  }
+
+  selectEntities(entities) {
+    const expandedEntities = this.expandEntityGroups(entities);
+    this.selectedEntities = new Set(expandedEntities);
+    this.selectedEntity = expandedEntities[0] || null;
+  }
+
+  addSelectedEntities(entities) {
+    this.expandEntityGroups(entities).forEach((entity) => {
+      if (entity) {
+        this.selectedEntities.add(entity);
+      }
+    });
+    this.selectedEntity = [...this.selectedEntities][0] || null;
+  }
+
+  clearSelection() {
+    this.selectedEntities.clear();
+    this.selectedEntity = null;
+  }
+
+  isSelected(entity) {
+    return this.selectedEntities.has(entity);
   }
 }
 
@@ -966,7 +1557,7 @@ function trimLineEntityAtPoint(doc, entity, pickPoint) {
   }
 
   const breakParameters = [0, 1];
-  for (const otherEntity of doc.entities) {
+  for (const otherEntity of doc.queryBounds(entity.bounds())) {
     if (otherEntity === entity) {
       continue;
     }
@@ -1044,7 +1635,7 @@ function trimCircularEntityAtPoint(doc, entity, pickPoint) {
 
   if (entity.type === 'CIRCLE') {
     const breakParameters = [];
-    for (const otherEntity of doc.entities) {
+    for (const otherEntity of doc.queryBounds(entity.bounds())) {
       if (otherEntity === entity) {
         continue;
       }
@@ -1092,7 +1683,7 @@ function trimCircularEntityAtPoint(doc, entity, pickPoint) {
   }
 
   const breakParameters = [0, 1];
-  for (const otherEntity of doc.entities) {
+  for (const otherEntity of doc.queryBounds(entity.bounds())) {
     if (otherEntity === entity) {
       continue;
     }
@@ -1136,6 +1727,392 @@ function trimCircularEntityAtPoint(doc, entity, pickPoint) {
 
   const replaced = doc.replaceEntity(entity, replacements);
   return { trimmed: replaced, keptCount: replacements.length };
+}
+
+function orderedLineGroup(groupEntities) {
+  if (!groupEntities.length || groupEntities.some((entity) => entity.type !== 'LINE')) {
+    return null;
+  }
+
+  const connectedAt = (point, entity) => {
+    if (distance(point, entity.start) <= SNAP_THRESHOLD) {
+      return { reversed: false, nextPoint: entity.end };
+    }
+    if (distance(point, entity.end) <= SNAP_THRESHOLD) {
+      return { reversed: true, nextPoint: entity.start };
+    }
+    return null;
+  };
+  const endpointDegree = (point) => groupEntities.reduce((count, candidate) =>
+    count + (distance(point, candidate.start) <= SNAP_THRESHOLD ? 1 : 0) +
+    (distance(point, candidate.end) <= SNAP_THRESHOLD ? 1 : 0), 0);
+
+  let firstEntity = groupEntities[0];
+  let firstReversed = false;
+  for (const candidate of groupEntities) {
+    if (endpointDegree(candidate.start) === 1) {
+      firstEntity = candidate;
+      break;
+    }
+    if (endpointDegree(candidate.end) === 1) {
+      firstEntity = candidate;
+      firstReversed = true;
+      break;
+    }
+  }
+
+  const ordered = [{ entity: firstEntity, reversed: firstReversed }];
+  const remaining = new Set(groupEntities);
+  remaining.delete(firstEntity);
+  const firstPoint = firstReversed ? firstEntity.end : firstEntity.start;
+  let currentPoint = firstReversed ? firstEntity.start : firstEntity.end;
+
+  while (remaining.size) {
+    let match = null;
+    for (const candidate of remaining) {
+      const connection = connectedAt(currentPoint, candidate);
+      if (connection) {
+        match = { entity: candidate, ...connection };
+        break;
+      }
+    }
+    if (!match) {
+      return null;
+    }
+    ordered.push({ entity: match.entity, reversed: match.reversed });
+    remaining.delete(match.entity);
+    currentPoint = match.nextPoint;
+  }
+
+  let offset = 0;
+  ordered.forEach((component) => {
+    component.length = component.entity.length();
+    component.offset = offset;
+    offset += component.length;
+  });
+  return {
+    components: ordered,
+    totalLength: offset,
+    closed: distance(currentPoint, firstPoint) <= SNAP_THRESHOLD,
+  };
+}
+
+function lineGroupPointAt(component, traversalParameter) {
+  const entityParameter = component.reversed ? 1 - traversalParameter : traversalParameter;
+  return pointAtLineParameter(component.entity, entityParameter);
+}
+
+function lineGroupRangeEntities(path, startDistance, endDistance, groupId) {
+  const replacements = [];
+  if (endDistance - startDistance <= SNAP_THRESHOLD || path.totalLength <= SNAP_THRESHOLD) {
+    return replacements;
+  }
+
+  const firstCycle = Math.floor(startDistance / path.totalLength);
+  const lastCycle = Math.floor((endDistance - SNAP_THRESHOLD) / path.totalLength);
+  for (let cycle = firstCycle; cycle <= lastCycle; cycle += 1) {
+    const cycleOffset = cycle * path.totalLength;
+    for (const component of path.components) {
+      const componentStart = cycleOffset + component.offset;
+      const componentEnd = componentStart + component.length;
+      const overlapStart = Math.max(startDistance, componentStart);
+      const overlapEnd = Math.min(endDistance, componentEnd);
+      if (overlapEnd - overlapStart <= SNAP_THRESHOLD) {
+        continue;
+      }
+
+      const startParameter = (overlapStart - componentStart) / component.length;
+      const endParameter = (overlapEnd - componentStart) / component.length;
+      replacements.push(new LineEntity(
+        lineGroupPointAt(component, startParameter),
+        lineGroupPointAt(component, endParameter),
+        { lineStyle: component.entity.lineStyle, groupId },
+      ));
+    }
+  }
+  return replacements;
+}
+
+function trimLineGroupAtPoint(doc, entity, pickPoint) {
+  const groupEntities = doc.groupEntities(entity);
+  const path = orderedLineGroup(groupEntities);
+  if (!path || path.totalLength <= SNAP_THRESHOLD) {
+    return { trimmed: false, keptCount: groupEntities.length, grouped: true };
+  }
+
+  const breakDistances = [];
+  for (const component of path.components) {
+    for (const otherEntity of doc.queryBounds(component.entity.bounds())) {
+      if (otherEntity.groupId === entity.groupId) {
+        continue;
+      }
+      for (const intersection of entityIntersectionPoints(component.entity, otherEntity)) {
+        const entityParameter = lineParameter(component.entity, intersection);
+        const traversalParameter = component.reversed ? 1 - entityParameter : entityParameter;
+        let pathDistance = component.offset + component.length * traversalParameter;
+        if (path.closed && path.totalLength - pathDistance <= SNAP_THRESHOLD) {
+          pathDistance = 0;
+        }
+        breakDistances.push(pathDistance);
+      }
+    }
+  }
+
+  const sortedBreaks = [...breakDistances]
+    .sort((first, second) => first - second)
+    .filter((value, index, values) => index === 0 || value - values[index - 1] > SNAP_THRESHOLD);
+  if ((path.closed && sortedBreaks.length < 2) || (!path.closed && !sortedBreaks.length)) {
+    return { trimmed: false, keptCount: groupEntities.length, grouped: true };
+  }
+
+  const pickedComponent = path.components.find((component) => component.entity === entity);
+  if (!pickedComponent) {
+    return { trimmed: false, keptCount: groupEntities.length, grouped: true };
+  }
+  const pickedEntityParameter = lineParameter(entity, closestPointOnLineSegment(entity, pickPoint));
+  const pickedTraversalParameter = pickedComponent.reversed
+    ? 1 - pickedEntityParameter
+    : pickedEntityParameter;
+  const pickDistance = pickedComponent.offset + pickedComponent.length * pickedTraversalParameter;
+
+  let trimStart = null;
+  let trimEnd = null;
+  if (path.closed) {
+    for (let index = 0; index < sortedBreaks.length; index += 1) {
+      const start = sortedBreaks[index];
+      const next = sortedBreaks[(index + 1) % sortedBreaks.length];
+      const end = index === sortedBreaks.length - 1 ? next + path.totalLength : next;
+      const adjustedPick = pickDistance < start - SNAP_THRESHOLD ? pickDistance + path.totalLength : pickDistance;
+      if (adjustedPick >= start - SNAP_THRESHOLD && adjustedPick <= end + SNAP_THRESHOLD) {
+        trimStart = start;
+        trimEnd = end;
+        break;
+      }
+    }
+  }
+  else {
+    const openBreaks = [0, ...sortedBreaks, path.totalLength]
+      .sort((first, second) => first - second)
+      .filter((value, index, values) => index === 0 || value - values[index - 1] > SNAP_THRESHOLD);
+    for (let index = 0; index < openBreaks.length - 1; index += 1) {
+      if (pickDistance >= openBreaks[index] - SNAP_THRESHOLD &&
+          pickDistance <= openBreaks[index + 1] + SNAP_THRESHOLD) {
+        trimStart = openBreaks[index];
+        trimEnd = openBreaks[index + 1];
+        break;
+      }
+    }
+  }
+
+  if (trimStart === null || trimEnd === null) {
+    return { trimmed: false, keptCount: groupEntities.length, grouped: true };
+  }
+
+  let replacements = [];
+  if (path.closed) {
+    let keepEnd = trimStart;
+    const keepStart = trimEnd % path.totalLength;
+    if (keepEnd <= keepStart + SNAP_THRESHOLD) {
+      keepEnd += path.totalLength;
+    }
+    replacements = lineGroupRangeEntities(path, keepStart, keepEnd, entity.groupId);
+  }
+  else {
+    replacements.push(...lineGroupRangeEntities(path, 0, trimStart, entity.groupId));
+    const trailingGroupId = replacements.length && trimEnd < path.totalLength - SNAP_THRESHOLD
+      ? createEntityGroupId('polyline')
+      : entity.groupId;
+    replacements.push(...lineGroupRangeEntities(path, trimEnd, path.totalLength, trailingGroupId));
+  }
+
+  const replaced = doc.replaceEntities(groupEntities, replacements);
+  return {
+    trimmed: replaced,
+    keptCount: replacements.length,
+    removedCount: groupEntities.length,
+    grouped: true,
+  };
+}
+
+function trimEntityAtPoint(doc, entity, pickPoint) {
+  if (!doc || !entity) {
+    return { trimmed: false, keptCount: 0, grouped: false };
+  }
+
+  if (entity.groupId) {
+    return trimLineGroupAtPoint(doc, entity, pickPoint);
+  }
+
+  if (entity.type === 'LINE') {
+    return trimLineEntityAtPoint(doc, entity, pickPoint);
+  }
+
+  return trimCircularEntityAtPoint(doc, entity, pickPoint);
+}
+
+function extensionBoundaryIntersections(line, boundary) {
+  if (!line || line.type !== 'LINE' || !boundary || boundary === line) {
+    return [];
+  }
+
+  const direction = {
+    x: line.end.x - line.start.x,
+    y: line.end.y - line.start.y,
+  };
+  if (Math.hypot(direction.x, direction.y) <= SNAP_THRESHOLD) {
+    return [];
+  }
+
+  if (boundary.type === 'LINE') {
+    const boundaryDirection = {
+      x: boundary.end.x - boundary.start.x,
+      y: boundary.end.y - boundary.start.y,
+    };
+    const point = infiniteLineLineIntersection(line.start, direction, boundary.start, boundaryDirection);
+    return point ? [point] : [];
+  }
+
+  if (isCircularEntity(boundary)) {
+    return infiniteLineCircularIntersectionPoints(line.start, direction, boundary, false);
+  }
+
+  return [];
+}
+
+function lineExtensionCandidate(line, boundaryEntities, endpointKey) {
+  const candidates = [];
+  for (const boundary of boundaryEntities) {
+    for (const point of extensionBoundaryIntersections(line, boundary)) {
+      const parameter = rawLineParameter(line, point);
+      if (endpointKey === 'start' && parameter < -SNAP_THRESHOLD) {
+        candidates.push({ point, distance: distance(line.start, point) });
+      }
+      if (endpointKey === 'end' && parameter > 1 + SNAP_THRESHOLD) {
+        candidates.push({ point, distance: distance(line.end, point) });
+      }
+    }
+  }
+
+  candidates.sort((first, second) => first.distance - second.distance);
+  return candidates[0]?.point || null;
+}
+
+function extendLineToBoundaries(line, boundaryEntities, pickPoint = null) {
+  if (!line || line.type !== 'LINE' || !boundaryEntities.length) {
+    return false;
+  }
+
+  const startCandidate = lineExtensionCandidate(line, boundaryEntities, 'start');
+  const endCandidate = lineExtensionCandidate(line, boundaryEntities, 'end');
+  let endpointKey = null;
+  if (pickPoint) {
+    endpointKey = distance(pickPoint, line.start) <= distance(pickPoint, line.end) ? 'start' : 'end';
+  }
+  else if (startCandidate && endCandidate) {
+    endpointKey = distance(line.start, startCandidate) <= distance(line.end, endCandidate) ? 'start' : 'end';
+  }
+  else if (startCandidate) {
+    endpointKey = 'start';
+  }
+  else if (endCandidate) {
+    endpointKey = 'end';
+  }
+
+  const target = endpointKey === 'start' ? startCandidate : endpointKey === 'end' ? endCandidate : null;
+  if (!target) {
+    return false;
+  }
+
+  line[endpointKey] = { ...target };
+  return true;
+}
+
+function arcEndpointPoint(arc, endpointKey) {
+  return pointAtCircleAngle(arc, endpointKey === 'start' ? arc.startAngle : arc.endAngle);
+}
+
+function arcExtensionCandidate(arc, boundaryEntities, endpointKey) {
+  const candidates = [];
+  const currentSweep = arcSweep(arc.startAngle, arc.endAngle);
+  if (currentSweep <= SNAP_THRESHOLD) {
+    return null;
+  }
+
+  for (const boundary of boundaryEntities) {
+    for (const point of fullCircleBoundaryIntersectionPoints(arc, boundary)) {
+      const angle = angleOfPoint(arc.center, point);
+      if (angleOnArc(angle, arc)) {
+        continue;
+      }
+
+      if (endpointKey === 'start') {
+        const extensionSweep = normalizeAngle(arc.startAngle - angle);
+        const nextSweep = arcSweep(angle, arc.endAngle);
+        if (
+          extensionSweep > SNAP_THRESHOLD &&
+          nextSweep > currentSweep + SNAP_THRESHOLD &&
+          nextSweep < TWO_PI - SNAP_THRESHOLD
+        ) {
+          candidates.push({ angle, distance: arc.radius * extensionSweep });
+        }
+      }
+
+      if (endpointKey === 'end') {
+        const extensionSweep = normalizeAngle(angle - arc.endAngle);
+        const nextSweep = arcSweep(arc.startAngle, angle);
+        if (
+          extensionSweep > SNAP_THRESHOLD &&
+          nextSweep > currentSweep + SNAP_THRESHOLD &&
+          nextSweep < TWO_PI - SNAP_THRESHOLD
+        ) {
+          candidates.push({ angle, distance: arc.radius * extensionSweep });
+        }
+      }
+    }
+  }
+
+  candidates.sort((first, second) => first.distance - second.distance);
+  return candidates[0]?.angle ?? null;
+}
+
+function extendArcToBoundaries(arc, boundaryEntities, pickPoint = null) {
+  if (!arc || arc.type !== 'ARC' || !boundaryEntities.length) {
+    return false;
+  }
+
+  const startCandidate = arcExtensionCandidate(arc, boundaryEntities, 'start');
+  const endCandidate = arcExtensionCandidate(arc, boundaryEntities, 'end');
+  let endpointKey = null;
+  if (pickPoint) {
+    endpointKey = distance(pickPoint, arcEndpointPoint(arc, 'start')) <=
+      distance(pickPoint, arcEndpointPoint(arc, 'end')) ? 'start' : 'end';
+  }
+  else if (startCandidate !== null && endCandidate !== null) {
+    const startDistance = arc.radius * normalizeAngle(arc.startAngle - startCandidate);
+    const endDistance = arc.radius * normalizeAngle(endCandidate - arc.endAngle);
+    endpointKey = startDistance <= endDistance ? 'start' : 'end';
+  }
+  else if (startCandidate !== null) {
+    endpointKey = 'start';
+  }
+  else if (endCandidate !== null) {
+    endpointKey = 'end';
+  }
+
+  const targetAngle = endpointKey === 'start'
+    ? startCandidate
+    : endpointKey === 'end' ? endCandidate : null;
+  if (targetAngle === null) {
+    return false;
+  }
+
+  if (endpointKey === 'start') {
+    arc.startAngle = normalizeAngle(targetAngle);
+  }
+  else {
+    arc.endAngle = normalizeAngle(targetAngle);
+  }
+  return true;
 }
 
 function canvasAngleToDxfDegrees(angle) {
@@ -1342,6 +2319,16 @@ class CadRenderer {
 
   visibleWorldHeight(scale = this.state.viewScale) {
     return this.viewportHeight() / scale;
+  }
+
+  visibleWorldBounds(padding = 0) {
+    const bounds = createBounds(
+      this.state.viewOffset.x,
+      this.state.viewOffset.y,
+      this.state.viewOffset.x + this.visibleWorldWidth(),
+      this.state.viewOffset.y + this.visibleWorldHeight(),
+    );
+    return padding ? expandBounds(bounds, padding) : bounds;
   }
 
   worldToScreen(point) {
@@ -1553,9 +2540,40 @@ class CadRenderer {
     ctx.restore();
   }
 
+  isExtendBoundary(entity) {
+    if (this.state.tool !== 'extend') {
+      return false;
+    }
+    return this.state.extendDraft?.boundaries?.includes(entity) || (
+      this.state.extendDraft?.phase === 'boundaries' &&
+      this.doc.isSelected(entity)
+    );
+  }
+
+  drawHighlightedEntity(ctx, entity, color, widthBoost = 1.5) {
+    if (!entity) {
+      return;
+    }
+    const style = getLineStyle(entity.lineStyle);
+    const options = { color, width: Math.max(3, style.width + widthBoost) };
+    if (entity.type === 'LINE') {
+      this.drawLineStroke(ctx, entity, options);
+    }
+    if (entity.type === 'CIRCLE') {
+      this.drawCircleStroke(ctx, entity, options);
+    }
+    if (entity.type === 'ARC') {
+      this.drawArcStroke(ctx, entity, options);
+    }
+  }
+
   drawEntities(ctx) {
-    for (const entity of this.doc.entities) {
-      if (entity === this.doc.selectedEntity) {
+    const viewBounds = this.visibleWorldBounds(18 / this.state.viewScale);
+    for (const entity of this.doc.queryBounds(viewBounds)) {
+      if (this.doc.isSelected(entity)) {
+        continue;
+      }
+      if (!boundsIntersectsBounds(entity.bounds(), viewBounds)) {
         continue;
       }
       const style = getLineStyle(entity.lineStyle);
@@ -1570,33 +2588,52 @@ class CadRenderer {
       }
     }
 
-    const selectedEntity = this.doc.selectedEntity;
-    if (selectedEntity?.type === 'LINE') {
-      const selectedStyle = getLineStyle(selectedEntity.lineStyle);
-      this.drawLineStroke(
-        ctx,
-        selectedEntity,
-        { color: SELECTED_COLOR, width: Math.max(3, selectedStyle.width + 1) },
-      );
-      this.drawLineGrips(ctx, selectedEntity);
+    if (this.state.tool === 'extend') {
+      const boundaryEntities = this.state.extendDraft?.phase === 'boundaries'
+        ? [...this.doc.selectedEntities]
+        : this.state.extendDraft?.boundaries || [];
+      for (const boundaryEntity of boundaryEntities) {
+        if (!boundaryEntity || !boundsIntersectsBounds(boundaryEntity.bounds(), viewBounds)) {
+          continue;
+        }
+        this.drawHighlightedEntity(ctx, boundaryEntity, PREVIEW_COLOR, 2);
+      }
     }
-    if (selectedEntity?.type === 'CIRCLE') {
-      const selectedStyle = getLineStyle(selectedEntity.lineStyle);
-      this.drawCircleStroke(
-        ctx,
-        selectedEntity,
-        { color: SELECTED_COLOR, width: Math.max(3, selectedStyle.width + 1) },
-      );
-      this.drawCircleGrips(ctx, selectedEntity);
-    }
-    if (selectedEntity?.type === 'ARC') {
-      const selectedStyle = getLineStyle(selectedEntity.lineStyle);
-      this.drawArcStroke(
-        ctx,
-        selectedEntity,
-        { color: SELECTED_COLOR, width: Math.max(3, selectedStyle.width + 1) },
-      );
-      this.drawCircleGrips(ctx, selectedEntity);
+
+    for (const selectedEntity of this.doc.selectedEntities) {
+      if (!selectedEntity || !boundsIntersectsBounds(selectedEntity.bounds(), viewBounds)) {
+        continue;
+      }
+      if (this.isExtendBoundary(selectedEntity)) {
+        continue;
+      }
+      if (selectedEntity?.type === 'LINE') {
+        const selectedStyle = getLineStyle(selectedEntity.lineStyle);
+        this.drawLineStroke(
+          ctx,
+          selectedEntity,
+          { color: SELECTED_COLOR, width: Math.max(3, selectedStyle.width + 1) },
+        );
+        this.drawLineGrips(ctx, selectedEntity);
+      }
+      if (selectedEntity?.type === 'CIRCLE') {
+        const selectedStyle = getLineStyle(selectedEntity.lineStyle);
+        this.drawCircleStroke(
+          ctx,
+          selectedEntity,
+          { color: SELECTED_COLOR, width: Math.max(3, selectedStyle.width + 1) },
+        );
+        this.drawCircleGrips(ctx, selectedEntity);
+      }
+      if (selectedEntity?.type === 'ARC') {
+        const selectedStyle = getLineStyle(selectedEntity.lineStyle);
+        this.drawArcStroke(
+          ctx,
+          selectedEntity,
+          { color: SELECTED_COLOR, width: Math.max(3, selectedStyle.width + 1) },
+        );
+        this.drawCircleGrips(ctx, selectedEntity);
+      }
     }
   }
 
@@ -1658,6 +2695,8 @@ class CadRenderer {
       this.state.tool === 'arc-center-radius' ||
       this.state.tool === 'arc-3p' ||
       this.state.tool === 'arc-center-start-end' ||
+      (this.state.tool === 'copy' && !this.state.copyDraft?.selecting) ||
+      (this.state.tool === 'move' && !this.state.moveDraft?.selecting) ||
       this.state.tool === 'trim' ||
       Boolean(this.state.selectedGrip)
     );
@@ -1700,6 +2739,19 @@ class CadRenderer {
       ctx.moveTo(point.x - half, point.y - half);
       ctx.lineTo(point.x - half, point.y + half);
       ctx.lineTo(point.x + half, point.y + half);
+      ctx.stroke();
+    }
+    else if (snap.type === 'center') {
+      const half = size * 0.46;
+      ctx.beginPath();
+      ctx.arc(point.x, point.y, half, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(point.x - half * 0.72, point.y);
+      ctx.lineTo(point.x + half * 0.72, point.y);
+      ctx.moveTo(point.x, point.y - half * 0.72);
+      ctx.lineTo(point.x, point.y + half * 0.72);
       ctx.stroke();
     }
     else {
@@ -1752,6 +2804,41 @@ class CadRenderer {
       ctx.beginPath();
       ctx.arc(endPoint.x, endPoint.y, radius, 0, Math.PI * 2);
       ctx.fill();
+    }
+
+    if (this.state.rectangleDraft?.firstPoint) {
+      let oppositePoint = resolveCursorPoint(this.state.mouseWorld, this.state);
+      const coordinateTarget = pointFromRelativeCoordinates(
+        this.state.rectangleDraft.firstPoint,
+        this.state.distanceInput,
+      );
+      const inputDistance = parseDistanceInput(this.state.distanceInput);
+      if (coordinateTarget) {
+        oppositePoint = coordinateTarget;
+      }
+      else if (inputDistance !== null) {
+        const distancePoint = pointFromDistance(
+          this.state.rectangleDraft.firstPoint,
+          oppositePoint,
+          inputDistance,
+        );
+        if (distancePoint) {
+          oppositePoint = distancePoint;
+        }
+      }
+
+      const bounds = normalizeBoundsFromPoints(this.state.rectangleDraft.firstPoint, oppositePoint);
+      ctx.beginPath();
+      ctx.rect(bounds.minX, bounds.minY, bounds.maxX - bounds.minX, bounds.maxY - bounds.minY);
+      ctx.stroke();
+
+      const radius = 4 / this.state.viewScale;
+      ctx.fillStyle = PREVIEW_COLOR;
+      for (const point of [this.state.rectangleDraft.firstPoint, oppositePoint]) {
+        ctx.beginPath();
+        ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
+        ctx.fill();
+      }
     }
 
     if (this.state.circleDraft?.points.length) {
@@ -1889,15 +2976,16 @@ class CadRenderer {
       return;
     }
 
+    const origin = this.state.selectedGrip.entity[this.state.selectedGrip.key];
+    const coordinateTarget = pointFromRelativeCoordinates(origin, this.state.distanceInput);
     const inputDistance = parseDistanceInput(this.state.distanceInput);
-    if (inputDistance === null) {
+    if (inputDistance === null && !coordinateTarget) {
       return;
     }
 
-    const origin = this.state.selectedGrip.entity[this.state.selectedGrip.key];
     const referencePoint = gripReferencePoint(this.state.selectedGrip);
     const directionPoint = resolvePointForState(this.state.mouseWorld, this.state, referencePoint);
-    const targetPoint = pointFromDistance(origin, directionPoint, inputDistance);
+    const targetPoint = coordinateTarget || pointFromDistance(origin, directionPoint, inputDistance);
     if (!targetPoint) {
       return;
     }
@@ -1915,8 +3003,122 @@ class CadRenderer {
     ctx.restore();
   }
 
+  copyPreviewTargetPoint() {
+    const copyDraft = this.state.copyDraft;
+    if (!copyDraft?.basePoint || !this.state.mouseWorld) {
+      return null;
+    }
+
+    const coordinateTarget = pointFromRelativeCoordinates(copyDraft.basePoint, this.state.distanceInput);
+    if (coordinateTarget) {
+      return coordinateTarget;
+    }
+
+    const cursor = resolveCursorPoint(this.state.mouseWorld, this.state);
+    const inputDistance = parseDistanceInput(this.state.distanceInput);
+    if (inputDistance !== null && cursor) {
+      return pointFromDistance(copyDraft.basePoint, cursor, inputDistance);
+    }
+    return cursor;
+  }
+
+  movePreviewTargetPoint() {
+    const moveDraft = this.state.moveDraft;
+    if (!moveDraft?.basePoint || !this.state.mouseWorld) {
+      return null;
+    }
+
+    const coordinateTarget = pointFromRelativeCoordinates(moveDraft.basePoint, this.state.distanceInput);
+    if (coordinateTarget) {
+      return coordinateTarget;
+    }
+
+    const cursor = resolveCursorPoint(this.state.mouseWorld, this.state);
+    const inputDistance = parseDistanceInput(this.state.distanceInput);
+    if (inputDistance !== null && cursor) {
+      return pointFromDistance(moveDraft.basePoint, cursor, inputDistance);
+    }
+    return cursor;
+  }
+
+  drawCopyPreview(ctx) {
+    const draft = this.state.copyDraft || this.state.moveDraft;
+    const targetPoint = this.state.copyDraft ? this.copyPreviewTargetPoint() : this.movePreviewTargetPoint();
+    if (!draft?.basePoint || !targetPoint) {
+      return;
+    }
+
+    const vector = {
+      x: targetPoint.x - draft.basePoint.x,
+      y: targetPoint.y - draft.basePoint.y,
+    };
+
+    ctx.save();
+    ctx.setLineDash([8 / this.state.viewScale, 6 / this.state.viewScale]);
+    const viewBounds = this.visibleWorldBounds(18 / this.state.viewScale);
+    for (const entity of draft.sourceEntities) {
+      if (!boundsIntersectsBounds(offsetBounds(entity.bounds(), vector), viewBounds)) {
+        continue;
+      }
+      const preview = cloneEntityWithOffset(entity, vector);
+      if (!preview) {
+        continue;
+      }
+
+      const width = getLineStyle(preview.lineStyle).width;
+      if (preview.type === 'LINE') {
+        this.drawLineStroke(ctx, preview, { color: PREVIEW_COLOR, width });
+      }
+      if (preview.type === 'CIRCLE') {
+        this.drawCircleStroke(ctx, preview, { color: PREVIEW_COLOR, width });
+      }
+      if (preview.type === 'ARC') {
+        this.drawArcStroke(ctx, preview, { color: PREVIEW_COLOR, width });
+      }
+    }
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
+  drawSelectionWindow(ctx) {
+    const selectionWindow = this.state.selectionWindow;
+    if (!selectionWindow?.currentWorld) {
+      return;
+    }
+
+    const bounds = normalizeBoundsFromPoints(selectionWindow.startWorld, selectionWindow.currentWorld);
+    const width = bounds.maxX - bounds.minX;
+    const height = bounds.maxY - bounds.minY;
+    if (Math.abs(width) <= SNAP_THRESHOLD || Math.abs(height) <= SNAP_THRESHOLD) {
+      return;
+    }
+
+    const mode = selectionWindowMode(selectionWindow);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(bounds.minX, bounds.minY, width, height);
+    ctx.fillStyle = mode === 'window'
+      ? 'rgba(15, 93, 140, 0.10)'
+      : 'rgba(208, 90, 31, 0.10)';
+    ctx.strokeStyle = mode === 'window'
+      ? 'rgba(15, 93, 140, 0.80)'
+      : 'rgba(208, 90, 31, 0.85)';
+    ctx.lineWidth = 1.5 / this.state.viewScale;
+    if (mode === 'capture') {
+      ctx.setLineDash([6 / this.state.viewScale, 5 / this.state.viewScale]);
+    }
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
+
   drawCrosshair(ctx) {
-    if (!this.state.mouseWorld || this.state.tool === 'select') {
+    if (
+      !this.state.mouseWorld ||
+      this.state.tool === 'select' ||
+      (this.state.tool === 'copy' && this.state.copyDraft?.selecting) ||
+      (this.state.tool === 'move' && this.state.moveDraft?.selecting)
+    ) {
       return;
     }
 
@@ -1960,6 +3162,8 @@ class CadRenderer {
     this.drawEntities(ctx);
     this.drawPreview(ctx);
     this.drawGripMovePreview(ctx);
+    this.drawCopyPreview(ctx);
+    this.drawSelectionWindow(ctx);
     this.drawObjectSnapMarker(ctx);
   }
 }
@@ -1972,6 +3176,8 @@ class CadController {
     this.state = state;
     this.panState = null;
     this.gripDragState = null;
+    this.shortcutPrefix = null;
+    this.shortcutTimer = null;
 
     this.canvas.addEventListener('pointerdown', (event) => this.onPointerDown(event));
     this.canvas.addEventListener('pointermove', (event) => this.onPointerMove(event));
@@ -2002,33 +3208,96 @@ class CadController {
     return resolveCursorPoint(point, this.state);
   }
 
+  clearShortcutPrefix() {
+    if (this.shortcutTimer) {
+      clearTimeout(this.shortcutTimer);
+    }
+    this.shortcutPrefix = null;
+    this.shortcutTimer = null;
+  }
+
+  handleShortcutSequence(event) {
+    if (event.metaKey || event.ctrlKey || event.altKey) {
+      return false;
+    }
+
+    const key = event.key.toLowerCase();
+    if (this.shortcutPrefix === 'r') {
+      this.clearShortcutPrefix();
+      if (key === 'c') {
+        event.preventDefault();
+        runCommand('rectangle');
+        return true;
+      }
+      event.preventDefault();
+      runCommand('trim');
+      return true;
+    }
+
+    if (key === 'r') {
+      event.preventDefault();
+      this.clearShortcutPrefix();
+      this.shortcutPrefix = 'r';
+      this.state.statusText = 'R: pulse C para rectangulo';
+      this.updateUiStatus();
+      this.renderer.draw();
+      this.shortcutTimer = setTimeout(() => {
+        if (this.shortcutPrefix === 'r') {
+          this.clearShortcutPrefix();
+          runCommand('trim');
+        }
+      }, 420);
+      return true;
+    }
+
+    return false;
+  }
+
   setTool(tool) {
     this.state.tool = tool;
     this.state.pendingLineStart = null;
+    this.state.rectangleDraft = null;
     this.state.circleDraft = null;
     this.state.arcDraft = null;
+    this.state.copyDraft = null;
+    this.state.moveDraft = null;
+    this.state.eraseDraft = null;
+    this.state.extendDraft = null;
     this.state.distanceInput = '';
     this.state.selectedGrip = null;
     this.state.activeObjectSnap = null;
+    this.state.selectionWindow = null;
     this.gripDragState = null;
     if (
       tool === 'line' ||
+      tool === 'rectangle' ||
       tool === 'circle-center' ||
       tool === 'circle-3p' ||
       tool === 'arc-center-radius' ||
       tool === 'arc-3p' ||
       tool === 'arc-center-start-end' ||
+      tool === 'copy' ||
+      tool === 'move' ||
       tool === 'trim' ||
+      tool === 'extend' ||
       tool === 'erase'
     ) {
-      this.doc.selectEntity(null);
+      if (tool !== 'copy' && tool !== 'move' && tool !== 'erase' && tool !== 'extend') {
+        this.doc.selectEntity(null);
+      }
     }
     this.state.statusText = tool === 'select'
       ? 'Seleccionar entidad'
       : tool === 'trim'
         ? 'Recortar: pique el tramo a eliminar'
+        : tool === 'extend'
+          ? 'Alargar: seleccione limites'
         : tool === 'erase'
-          ? 'Borrar: pique una entidad'
+          ? 'Borrar: seleccione objetos y confirme'
+          : tool === 'copy'
+            ? 'Copiar: indique punto origen'
+            : tool === 'move'
+              ? 'Desplazar: indique punto origen'
           : tool === 'circle-center'
             ? 'Circulo: indique centro'
             : tool === 'circle-3p'
@@ -2039,27 +3308,41 @@ class CadController {
                   ? 'Arco 3 puntos: indique primer punto'
                   : tool === 'arc-center-start-end'
                     ? 'Arco centro-inicio-final: indique centro'
-                    : 'Linea por dos puntos';
+                    : tool === 'rectangle'
+                      ? 'Rectangulo: indique primera esquina'
+                      : 'Linea por dos puntos';
     selectToolButton.classList.toggle('is-active', tool === 'select');
     lineToolButton.classList.toggle('is-active', tool === 'line');
+    rectangleToolButton.classList.toggle('is-active', tool === 'rectangle');
     circleToolButton.classList.toggle('is-active', tool === 'circle-center' || tool === 'circle-3p');
     arcToolButton.classList.toggle(
       'is-active',
       tool === 'arc-center-radius' || tool === 'arc-3p' || tool === 'arc-center-start-end',
     );
     trimToolButton.classList.toggle('is-active', tool === 'trim');
+    extendToolButton.classList.toggle('is-active', tool === 'extend');
+    copyToolButton.classList.toggle('is-active', tool === 'copy');
+    moveToolButton.classList.toggle('is-active', tool === 'move');
     eraseToolButton.classList.toggle('is-active', tool === 'erase');
     toolFlyoutCommandButtons.forEach((button) => {
       button.classList.toggle('is-active', button.dataset.command === tool);
     });
     this.canvas.classList.toggle('is-select-tool', tool === 'select');
-    this.canvas.classList.toggle('is-line-tool', tool === 'line');
+    this.canvas.classList.toggle('is-line-tool', tool === 'line' || tool === 'rectangle');
     this.canvas.classList.toggle('is-circle-tool', tool === 'circle-center' || tool === 'circle-3p');
     this.canvas.classList.toggle(
       'is-arc-tool',
       tool === 'arc-center-radius' || tool === 'arc-3p' || tool === 'arc-center-start-end',
     );
     this.canvas.classList.toggle('is-trim-tool', tool === 'trim');
+    this.canvas.classList.toggle('is-extend-tool', tool === 'extend');
+    this.canvas.classList.toggle('is-copy-tool', tool === 'copy' && this.state.copyDraft?.selecting);
+    this.canvas.classList.toggle('is-move-tool', tool === 'move' && this.state.moveDraft?.selecting);
+    this.canvas.classList.toggle(
+      'is-point-input-tool',
+      (tool === 'copy' && this.state.copyDraft && !this.state.copyDraft.selecting) ||
+        (tool === 'move' && this.state.moveDraft && !this.state.moveDraft.selecting),
+    );
     this.canvas.classList.toggle('is-erase-tool', tool === 'erase');
     this.updateUiStatus();
     this.renderer.draw();
@@ -2067,8 +3350,10 @@ class CadController {
 
   findEntityAt(point) {
     const tolerance = 7 / this.state.viewScale;
-    for (let index = this.doc.entities.length - 1; index >= 0; index -= 1) {
-      const entity = this.doc.entities[index];
+    const pickBounds = expandBounds(createBounds(point.x, point.y, point.x, point.y), tolerance);
+    const candidates = this.doc.queryBounds(pickBounds);
+    for (let index = candidates.length - 1; index >= 0; index -= 1) {
+      const entity = candidates[index];
       if (entity.type === 'LINE' &&
           distancePointToSegment(point, entity.start, entity.end) <= tolerance) {
         return entity;
@@ -2083,11 +3368,145 @@ class CadController {
     return null;
   }
 
+  updateCanvasCursorMode() {
+    this.canvas.classList.toggle('is-copy-tool', this.state.tool === 'copy' && this.state.copyDraft?.selecting);
+    this.canvas.classList.toggle('is-move-tool', this.state.tool === 'move' && this.state.moveDraft?.selecting);
+    this.canvas.classList.toggle(
+      'is-point-input-tool',
+      (this.state.tool === 'copy' && this.state.copyDraft && !this.state.copyDraft.selecting) ||
+        (this.state.tool === 'move' && this.state.moveDraft && !this.state.moveDraft.selecting),
+    );
+  }
+
+  isIdleForCommandRepeat() {
+    return this.state.tool === 'select' &&
+      !this.state.pendingLineStart &&
+      !this.state.circleDraft &&
+      !this.state.arcDraft &&
+      !this.state.copyDraft &&
+      !this.state.moveDraft &&
+      !this.state.eraseDraft &&
+      !this.state.extendDraft &&
+      !this.state.selectionWindow &&
+      !this.state.selectedGrip &&
+      !this.gripDragState &&
+      !this.state.distanceInput;
+  }
+
+  repeatLastCommand() {
+    if (!this.state.lastCommand || !REPEATABLE_COMMANDS.has(this.state.lastCommand)) {
+      this.state.statusText = 'No hay comando anterior';
+      return true;
+    }
+
+    runCommand(this.state.lastCommand);
+    this.state.statusText = `Repetido: ${commandLabel(this.state.lastCommand)}`;
+    return true;
+  }
+
+  cancelCurrentCommand() {
+    if (
+      this.state.tool === 'line' ||
+      this.state.tool === 'rectangle' ||
+      this.state.tool === 'circle-center' ||
+      this.state.tool === 'circle-3p' ||
+      this.state.tool === 'arc-center-radius' ||
+      this.state.tool === 'arc-3p' ||
+      this.state.tool === 'arc-center-start-end' ||
+      this.state.tool === 'copy' ||
+      this.state.tool === 'move' ||
+      this.state.tool === 'trim' ||
+      this.state.tool === 'extend' ||
+      this.state.tool === 'erase' ||
+      this.state.pendingLineStart ||
+      this.state.rectangleDraft ||
+      this.state.circleDraft ||
+      this.state.arcDraft ||
+      this.state.copyDraft ||
+      this.state.moveDraft ||
+      this.state.eraseDraft ||
+      this.state.extendDraft
+    ) {
+      this.setTool('select');
+      this.state.statusText = 'Cancelado';
+      return true;
+    }
+
+    this.state.selectedGrip = null;
+    this.doc.selectEntity(null);
+    this.state.distanceInput = '';
+    this.gripDragState = null;
+    this.state.statusText = 'Seleccion limpiada';
+    return false;
+  }
+
+  handleCommandEnter() {
+    if (this.state.tool === 'copy' && this.state.copyDraft?.selecting) {
+      return this.confirmCopySelection();
+    }
+    if (this.state.tool === 'move' && this.state.moveDraft?.selecting) {
+      return this.confirmMoveSelection();
+    }
+    if (this.state.tool === 'erase' && this.state.eraseDraft?.selecting) {
+      return this.confirmEraseSelection();
+    }
+    if (this.state.tool === 'extend' && this.state.extendDraft?.phase === 'boundaries') {
+      return this.confirmExtendBoundaries();
+    }
+    if (this.state.tool === 'extend' && this.state.extendDraft?.phase === 'targets') {
+      this.setTool('select');
+      this.doc.clearSelection();
+      this.state.statusText = 'Alargar terminado';
+      return true;
+    }
+    if (this.state.distanceInput && this.handleDistanceInputKey({ key: 'Enter' })) {
+      return true;
+    }
+    if (this.state.pendingLineStart && this.state.tool === 'line') {
+      this.setTool('select');
+      this.state.statusText = 'Linea terminada';
+      return true;
+    }
+    if (
+      this.state.tool === 'line' ||
+      this.state.tool === 'rectangle' ||
+      this.state.tool === 'circle-center' ||
+      this.state.tool === 'circle-3p' ||
+      this.state.tool === 'arc-center-radius' ||
+      this.state.tool === 'arc-3p' ||
+      this.state.tool === 'arc-center-start-end' ||
+      this.state.tool === 'copy' ||
+      this.state.tool === 'move' ||
+      this.state.tool === 'trim' ||
+      this.state.tool === 'extend' ||
+      this.state.tool === 'erase' ||
+      this.state.circleDraft ||
+      this.state.rectangleDraft ||
+      this.state.arcDraft ||
+      this.state.copyDraft ||
+      this.state.moveDraft ||
+      this.state.eraseDraft ||
+      this.state.extendDraft
+    ) {
+      this.setTool('select');
+      this.state.statusText = 'Orden terminada';
+      return true;
+    }
+
+    if (this.isIdleForCommandRepeat()) {
+      return this.repeatLastCommand();
+    }
+
+    return false;
+  }
+
   findGripAt(point) {
     const tolerance = 8 / this.state.viewScale;
+    const gripBounds = expandBounds(createBounds(point.x, point.y, point.x, point.y), tolerance);
+    const nearbyEntities = this.doc.queryBounds(gripBounds);
     const candidates = this.doc.selectedEntity
-      ? [this.doc.selectedEntity, ...this.doc.entities.filter((entity) => entity !== this.doc.selectedEntity)]
-      : this.doc.entities;
+      ? [this.doc.selectedEntity, ...nearbyEntities.filter((entity) => entity !== this.doc.selectedEntity)]
+      : nearbyEntities;
 
     for (const entity of candidates) {
       if (entity.type !== 'LINE') {
@@ -2112,6 +3531,41 @@ class CadController {
 
   activeGripReferencePoint() {
     return gripReferencePoint(this.state.selectedGrip) || this.activeGripPoint();
+  }
+
+  activeGripLinkedPoints() {
+    const grip = this.state.selectedGrip;
+    const gripPoint = this.activeGripPoint();
+    if (!grip || !gripPoint || !grip.entity.groupId) {
+      return gripPoint ? [gripPoint] : [];
+    }
+
+    const linkedPoints = new Set([gripPoint]);
+    for (const entity of this.doc.groupEntities(grip.entity)) {
+      if (entity.type !== 'LINE') {
+        continue;
+      }
+      for (const key of ['start', 'end']) {
+        if (distance(entity[key], gripPoint) <= SNAP_THRESHOLD) {
+          linkedPoints.add(entity[key]);
+        }
+      }
+    }
+    return [...linkedPoints];
+  }
+
+  moveActiveGripPointTo(targetPoint) {
+    const gripPoint = this.activeGripPoint();
+    if (!gripPoint || !targetPoint || distance(gripPoint, targetPoint) <= SNAP_THRESHOLD) {
+      return false;
+    }
+
+    for (const point of this.activeGripLinkedPoints()) {
+      point.x = targetPoint.x;
+      point.y = targetPoint.y;
+    }
+    this.doc.markDirty();
+    return true;
   }
 
   resolveGripTarget(point) {
@@ -2146,9 +3600,14 @@ class CadController {
       ? projectPointToLine(target, this.gripDragState.axisPoint, this.gripDragState.axisDirection)
       : target;
     const gripPoint = this.activeGripPoint();
-    gripPoint.x = constrainedTarget.x;
-    gripPoint.y = constrainedTarget.y;
-    return true;
+    if (!gripPoint || distance(gripPoint, constrainedTarget) <= SNAP_THRESHOLD) {
+      return false;
+    }
+    if (this.gripDragState && !this.gripDragState.historyRecorded) {
+      this.doc.recordHistory();
+      this.gripDragState.historyRecorded = true;
+    }
+    return this.moveActiveGripPointTo(constrainedTarget);
   }
 
   moveSelectedGripByDistance(distanceValue) {
@@ -2163,8 +3622,11 @@ class CadController {
       return false;
     }
 
-    origin.x = targetPoint.x;
-    origin.y = targetPoint.y;
+    if (distance(origin, targetPoint) <= SNAP_THRESHOLD) {
+      return false;
+    }
+    this.doc.recordHistory();
+    this.moveActiveGripPointTo(targetPoint);
     this.state.statusText = `Punto desplazado ${formatNumber(distanceValue)} ${UNITS_LABEL}`;
     return true;
   }
@@ -2173,8 +3635,310 @@ class CadController {
     if (!entity) {
       return false;
     }
-    applyLineStyleToEntity(entity, activeLineStyleId());
+    return this.applyActiveLineStyleToEntities(this.doc.groupEntities(entity));
+  }
+
+  applyActiveLineStyleToEntities(entities) {
+    const nextStyle = activeLineStyleId();
+    const changedEntities = entities.filter((entity) => normalizeLineStyleId(entity.lineStyle) !== nextStyle);
+    if (!changedEntities.length) {
+      return false;
+    }
+    this.doc.recordHistory();
+    changedEntities.forEach((entity) => applyLineStyleToEntity(entity, nextStyle));
+    this.doc.markDirty();
     return true;
+  }
+
+  startCopy() {
+    const sourceEntities = [...this.doc.selectedEntities];
+    this.state.lastCopy = null;
+    this.setTool('copy');
+    this.state.copyDraft = {
+      sourceEntities,
+      basePoint: null,
+      selecting: !sourceEntities.length,
+    };
+    this.state.statusText = sourceEntities.length
+      ? `Copiar ${sourceEntities.length} entidad${sourceEntities.length === 1 ? '' : 'es'} - indique punto origen`
+      : 'Copiar: seleccione objetos y confirme con Enter, Espacio o clic derecho';
+    this.updateUiStatus();
+    this.renderer.draw();
+    return true;
+  }
+
+  startMove() {
+    const sourceEntities = [...this.doc.selectedEntities];
+    this.setTool('move');
+    this.state.moveDraft = {
+      sourceEntities,
+      basePoint: null,
+      selecting: !sourceEntities.length,
+    };
+    this.state.statusText = sourceEntities.length
+      ? `Desplazar ${sourceEntities.length} entidad${sourceEntities.length === 1 ? '' : 'es'} - indique punto origen`
+      : 'Desplazar: seleccione objetos y confirme con Enter, Espacio o clic derecho';
+    this.updateUiStatus();
+    this.renderer.draw();
+    return true;
+  }
+
+  startErase() {
+    const selectedCount = this.doc.selectedEntities.size;
+    this.setTool('erase');
+    this.state.eraseDraft = { selecting: true };
+    this.state.statusText = selectedCount
+      ? `Borrar ${selectedCount} entidad${selectedCount === 1 ? '' : 'es'} - seleccione mas o confirme`
+      : 'Borrar: seleccione objetos y confirme con Enter, Espacio o clic derecho';
+    this.updateUiStatus();
+    this.renderer.draw();
+    return true;
+  }
+
+  startExtend() {
+    const selectedBoundaries = [...this.doc.selectedEntities];
+    this.setTool('extend');
+    if (selectedBoundaries.length) {
+      this.doc.selectEntities(selectedBoundaries);
+    }
+    this.state.extendDraft = {
+      phase: 'boundaries',
+      boundaries: selectedBoundaries,
+    };
+    this.state.statusText = selectedBoundaries.length
+      ? `Alargar: ${selectedBoundaries.length} limite${selectedBoundaries.length === 1 ? '' : 's'} seleccionado${selectedBoundaries.length === 1 ? '' : 's'} - confirme o seleccione mas`
+      : 'Alargar: seleccione limites y confirme';
+    this.updateUiStatus();
+    this.renderer.draw();
+    return true;
+  }
+
+  confirmCopySelection() {
+    if (!this.state.copyDraft?.selecting) {
+      return false;
+    }
+
+    const sourceEntities = [...this.doc.selectedEntities];
+    if (!sourceEntities.length) {
+      this.state.statusText = 'Seleccione entidades para copiar';
+      this.updateUiStatus();
+      this.renderer.draw();
+      return false;
+    }
+
+    this.state.copyDraft = {
+      sourceEntities,
+      basePoint: null,
+      selecting: false,
+    };
+    this.state.statusText = `Copiar ${sourceEntities.length} entidad${sourceEntities.length === 1 ? '' : 'es'} - indique punto origen`;
+    this.updateUiStatus();
+    this.renderer.draw();
+    return true;
+  }
+
+  confirmMoveSelection() {
+    if (!this.state.moveDraft?.selecting) {
+      return false;
+    }
+
+    const sourceEntities = [...this.doc.selectedEntities];
+    if (!sourceEntities.length) {
+      this.state.statusText = 'Seleccione entidades para desplazar';
+      this.updateUiStatus();
+      this.renderer.draw();
+      return false;
+    }
+
+    this.state.moveDraft = {
+      sourceEntities,
+      basePoint: null,
+      selecting: false,
+    };
+    this.state.statusText = `Desplazar ${sourceEntities.length} entidad${sourceEntities.length === 1 ? '' : 'es'} - indique punto origen`;
+    this.updateUiStatus();
+    this.renderer.draw();
+    return true;
+  }
+
+  confirmEraseSelection() {
+    if (!this.state.eraseDraft?.selecting) {
+      return false;
+    }
+
+    const entities = [...this.doc.selectedEntities];
+    if (!entities.length) {
+      this.state.statusText = 'Seleccione entidades para borrar';
+      this.updateUiStatus();
+      this.renderer.draw();
+      return false;
+    }
+
+    const removedCount = this.doc.removeEntities(entities);
+    this.state.eraseDraft = null;
+    this.setTool('select');
+    this.doc.clearSelection();
+    this.state.statusText = removedCount
+      ? `${removedCount} entidad${removedCount === 1 ? '' : 'es'} borrada${removedCount === 1 ? '' : 's'}`
+      : 'No se pudo borrar';
+    return removedCount > 0;
+  }
+
+  confirmExtendBoundaries() {
+    if (!this.state.extendDraft || this.state.extendDraft.phase !== 'boundaries') {
+      return false;
+    }
+
+    const boundaries = [...this.doc.selectedEntities];
+    if (!boundaries.length) {
+      this.state.statusText = 'Seleccione entidades limite para alargar';
+      this.updateUiStatus();
+      this.renderer.draw();
+      return false;
+    }
+
+    this.state.extendDraft = {
+      phase: 'targets',
+      boundaries,
+    };
+    this.doc.clearSelection();
+    this.state.statusText = `Alargar: ${boundaries.length} limite${boundaries.length === 1 ? '' : 's'} - pique lineas o arcos a alargar`;
+    this.updateUiStatus();
+    this.renderer.draw();
+    return true;
+  }
+
+  extendEntities(entities, pickPoint = null) {
+    if (!this.state.extendDraft?.boundaries?.length) {
+      this.state.statusText = 'No hay limites para alargar';
+      return 0;
+    }
+
+    const targetEntities = entities.filter((entity) =>
+      (entity?.type === 'LINE' || entity?.type === 'ARC') &&
+      !this.state.extendDraft.boundaries.includes(entity),
+    );
+    if (!targetEntities.length) {
+      this.state.statusText = 'Seleccione lineas o arcos para alargar';
+      return 0;
+    }
+
+    const before = this.doc.snapshot();
+    let extendedCount = 0;
+    for (const entity of targetEntities) {
+      const extended = entity.type === 'LINE'
+        ? extendLineToBoundaries(entity, this.state.extendDraft.boundaries, pickPoint)
+        : extendArcToBoundaries(entity, this.state.extendDraft.boundaries, pickPoint);
+      if (extended) {
+        extendedCount += 1;
+      }
+    }
+
+    if (!extendedCount) {
+      this.state.statusText = 'No se encontro limite valido para alargar';
+      return 0;
+    }
+
+    this.doc.undoStack.push(before);
+    if (this.doc.undoStack.length > HISTORY_LIMIT) {
+      this.doc.undoStack.shift();
+    }
+    this.doc.redoStack = [];
+    this.doc.markDirty();
+    this.doc.clearSelection();
+    this.state.statusText = `${extendedCount} entidad${extendedCount === 1 ? '' : 'es'} alargada${extendedCount === 1 ? '' : 's'}`;
+    return extendedCount;
+  }
+
+  copySelectionTo(targetPoint) {
+    const copyDraft = this.state.copyDraft;
+    if (!copyDraft?.basePoint || !targetPoint) {
+      return false;
+    }
+
+    const vector = {
+      x: targetPoint.x - copyDraft.basePoint.x,
+      y: targetPoint.y - copyDraft.basePoint.y,
+    };
+    if (Math.hypot(vector.x, vector.y) <= SNAP_THRESHOLD) {
+      this.state.statusText = 'Desplazamiento nulo';
+      return false;
+    }
+
+    const copies = cloneEntitiesWithOffset(copyDraft.sourceEntities, vector, { remapGroups: true });
+    this.doc.addEntities(copies);
+    this.state.lastCopy = {
+      sourceEntities: copyDraft.sourceEntities,
+      vector,
+    };
+    this.state.copyDraft = null;
+    this.setTool('select');
+    this.doc.clearSelection();
+    this.state.statusText = `${copies.length} entidad${copies.length === 1 ? '' : 'es'} copiada${copies.length === 1 ? '' : 's'} - escriba x2, x3... para repetir`;
+    return true;
+  }
+
+  repeatLastCopy(count) {
+    const lastCopy = this.state.lastCopy;
+    if (!lastCopy || count < 2) {
+      return false;
+    }
+
+    const copies = [];
+    for (let step = 2; step <= count; step += 1) {
+      const vector = {
+        x: lastCopy.vector.x * step,
+        y: lastCopy.vector.y * step,
+      };
+      copies.push(...cloneEntitiesWithOffset(lastCopy.sourceEntities, vector, { remapGroups: true }));
+    }
+
+    this.doc.addEntities(copies);
+    this.doc.clearSelection();
+    this.state.statusText = `Matriz lineal: ${count} copias en total`;
+    return true;
+  }
+
+  moveSelectionTo(targetPoint) {
+    const moveDraft = this.state.moveDraft;
+    if (!moveDraft?.basePoint || !targetPoint) {
+      return false;
+    }
+
+    const vector = {
+      x: targetPoint.x - moveDraft.basePoint.x,
+      y: targetPoint.y - moveDraft.basePoint.y,
+    };
+    if (Math.hypot(vector.x, vector.y) <= SNAP_THRESHOLD) {
+      this.state.statusText = 'Desplazamiento nulo';
+      return false;
+    }
+
+    this.doc.recordHistory();
+    moveDraft.sourceEntities.forEach((entity) => moveEntityByVector(entity, vector));
+    this.doc.markDirty();
+    const count = moveDraft.sourceEntities.length;
+    this.state.moveDraft = null;
+    this.setTool('select');
+    this.doc.clearSelection();
+    this.state.statusText = `${count} entidad${count === 1 ? '' : 'es'} desplazada${count === 1 ? '' : 's'}`;
+    return true;
+  }
+
+  selectedEntitiesFromWindow(selectionWindow) {
+    if (!selectionWindow?.currentWorld) {
+      return [];
+    }
+
+    const selectionBounds = normalizeBoundsFromPoints(selectionWindow.startWorld, selectionWindow.currentWorld);
+    const mode = selectionWindowMode(selectionWindow);
+    const matchingEntities = this.doc.queryBounds(selectionBounds).filter((entity) => {
+      const entityBounds = entity.bounds();
+      return mode === 'window'
+        ? boundsContainsBounds(selectionBounds, entityBounds)
+        : boundsIntersectsBounds(selectionBounds, entityBounds);
+    });
+    return this.doc.expandEntityGroups(matchingEntities);
   }
 
   createLineTo(point, continueFromEnd = false) {
@@ -2186,8 +3950,41 @@ class CadController {
     this.state.activeLineStyle = activeLineStyleId();
     const style = getLineStyle(activeLineStyleId());
     this.doc.addEntity(new LineEntity(this.state.pendingLineStart, point, { lineStyle: style.id }));
-    this.state.statusText = `Linea ${style.label.toLowerCase()} creada (${this.doc.entities.length})`;
+    this.state.statusText = continueFromEnd
+      ? `Linea ${style.label.toLowerCase()} creada - indique siguiente punto`
+      : `Linea ${style.label.toLowerCase()} creada (${this.doc.entities.length})`;
     this.state.pendingLineStart = continueFromEnd ? point : null;
+    return true;
+  }
+
+  createRectangleTo(point) {
+    const firstPoint = this.state.rectangleDraft?.firstPoint;
+    if (!firstPoint) {
+      return false;
+    }
+
+    if (
+      Math.abs(point.x - firstPoint.x) <= SNAP_THRESHOLD ||
+      Math.abs(point.y - firstPoint.y) <= SNAP_THRESHOLD
+    ) {
+      this.state.statusText = 'Rectangulo no valido';
+      return false;
+    }
+
+    this.state.activeLineStyle = activeLineStyleId();
+    const style = getLineStyle(activeLineStyleId());
+    const groupId = createEntityGroupId('polyline');
+    const topRight = { x: point.x, y: firstPoint.y };
+    const bottomLeft = { x: firstPoint.x, y: point.y };
+    const entities = [
+      new LineEntity(firstPoint, topRight, { lineStyle: style.id, groupId }),
+      new LineEntity(topRight, point, { lineStyle: style.id, groupId }),
+      new LineEntity(point, bottomLeft, { lineStyle: style.id, groupId }),
+      new LineEntity(bottomLeft, firstPoint, { lineStyle: style.id, groupId }),
+    ];
+    this.doc.addEntities(entities);
+    this.state.rectangleDraft = null;
+    this.state.statusText = `Rectangulo ${style.label.toLowerCase()} creado (${this.doc.entities.length})`;
     return true;
   }
 
@@ -2341,23 +4138,37 @@ class CadController {
     const arcRadiusDraft = this.state.arcDraft?.mode === 'center-radius' &&
       this.state.arcDraft.points.length === 1;
     const radiusDraft = circleCenterDraft || arcRadiusDraft;
-    if (!this.state.pendingLineStart && !this.state.selectedGrip && !radiusDraft) {
+    const pointDraft = Boolean(
+      this.state.rectangleDraft?.firstPoint ||
+      this.state.circleDraft?.points.length ||
+      this.state.arcDraft?.points.length ||
+      this.state.copyDraft?.basePoint ||
+      this.state.moveDraft?.basePoint,
+    );
+    if (!this.state.pendingLineStart && !this.state.selectedGrip && !radiusDraft && !pointDraft && !this.state.lastCopy) {
       return false;
     }
 
-    if (/^[0-9]$/.test(event.key)) {
+    if ((event.key.toLowerCase() === 'x' && !this.state.distanceInput) || /^[0-9]$/.test(event.key) || event.key === '-') {
       this.state.distanceInput += event.key;
-      this.state.statusText = radiusDraft
+      const multiplier = parseCopyMultiplier(this.state.distanceInput);
+      this.state.statusText = multiplier
+        ? `Repetir copia: x${multiplier}`
+        : parseRelativeCoordinateInput(this.state.distanceInput)
+        ? `Coordenadas: ${this.state.distanceInput} ${UNITS_LABEL}`
+        : radiusDraft
         ? `Radio: ${this.state.distanceInput} ${UNITS_LABEL}`
         : `Distancia: ${this.state.distanceInput} ${UNITS_LABEL}`;
       return true;
     }
 
     if (event.key === '.' || event.key === ',') {
-      if (!/[.,]/.test(this.state.distanceInput)) {
+      if (event.key === '.' || !this.state.distanceInput.includes(',')) {
         this.state.distanceInput += event.key;
       }
-      this.state.statusText = radiusDraft
+      this.state.statusText = parseRelativeCoordinateInput(this.state.distanceInput)
+        ? `Coordenadas: ${this.state.distanceInput} ${UNITS_LABEL}`
+        : radiusDraft
         ? `Radio: ${this.state.distanceInput} ${UNITS_LABEL}`
         : `Distancia: ${this.state.distanceInput} ${UNITS_LABEL}`;
       return true;
@@ -2374,9 +4185,70 @@ class CadController {
     }
 
     if (event.key === 'Enter') {
+      const multiplier = parseCopyMultiplier(this.state.distanceInput);
+      if (multiplier !== null) {
+        if (this.repeatLastCopy(multiplier)) {
+          this.state.distanceInput = '';
+        }
+        else {
+          this.state.statusText = 'No hay copia anterior para repetir';
+        }
+        return true;
+      }
+
       const inputDistance = parseDistanceInput(this.state.distanceInput);
+      const activeGripPoint = this.activeGripPoint();
+      const coordinateOrigin = this.state.copyDraft?.basePoint ||
+        this.state.moveDraft?.basePoint ||
+        activeGripPoint ||
+        this.state.pendingLineStart ||
+        this.state.rectangleDraft?.firstPoint ||
+        this.state.circleDraft?.points[0] ||
+        this.state.arcDraft?.points[0] ||
+        null;
+      const coordinateTarget = pointFromRelativeCoordinates(coordinateOrigin, this.state.distanceInput);
+
+      if (this.state.copyDraft?.basePoint) {
+        const cursor = resolveCursorPoint(this.state.mouseWorld, this.state);
+        const targetPoint = coordinateTarget ||
+          (inputDistance !== null && cursor
+            ? pointFromDistance(this.state.copyDraft.basePoint, cursor, inputDistance)
+            : null);
+        if (targetPoint && this.copySelectionTo(targetPoint)) {
+          this.state.distanceInput = '';
+        }
+        else {
+          this.state.statusText = 'Destino de copia no valido';
+        }
+        return true;
+      }
+
+      if (this.state.moveDraft?.basePoint) {
+        const cursor = resolveCursorPoint(this.state.mouseWorld, this.state);
+        const targetPoint = coordinateTarget ||
+          (inputDistance !== null && cursor
+            ? pointFromDistance(this.state.moveDraft.basePoint, cursor, inputDistance)
+            : null);
+        if (targetPoint && this.moveSelectionTo(targetPoint)) {
+          this.state.distanceInput = '';
+        }
+        else {
+          this.state.statusText = 'Destino de desplazamiento no valido';
+        }
+        return true;
+      }
+
       if (this.state.selectedGrip) {
-        if (inputDistance !== null && this.moveSelectedGripByDistance(inputDistance)) {
+        if (coordinateTarget) {
+          const gripPoint = this.activeGripPoint();
+          if (distance(gripPoint, coordinateTarget) > SNAP_THRESHOLD) {
+            this.doc.recordHistory();
+            this.moveActiveGripPointTo(coordinateTarget);
+          }
+          this.state.distanceInput = '';
+          this.state.statusText = 'Punto desplazado por coordenadas';
+        }
+        else if (inputDistance !== null && this.moveSelectedGripByDistance(inputDistance)) {
           this.state.distanceInput = '';
         }
         else {
@@ -2386,7 +4258,9 @@ class CadController {
       }
 
       if (circleCenterDraft) {
-        if (inputDistance !== null && this.createCircle(this.state.circleDraft.points[0], inputDistance)) {
+        const center = this.state.circleDraft.points[0];
+        const radius = coordinateTarget ? distance(center, coordinateTarget) : inputDistance;
+        if (radius !== null && this.createCircle(center, radius)) {
           this.state.distanceInput = '';
         }
         else {
@@ -2396,10 +4270,11 @@ class CadController {
       }
 
       if (arcRadiusDraft) {
-        if (inputDistance !== null) {
-          const center = this.state.arcDraft.points[0];
-          this.state.arcDraft.radius = inputDistance;
-          this.state.arcDraft.points.push({ x: center.x + inputDistance, y: center.y });
+        const center = this.state.arcDraft.points[0];
+        const radius = coordinateTarget ? distance(center, coordinateTarget) : inputDistance;
+        if (radius !== null) {
+          this.state.arcDraft.radius = radius;
+          this.state.arcDraft.points.push(coordinateTarget || { x: center.x + radius, y: center.y });
           this.state.distanceInput = '';
           this.state.statusText = 'Radio indicado - indique punto inicial';
         }
@@ -2409,10 +4284,36 @@ class CadController {
         return true;
       }
 
+      if (coordinateTarget && this.state.circleDraft?.points.length) {
+        this.handleCirclePoint(coordinateTarget);
+        this.state.distanceInput = '';
+        return true;
+      }
+
+      if (coordinateTarget && this.state.arcDraft?.points.length) {
+        this.handleArcPoint(coordinateTarget);
+        this.state.distanceInput = '';
+        return true;
+      }
+
+      if (this.state.rectangleDraft?.firstPoint) {
+        const directionPoint = resolveCursorPoint(this.state.mouseWorld, this.state);
+        const targetPoint = coordinateTarget || (inputDistance !== null && directionPoint
+          ? pointFromDistance(this.state.rectangleDraft.firstPoint, directionPoint, inputDistance)
+          : null);
+        if (targetPoint && this.createRectangleTo(targetPoint)) {
+          this.state.distanceInput = '';
+        }
+        else {
+          this.state.statusText = 'Rectangulo no valido';
+        }
+        return true;
+      }
+
       const directionPoint = resolveCursorPoint(this.state.mouseWorld, this.state);
-      const endPoint = inputDistance !== null && directionPoint
+      const endPoint = coordinateTarget || (inputDistance !== null && directionPoint
         ? pointFromDistance(this.state.pendingLineStart, directionPoint, inputDistance)
-        : null;
+        : null);
 
       if (endPoint) {
         this.createLineTo(endPoint, true);
@@ -2442,6 +4343,26 @@ class CadController {
     return { x: event.deltaX, y: event.deltaY };
   }
 
+  isMouseWheelZoom(event, delta) {
+    const lineMode = typeof WheelEvent === 'undefined' ? 1 : WheelEvent.DOM_DELTA_LINE;
+    if (event.deltaMode === lineMode) {
+      return true;
+    }
+
+    const absX = Math.abs(delta.x);
+    const absY = Math.abs(delta.y);
+    if (absY <= SNAP_THRESHOLD || absX > 1) {
+      return false;
+    }
+
+    const wheelDeltaY = Math.abs(Number(event.wheelDeltaY || 0));
+    if (wheelDeltaY >= 100 && Math.abs(wheelDeltaY % 120) <= SNAP_THRESHOLD) {
+      return true;
+    }
+
+    return absY >= 80;
+  }
+
   onPointerDown(event) {
     event.preventDefault();
     this.state.activeLineStyle = activeLineStyleId();
@@ -2458,6 +4379,15 @@ class CadController {
         dragging: false,
       };
       this.canvas.classList.add('is-panning');
+      this.renderer.draw();
+      return;
+    }
+
+    if (event.button === 2) {
+      if (!this.handleCommandEnter()) {
+        this.cancelCurrentCommand();
+      }
+      this.updateUiStatus();
       this.renderer.draw();
       return;
     }
@@ -2488,19 +4418,114 @@ class CadController {
       }
 
       const entity = this.findEntityAt(worldPoint);
-      this.doc.selectEntity(entity);
       this.state.selectedGrip = null;
       this.state.distanceInput = '';
       if (entity) {
+        this.doc.selectEntity(entity);
         this.applyActiveLineStyleToEntity(entity);
+        const activeStyle = getLineStyle(activeLineStyleId());
+        const selectedEntities = [...this.doc.selectedEntities];
+        const entityLabel = entity.groupId
+          ? 'Polilinea'
+          : entity.type === 'CIRCLE'
+          ? 'Circulo'
+          : entity.type === 'ARC' ? 'Arco' : 'Linea';
+        const selectedLength = selectedEntities.reduce((total, selectedEntity) => total + selectedEntity.length(), 0);
+        this.state.statusText = `${entityLabel} seleccionada - capa ${activeStyle.label} - ${formatNumber(selectedLength)} ${UNITS_LABEL}`;
+        this.updateUiStatus();
+        this.renderer.draw();
+        return;
       }
-      const activeStyle = getLineStyle(activeLineStyleId());
-      const entityLabel = entity?.type === 'CIRCLE'
-        ? 'Circulo'
-        : entity?.type === 'ARC' ? 'Arco' : 'Linea';
-      this.state.statusText = entity
-        ? `${entityLabel} seleccionada - capa ${activeStyle.label} - ${formatNumber(entity.length())} ${UNITS_LABEL}`
-        : 'Sin seleccion';
+
+      this.state.selectionWindow = {
+        startWorld: { ...worldPoint },
+        currentWorld: { ...worldPoint },
+        startScreen: { ...this.state.mouseScreen },
+        dragging: false,
+      };
+      this.state.statusText = 'Ventana de seleccion';
+      this.updateUiStatus();
+      this.renderer.draw();
+      return;
+    }
+
+    if (this.state.tool === 'copy') {
+      if (!this.state.copyDraft) {
+        this.startCopy();
+        return;
+      }
+
+      if (this.state.copyDraft.selecting) {
+        const entity = this.findEntityAt(worldPoint);
+        if (entity) {
+          this.doc.addSelectedEntities([entity]);
+          this.state.statusText = `${this.doc.selectedEntities.size} entidad${this.doc.selectedEntities.size === 1 ? '' : 'es'} seleccionada${this.doc.selectedEntities.size === 1 ? '' : 's'} para copiar`;
+        }
+        else {
+          this.state.selectionWindow = {
+            startWorld: { ...worldPoint },
+            currentWorld: { ...worldPoint },
+            startScreen: { ...this.state.mouseScreen },
+            dragging: false,
+            purpose: 'copy',
+          };
+          this.state.statusText = 'Ventana de seleccion para copiar';
+        }
+        this.updateUiStatus();
+        this.renderer.draw();
+        return;
+      }
+
+      const point = this.resolveInputPoint(worldPoint);
+      if (!this.state.copyDraft.basePoint) {
+        this.state.copyDraft.basePoint = point;
+        this.state.statusText = 'Punto origen indicado - indique destino';
+      }
+      else {
+        this.copySelectionTo(point);
+      }
+      this.state.distanceInput = '';
+      this.updateUiStatus();
+      this.renderer.draw();
+      return;
+    }
+
+    if (this.state.tool === 'move') {
+      if (!this.state.moveDraft) {
+        this.startMove();
+        return;
+      }
+
+      if (this.state.moveDraft.selecting) {
+        const entity = this.findEntityAt(worldPoint);
+        if (entity) {
+          this.doc.addSelectedEntities([entity]);
+          this.state.statusText = `${this.doc.selectedEntities.size} entidad${this.doc.selectedEntities.size === 1 ? '' : 'es'} seleccionada${this.doc.selectedEntities.size === 1 ? '' : 's'} para desplazar`;
+        }
+        else {
+          this.state.selectionWindow = {
+            startWorld: { ...worldPoint },
+            currentWorld: { ...worldPoint },
+            startScreen: { ...this.state.mouseScreen },
+            dragging: false,
+            purpose: 'move',
+          };
+          this.state.statusText = 'Ventana de seleccion para desplazar';
+        }
+        this.updateUiStatus();
+        this.renderer.draw();
+        return;
+      }
+
+      const point = this.resolveInputPoint(worldPoint);
+      if (!this.state.moveDraft.basePoint) {
+        this.state.moveDraft.basePoint = point;
+        this.state.statusText = 'Punto origen indicado - indique destino';
+      }
+      else {
+        this.moveSelectionTo(point);
+      }
+      this.state.distanceInput = '';
       this.updateUiStatus();
       this.renderer.draw();
       return;
@@ -2515,34 +4540,85 @@ class CadController {
         return;
       }
 
-      const result = entity.type === 'LINE'
-        ? trimLineEntityAtPoint(this.doc, entity, worldPoint)
-        : trimCircularEntityAtPoint(this.doc, entity, worldPoint);
+      const result = trimEntityAtPoint(this.doc, entity, worldPoint);
       this.state.selectedGrip = null;
       this.state.distanceInput = '';
       this.state.statusText = result.trimmed
-        ? `Tramo recortado - quedan ${result.keptCount} tramo${result.keptCount === 1 ? '' : 's'}`
+        ? result.grouped
+          ? `Polilinea recortada en bloque - quedan ${result.keptCount} componente${result.keptCount === 1 ? '' : 's'}`
+          : `Tramo recortado - quedan ${result.keptCount} tramo${result.keptCount === 1 ? '' : 's'}`
         : 'No se pudo recortar';
       this.updateUiStatus();
       this.renderer.draw();
       return;
     }
 
-    if (this.state.tool === 'erase') {
+    if (this.state.tool === 'extend') {
+      if (!this.state.extendDraft) {
+        this.startExtend();
+        return;
+      }
+
       const entity = this.findEntityAt(worldPoint);
-      if (!entity) {
-        this.state.statusText = 'No hay entidad para borrar';
+      if (this.state.extendDraft.phase === 'boundaries') {
+        if (entity) {
+          this.doc.addSelectedEntities([entity]);
+          this.state.statusText = `${this.doc.selectedEntities.size} limite${this.doc.selectedEntities.size === 1 ? '' : 's'} seleccionado${this.doc.selectedEntities.size === 1 ? '' : 's'} para alargar`;
+        }
+        else {
+          this.state.selectionWindow = {
+            startWorld: { ...worldPoint },
+            currentWorld: { ...worldPoint },
+            startScreen: { ...this.state.mouseScreen },
+            dragging: false,
+            purpose: 'extend-boundaries',
+          };
+          this.state.statusText = 'Ventana de limites para alargar';
+        }
         this.updateUiStatus();
         this.renderer.draw();
         return;
       }
 
-      const removed = this.doc.removeEntity(entity);
-      this.state.selectedGrip = null;
-      this.state.distanceInput = '';
-      this.state.statusText = removed
-        ? `Entidad borrada (${this.doc.entities.length} restantes)`
-        : 'No se pudo borrar';
+      if (entity) {
+        this.extendEntities([entity], worldPoint);
+      }
+      else {
+        this.state.selectionWindow = {
+          startWorld: { ...worldPoint },
+          currentWorld: { ...worldPoint },
+          startScreen: { ...this.state.mouseScreen },
+          dragging: false,
+          purpose: 'extend-targets',
+        };
+        this.state.statusText = 'Ventana de lineas o arcos a alargar';
+      }
+      this.updateUiStatus();
+      this.renderer.draw();
+      return;
+    }
+
+    if (this.state.tool === 'erase') {
+      if (!this.state.eraseDraft) {
+        this.startErase();
+        return;
+      }
+
+      const entity = this.findEntityAt(worldPoint);
+      if (entity) {
+        this.doc.addSelectedEntities([entity]);
+        this.state.statusText = `${this.doc.selectedEntities.size} entidad${this.doc.selectedEntities.size === 1 ? '' : 'es'} seleccionada${this.doc.selectedEntities.size === 1 ? '' : 's'} para borrar`;
+      }
+      else {
+        this.state.selectionWindow = {
+          startWorld: { ...worldPoint },
+          currentWorld: { ...worldPoint },
+          startScreen: { ...this.state.mouseScreen },
+          dragging: false,
+          purpose: 'erase',
+        };
+        this.state.statusText = 'Ventana de seleccion para borrar';
+      }
       this.updateUiStatus();
       this.renderer.draw();
       return;
@@ -2570,6 +4646,21 @@ class CadController {
       return;
     }
 
+    if (this.state.tool === 'rectangle') {
+      const point = this.resolveInputPoint(worldPoint);
+      if (!this.state.rectangleDraft) {
+        this.state.rectangleDraft = { firstPoint: point };
+        this.state.statusText = 'Primera esquina indicada - indique esquina opuesta';
+      }
+      else {
+        this.createRectangleTo(point);
+      }
+      this.state.distanceInput = '';
+      this.updateUiStatus();
+      this.renderer.draw();
+      return;
+    }
+
     if (this.state.tool !== 'line') {
       return;
     }
@@ -2582,7 +4673,7 @@ class CadController {
       return;
     }
 
-    this.createLineTo(point);
+    this.createLineTo(point, true);
     this.state.distanceInput = '';
     this.updateUiStatus();
     this.renderer.draw();
@@ -2590,6 +4681,25 @@ class CadController {
 
   onPointerMove(event) {
     this.updateMouse(event);
+
+    if (this.state.selectionWindow) {
+      const deltaX = this.state.mouseScreen.x - this.state.selectionWindow.startScreen.x;
+      const deltaY = this.state.mouseScreen.y - this.state.selectionWindow.startScreen.y;
+      this.state.selectionWindow.currentWorld = { ...this.state.mouseWorld };
+      this.state.selectionWindow.dragging = Math.hypot(deltaX, deltaY) > 4;
+      const mode = selectionWindowMode(this.state.selectionWindow) === 'window' ? 'ventana' : 'captura';
+      this.state.statusText = this.state.selectionWindow.purpose === 'copy'
+        ? `Seleccion para copiar por ${mode}`
+        : this.state.selectionWindow.purpose === 'move'
+          ? `Seleccion para desplazar por ${mode}`
+          : this.state.selectionWindow.purpose === 'erase'
+            ? `Seleccion para borrar por ${mode}`
+            : this.state.selectionWindow.purpose === 'extend-boundaries'
+              ? `Limites para alargar por ${mode}`
+              : this.state.selectionWindow.purpose === 'extend-targets'
+                ? `Lineas o arcos a alargar por ${mode}`
+        : `Seleccion por ${mode}`;
+    }
 
     if (this.gripDragState) {
       this.moveSelectedGripTo(this.state.mouseWorld);
@@ -2628,7 +4738,80 @@ class CadController {
     }
     if (this.gripDragState) {
       this.gripDragState = null;
+      this.doc.markDirty();
       this.state.statusText = 'Punto desplazado';
+      this.updateUiStatus();
+      this.renderer.draw();
+    }
+    if (this.state.selectionWindow) {
+      const selectionWindow = this.state.selectionWindow;
+      this.state.selectionWindow = null;
+
+      if (!selectionWindow.dragging) {
+        if (
+          selectionWindow.purpose !== 'copy' &&
+          selectionWindow.purpose !== 'move' &&
+          selectionWindow.purpose !== 'erase' &&
+          selectionWindow.purpose !== 'extend-boundaries' &&
+          selectionWindow.purpose !== 'extend-targets'
+        ) {
+          this.doc.clearSelection();
+        }
+        this.state.statusText = selectionWindow.purpose === 'copy'
+          ? 'Seleccione objetos para copiar'
+          : selectionWindow.purpose === 'move'
+            ? 'Seleccione objetos para desplazar'
+            : selectionWindow.purpose === 'erase'
+              ? 'Seleccione objetos para borrar'
+              : selectionWindow.purpose === 'extend-boundaries'
+                ? 'Seleccione limites para alargar'
+                : selectionWindow.purpose === 'extend-targets'
+                  ? 'Seleccione lineas o arcos para alargar'
+          : 'Sin seleccion';
+      }
+      else {
+        const entities = this.selectedEntitiesFromWindow(selectionWindow);
+        if (
+          selectionWindow.purpose === 'copy' ||
+          selectionWindow.purpose === 'move' ||
+          selectionWindow.purpose === 'erase' ||
+          selectionWindow.purpose === 'extend-boundaries'
+        ) {
+          this.doc.addSelectedEntities(entities);
+        }
+        else if (selectionWindow.purpose === 'extend-targets') {
+          const count = this.extendEntities(entities);
+          this.updateUiStatus();
+          this.renderer.draw();
+          return;
+        }
+        else {
+          this.doc.selectEntities(entities);
+          this.applyActiveLineStyleToEntities(entities);
+        }
+        const mode = selectionWindowMode(selectionWindow) === 'window' ? 'ventana' : 'captura';
+        const selectedCount = selectionWindow.purpose === 'copy'
+          ? this.doc.selectedEntities.size
+          : selectionWindow.purpose === 'move'
+            ? this.doc.selectedEntities.size
+            : selectionWindow.purpose === 'erase'
+              ? this.doc.selectedEntities.size
+              : selectionWindow.purpose === 'extend-boundaries'
+                ? this.doc.selectedEntities.size
+          : entities.length;
+        this.state.statusText = selectedCount
+          ? `${selectedCount} entidad${selectedCount === 1 ? '' : 'es'} seleccionada${selectedCount === 1 ? '' : 's'}${
+              selectionWindow.purpose === 'copy'
+                ? ' para copiar'
+                : selectionWindow.purpose === 'move'
+                  ? ' para desplazar'
+                  : selectionWindow.purpose === 'erase'
+                    ? ' para borrar'
+                    : selectionWindow.purpose === 'extend-boundaries' ? ' como limite' : ''
+            } por ${mode}`
+          : `Sin seleccion por ${mode}`;
+      }
+
       this.updateUiStatus();
       this.renderer.draw();
     }
@@ -2639,11 +4822,18 @@ class CadController {
     this.updateMouse(event);
     const delta = this.normalizeWheelDelta(event);
 
-    if (event.shiftKey || this.state.shiftKeyDown) {
-      const zoomDelta = Math.abs(delta.y) >= Math.abs(delta.x) ? delta.y : delta.x;
+    const verticalWheelDelta = Math.abs(delta.y) > SNAP_THRESHOLD && Math.abs(delta.y) >= Math.abs(delta.x);
+    const shouldZoom = event.shiftKey ||
+      this.state.shiftKeyDown ||
+      verticalWheelDelta ||
+      this.isMouseWheelZoom(event, delta);
+    if (shouldZoom) {
+      const zoomDelta = verticalWheelDelta ? delta.y : Math.abs(delta.y) >= Math.abs(delta.x) ? delta.y : delta.x;
       if (zoomDelta !== 0) {
         const zoomFactor = Math.pow(VIEW_SCALE_FACTOR, -zoomDelta / 100);
-        this.state.statusText = 'Zoom con Shift + dos dedos';
+        this.state.statusText = event.shiftKey || this.state.shiftKeyDown
+          ? 'Zoom con Shift + dos dedos'
+          : 'Zoom con rueda de raton';
         this.updateUiStatus();
         this.renderer.zoom(this.state.viewScale * zoomFactor, this.state.mouseScreen);
       }
@@ -2652,7 +4842,7 @@ class CadController {
 
     this.state.viewOffset = {
       x: this.state.viewOffset.x + delta.x / this.state.viewScale,
-      y: this.state.viewOffset.y + delta.y / this.state.viewScale,
+      y: this.state.viewOffset.y,
     };
     if (this.state.mouseScreen) {
       this.state.mouseWorld = this.renderer.screenToWorld(this.state.mouseScreen);
@@ -2671,28 +4861,90 @@ class CadController {
         this.renderer.draw();
       }
     }
-    if (event.key.toLowerCase() === 'l' && !event.metaKey && !event.ctrlKey && !event.altKey) {
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z') {
       event.preventDefault();
-      this.setTool('line');
-      this.state.statusText = 'Linea por dos puntos';
+      if (event.shiftKey) {
+        redoDrawing();
+      }
+      else {
+        undoDrawing();
+      }
+      return;
+    }
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'y') {
+      event.preventDefault();
+      redoDrawing();
+      return;
+    }
+    if (this.handleShortcutSequence(event)) {
+      return;
+    }
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      this.handleCommandEnter();
       this.updateUiStatus();
       this.renderer.draw();
       return;
     }
-    if (event.key.toLowerCase() === 'r' && !event.metaKey && !event.ctrlKey && !event.altKey) {
+    if (
+      this.state.tool === 'copy' &&
+      this.state.copyDraft?.selecting &&
+      (event.key === 'Enter' || event.key === ' ')
+    ) {
       event.preventDefault();
-      this.setTool('trim');
-      this.state.statusText = 'Recortar: pique el tramo a eliminar';
-      this.updateUiStatus();
-      this.renderer.draw();
+      this.confirmCopySelection();
+      return;
+    }
+    if (
+      this.state.tool === 'move' &&
+      this.state.moveDraft?.selecting &&
+      (event.key === 'Enter' || event.key === ' ')
+    ) {
+      event.preventDefault();
+      this.confirmMoveSelection();
+      return;
+    }
+    if (
+      this.state.tool === 'erase' &&
+      this.state.eraseDraft?.selecting &&
+      (event.key === 'Enter' || event.key === ' ')
+    ) {
+      event.preventDefault();
+      this.confirmEraseSelection();
+      return;
+    }
+    if (
+      this.state.tool === 'extend' &&
+      this.state.extendDraft?.phase === 'boundaries' &&
+      (event.key === 'Enter' || event.key === ' ')
+    ) {
+      event.preventDefault();
+      this.confirmExtendBoundaries();
+      return;
+    }
+    if (event.key.toLowerCase() === 'l' && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      event.preventDefault();
+      runCommand('line');
+      return;
+    }
+    if (event.key.toLowerCase() === 'a' && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      event.preventDefault();
+      runCommand('extend');
       return;
     }
     if (event.key.toLowerCase() === 'b' && !event.metaKey && !event.ctrlKey && !event.altKey) {
       event.preventDefault();
-      this.setTool('erase');
-      this.state.statusText = 'Borrar: pique una entidad';
-      this.updateUiStatus();
-      this.renderer.draw();
+      runCommand('erase');
+      return;
+    }
+    if (event.key.toLowerCase() === 'c' && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      event.preventDefault();
+      runCommand('copy');
+      return;
+    }
+    if (event.key.toLowerCase() === 'd' && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      event.preventDefault();
+      runCommand('move');
       return;
     }
     if (this.handleDistanceInputKey(event)) {
@@ -2703,31 +4955,7 @@ class CadController {
     }
     if (event.key === 'Escape') {
       event.preventDefault();
-      if (
-        this.state.tool === 'line' ||
-        this.state.tool === 'circle-center' ||
-        this.state.tool === 'circle-3p' ||
-        this.state.tool === 'arc-center-radius' ||
-        this.state.tool === 'arc-3p' ||
-        this.state.tool === 'arc-center-start-end' ||
-        this.state.tool === 'trim' ||
-        this.state.tool === 'erase' ||
-        this.state.pendingLineStart ||
-        this.state.circleDraft ||
-        this.state.arcDraft
-      ) {
-        this.setTool('select');
-        this.state.statusText = 'Cancelado';
-        this.updateUiStatus();
-        this.renderer.draw();
-        return;
-      }
-
-      this.state.selectedGrip = null;
-      this.doc.selectEntity(null);
-      this.state.distanceInput = '';
-      this.gripDragState = null;
-      this.state.statusText = 'Seleccion limpiada';
+      this.cancelCurrentCommand();
       this.updateUiStatus();
       this.renderer.draw();
     }
@@ -2745,8 +4973,19 @@ class CadController {
   }
 
   updateCursorInput() {
+    const multiplier = parseCopyMultiplier(this.state.distanceInput);
+    const copyMultiplierDraft = this.state.lastCopy && /^x\d*$/i.test(this.state.distanceInput.trim());
     const visible = Boolean(
-      (this.state.pendingLineStart || this.state.selectedGrip || this.state.circleDraft || this.state.arcDraft) &&
+      (
+        this.state.pendingLineStart ||
+        this.state.rectangleDraft ||
+        this.state.selectedGrip ||
+        this.state.circleDraft ||
+        this.state.arcDraft ||
+        this.state.copyDraft ||
+        this.state.moveDraft ||
+        copyMultiplierDraft
+      ) &&
       this.state.distanceInput &&
       this.state.mouseScreen,
     );
@@ -2758,7 +4997,9 @@ class CadController {
       return;
     }
 
-    cursorInput.textContent = `${this.state.distanceInput} ${UNITS_LABEL}`;
+    cursorInput.textContent = multiplier || copyMultiplierDraft
+      ? this.state.distanceInput
+      : `${this.state.distanceInput} ${UNITS_LABEL}`;
 
     const parentRect = cursorInput.parentElement.getBoundingClientRect();
     const inputRect = cursorInput.getBoundingClientRect();
@@ -2778,10 +5019,14 @@ class CadController {
   }
 
   updateUiStatus() {
+    this.updateCanvasCursorMode();
     const cursor = resolveCursorPoint(this.state.mouseWorld, this.state);
     let toolLabel = 'Seleccion';
     if (this.state.tool === 'line') {
       toolLabel = 'Linea 2P';
+    }
+    if (this.state.tool === 'rectangle') {
+      toolLabel = 'Rectangulo';
     }
     if (this.state.tool === 'circle-center') {
       toolLabel = 'Circulo C-R';
@@ -2801,11 +5046,29 @@ class CadController {
     if (this.state.tool === 'trim') {
       toolLabel = 'Recortar';
     }
+    if (this.state.tool === 'extend') {
+      toolLabel = 'Alargar';
+    }
     if (this.state.tool === 'erase') {
       toolLabel = 'Borrar';
     }
+    if (this.state.tool === 'copy') {
+      toolLabel = 'Copiar';
+    }
+    if (this.state.tool === 'move') {
+      toolLabel = 'Desplazar';
+    }
     const inputDistance = parseDistanceInput(this.state.distanceInput);
     const activeGripPoint = this.activeGripPoint();
+    const coordinateOrigin = this.state.copyDraft?.basePoint ||
+      this.state.moveDraft?.basePoint ||
+      activeGripPoint ||
+      this.state.pendingLineStart ||
+      this.state.rectangleDraft?.firstPoint ||
+      this.state.circleDraft?.points[0] ||
+      this.state.arcDraft?.points[0] ||
+      null;
+    const coordinateTarget = pointFromRelativeCoordinates(coordinateOrigin, this.state.distanceInput);
     const activeGripReferencePoint = this.activeGripReferencePoint();
     const activeGripAxisLine = this.state.shiftKeyDown && this.gripDragState?.axisPoint && this.gripDragState?.axisDirection
       ? {
@@ -2821,24 +5084,52 @@ class CadController {
           activeGripAxisLine ? { axisLine: activeGripAxisLine } : {},
         )
       : null;
-    const previewEnd = inputDistance !== null && this.state.pendingLineStart && cursor
+    const previewEnd = coordinateTarget ||
+      (inputDistance !== null && this.state.pendingLineStart && cursor
       ? pointFromDistance(this.state.pendingLineStart, cursor, inputDistance)
-      : cursor;
-    const gripPreviewEnd = inputDistance !== null && activeGripPoint && gripDirectionPoint
+      : cursor);
+    const gripPreviewEnd = coordinateTarget ||
+      (inputDistance !== null && activeGripPoint && gripDirectionPoint
       ? pointFromDistance(activeGripPoint, gripDirectionPoint, inputDistance)
+      : null);
+    const copyPreviewTarget = this.state.copyDraft?.basePoint
+      ? (coordinateTarget || (inputDistance !== null && cursor
+        ? pointFromDistance(this.state.copyDraft.basePoint, cursor, inputDistance)
+        : cursor))
+      : null;
+    const movePreviewTarget = this.state.moveDraft?.basePoint
+      ? (coordinateTarget || (inputDistance !== null && cursor
+        ? pointFromDistance(this.state.moveDraft.basePoint, cursor, inputDistance)
+        : cursor))
+      : null;
+    const rectanglePreviewTarget = this.state.rectangleDraft?.firstPoint
+      ? (coordinateTarget || (inputDistance !== null && cursor
+        ? pointFromDistance(this.state.rectangleDraft.firstPoint, cursor, inputDistance)
+        : cursor))
       : null;
     const previewLength = this.state.pendingLineStart && previewEnd
       ? distance(this.state.pendingLineStart, previewEnd)
+      : rectanglePreviewTarget && this.state.rectangleDraft?.firstPoint
+        ? distance(this.state.rectangleDraft.firstPoint, rectanglePreviewTarget)
       : this.state.circleDraft?.mode === 'center-radius' && this.state.circleDraft.points.length === 1 && previewEnd
         ? (inputDistance !== null ? inputDistance : distance(this.state.circleDraft.points[0], previewEnd))
       : this.state.arcDraft?.mode === 'center-radius' && this.state.arcDraft.points.length === 1 && previewEnd
         ? (inputDistance !== null ? inputDistance : distance(this.state.arcDraft.points[0], previewEnd))
       : gripPreviewEnd && activeGripPoint
         ? distance(activeGripPoint, gripPreviewEnd)
+      : copyPreviewTarget && this.state.copyDraft?.basePoint
+        ? distance(this.state.copyDraft.basePoint, copyPreviewTarget)
+      : movePreviewTarget && this.state.moveDraft?.basePoint
+        ? distance(this.state.moveDraft.basePoint, movePreviewTarget)
       : null;
 
     if (this.state.distanceInput) {
-      this.state.statusText = (
+      const multiplier = parseCopyMultiplier(this.state.distanceInput);
+      this.state.statusText = multiplier
+        ? `Repetir copia: x${multiplier}`
+        : coordinateTarget
+        ? `Coordenadas: ${this.state.distanceInput} ${UNITS_LABEL}`
+        : (
         this.state.circleDraft?.mode === 'center-radius' ||
         this.state.arcDraft?.mode === 'center-radius'
       )
@@ -2848,6 +5139,11 @@ class CadController {
     else if (this.state.pendingLineStart && previewEnd) {
       const lineLength = formatNumber(previewLength);
       this.state.statusText = `Segundo punto pendiente - longitud ${lineLength} ${UNITS_LABEL}`;
+    }
+    else if (this.state.rectangleDraft?.firstPoint && rectanglePreviewTarget) {
+      const width = Math.abs(rectanglePreviewTarget.x - this.state.rectangleDraft.firstPoint.x);
+      const height = Math.abs(rectanglePreviewTarget.y - this.state.rectangleDraft.firstPoint.y);
+      this.state.statusText = `Esquina opuesta pendiente - ${formatNumber(width)} x ${formatNumber(height)} ${UNITS_LABEL}`;
     }
     else if (this.state.circleDraft?.mode === 'center-radius' && previewLength !== null) {
       this.state.statusText = `Radio pendiente - ${formatNumber(previewLength)} ${UNITS_LABEL}`;
@@ -2861,7 +5157,9 @@ class CadController {
 
     statusTool.textContent = `Herramienta: ${toolLabel}`;
     statusCursor.textContent = cursor
-      ? `Cursor: ${formatNumber(cursor.x)}, ${formatNumber(cursor.y)} ${UNITS_LABEL}`
+      ? `Cursor: ${formatNumber(cursor.x)}, ${formatNumber(cursor.y)} ${UNITS_LABEL}${
+          this.state.activeObjectSnap ? ` · ${formatSnapType(this.state.activeObjectSnap.type)}` : ''
+        }`
       : 'Cursor: -';
     statusEntities.textContent = `Entidades: ${this.doc.entities.length}`;
     statusLength.textContent = previewLength !== null
@@ -2880,6 +5178,14 @@ class CadController {
     statusGridButton.title = this.state.snapEnabled
       ? 'Snap a rejilla activo'
       : 'Snap a rejilla desactivado';
+    undoButton.disabled = !this.doc.canUndo();
+    redoButton.disabled = !this.doc.canRedo();
+    undoCommandButtons.forEach((button) => {
+      button.disabled = !this.doc.canUndo();
+    });
+    redoCommandButtons.forEach((button) => {
+      button.disabled = !this.doc.canRedo();
+    });
     this.updateCursorInput();
   }
 }
@@ -2888,8 +5194,14 @@ const doc = new CadDocument();
 const state = {
   tool: 'select',
   pendingLineStart: null,
+  rectangleDraft: null,
   circleDraft: null,
   arcDraft: null,
+  copyDraft: null,
+  moveDraft: null,
+  eraseDraft: null,
+  extendDraft: null,
+  lastCopy: null,
   mouseWorld: null,
   mouseScreen: null,
   viewScale: 1,
@@ -2902,6 +5214,7 @@ const state = {
   activeObjectSnap: null,
   snapPixelTolerance: 11,
   activeLineStyle: DEFAULT_LINE_STYLE,
+  lastCommand: null,
   lastCircleTool: 'circle-center',
   lastArcTool: 'arc-center-start-end',
   doc: null,
@@ -2940,8 +5253,14 @@ function fitView() {
 function newDrawing() {
   doc.clear();
   state.pendingLineStart = null;
+  state.rectangleDraft = null;
   state.circleDraft = null;
   state.arcDraft = null;
+  state.copyDraft = null;
+  state.moveDraft = null;
+  state.eraseDraft = null;
+  state.extendDraft = null;
+  state.lastCopy = null;
   state.distanceInput = '';
   state.selectedGrip = null;
   state.statusText = 'Nuevo dibujo';
@@ -2974,6 +5293,52 @@ function showAbout() {
   renderer.draw();
 }
 
+function resetInteractionState() {
+  state.pendingLineStart = null;
+  state.rectangleDraft = null;
+  state.circleDraft = null;
+  state.arcDraft = null;
+  state.copyDraft = null;
+  state.moveDraft = null;
+  state.eraseDraft = null;
+  state.extendDraft = null;
+  state.distanceInput = '';
+  state.selectedGrip = null;
+  state.activeObjectSnap = null;
+  controller.gripDragState = null;
+  controller.panState = null;
+  canvas.classList.remove('is-panning', 'is-dragging');
+  controller.setTool('select');
+}
+
+function undoDrawing() {
+  if (!doc.canUndo()) {
+    state.statusText = 'No hay nada que deshacer';
+    controller.updateUiStatus();
+    renderer.draw();
+    return;
+  }
+  resetInteractionState();
+  doc.undo();
+  state.statusText = 'Deshecho';
+  controller.updateUiStatus();
+  renderer.draw();
+}
+
+function redoDrawing() {
+  if (!doc.canRedo()) {
+    state.statusText = 'No hay nada que rehacer';
+    controller.updateUiStatus();
+    renderer.draw();
+    return;
+  }
+  resetInteractionState();
+  doc.redo();
+  state.statusText = 'Rehecho';
+  controller.updateUiStatus();
+  renderer.draw();
+}
+
 function setLineStylePickerOpen(open) {
   lineStylePicker.classList.toggle('is-open', open);
   lineStyleToggle.setAttribute('aria-expanded', String(open));
@@ -2993,10 +5358,21 @@ function setActiveLineStyle(styleId) {
   state.activeLineStyle = style.id;
   syncLineStylePicker();
 
-  const selectedEntity = state.selectedGrip?.entity || doc.selectedEntity;
-  if (state.tool === 'select' && selectedEntity) {
-    applyLineStyleToEntity(selectedEntity, style.id);
-    state.statusText = `Entidad cambiada a capa ${style.label}`;
+  const selectedEntities = state.selectedGrip?.entity
+    ? [state.selectedGrip.entity]
+    : [...doc.selectedEntities];
+  if (state.tool === 'select' && selectedEntities.length) {
+    const changedEntities = selectedEntities.filter((entity) => normalizeLineStyleId(entity.lineStyle) !== style.id);
+    if (changedEntities.length) {
+      doc.recordHistory();
+      changedEntities.forEach((entity) => applyLineStyleToEntity(entity, style.id));
+      doc.markDirty();
+    }
+    state.statusText = changedEntities.length === 1
+      ? `Entidad cambiada a capa ${style.label}`
+      : changedEntities.length
+        ? `${changedEntities.length} entidades cambiadas a capa ${style.label}`
+        : `Entidad ya esta en capa ${style.label}`;
   }
   else {
     state.statusText = `Capa activa: ${style.label}`;
@@ -3021,9 +5397,33 @@ function closeToolGroups() {
   setToolGroupOpen(null, false);
 }
 
+function commandLabel(command) {
+  const labels = {
+    line: 'Linea',
+    rectangle: 'Rectangulo',
+    'circle-center': 'Circulo centro-radio',
+    'circle-3p': 'Circulo 3 puntos',
+    'arc-center-radius': 'Arco centro-radio',
+    'arc-3p': 'Arco 3 puntos',
+    'arc-center-start-end': 'Arco centro-inicio-final',
+    copy: 'Copiar',
+    move: 'Desplazar',
+    trim: 'Recortar',
+    extend: 'Alargar',
+    erase: 'Borrar',
+  };
+  return labels[command] || 'Comando';
+}
+
 function runCommand(command) {
+  if (REPEATABLE_COMMANDS.has(command)) {
+    state.lastCommand = command;
+  }
+  if (command === 'undo') undoDrawing();
+  if (command === 'redo') redoDrawing();
   if (command === 'select') controller.setTool('select');
   if (command === 'line') controller.setTool('line');
+  if (command === 'rectangle') controller.setTool('rectangle');
   if (command === 'circle-center' || command === 'circle-3p') {
     state.lastCircleTool = command;
     circleToolButton.dataset.tool = command;
@@ -3038,8 +5438,11 @@ function runCommand(command) {
     arcToolButton.dataset.tool = command;
     controller.setTool(command);
   }
+  if (command === 'copy') controller.startCopy();
+  if (command === 'move') controller.startMove();
   if (command === 'trim') controller.setTool('trim');
-  if (command === 'erase') controller.setTool('erase');
+  if (command === 'extend') controller.startExtend();
+  if (command === 'erase') controller.startErase();
   if (command === 'toggle-ortho') toggleOrthoMode();
   if (command === 'toggle-grid') toggleGridSnap();
   if (command === 'fit') fitView();
@@ -3060,22 +5463,45 @@ statusOrthoButton.addEventListener('click', () => runCommand('toggle-ortho'));
 statusGridButton.addEventListener('click', () => runCommand('toggle-grid'));
 selectToolButton.addEventListener('click', () => runCommand('select'));
 lineToolButton.addEventListener('click', () => runCommand('line'));
+rectangleToolButton.addEventListener('click', () => runCommand('rectangle'));
 circleToolButton.addEventListener('click', () => runCommand(state.lastCircleTool));
-circleToolMenuButton.addEventListener('click', (event) => {
+function toggleToolGroupFromButton(button, event) {
+  event.preventDefault();
   event.stopPropagation();
-  setToolGroupOpen(circleToolMenuButton.closest('.tool-group'), !circleToolMenuButton.closest('.tool-group').classList.contains('is-open'));
+  const group = button.closest('.tool-group');
+  setToolGroupOpen(group, !group.classList.contains('is-open'));
+}
+
+circleToolMenuButton.addEventListener('pointerdown', (event) => {
+  toggleToolGroupFromButton(circleToolMenuButton, event);
+});
+circleToolMenuButton.addEventListener('click', (event) => {
+  event.preventDefault();
+  event.stopPropagation();
 });
 arcToolButton.addEventListener('click', () => runCommand(state.lastArcTool));
+arcToolMenuButton.addEventListener('pointerdown', (event) => {
+  toggleToolGroupFromButton(arcToolMenuButton, event);
+});
 arcToolMenuButton.addEventListener('click', (event) => {
+  event.preventDefault();
   event.stopPropagation();
-  setToolGroupOpen(arcToolMenuButton.closest('.tool-group'), !arcToolMenuButton.closest('.tool-group').classList.contains('is-open'));
 });
 toolFlyoutCommandButtons.forEach((button) => {
-  button.addEventListener('click', () => runCommand(button.dataset.command));
+  button.addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    runCommand(button.dataset.command);
+  });
 });
 trimToolButton.addEventListener('click', () => runCommand('trim'));
+extendToolButton.addEventListener('click', () => runCommand('extend'));
+copyToolButton.addEventListener('click', () => runCommand('copy'));
+moveToolButton.addEventListener('click', () => runCommand('move'));
 eraseToolButton.addEventListener('click', () => runCommand('erase'));
 fitButton.addEventListener('click', () => runCommand('fit'));
+undoButton.addEventListener('click', () => runCommand('undo'));
+redoButton.addEventListener('click', () => runCommand('redo'));
 newButton.addEventListener('click', () => runCommand('new'));
 exportDxfButton.addEventListener('click', () => runCommand('export-dxf'));
 importDxfButton.addEventListener('click', () => runCommand('import-dxf'));
@@ -3108,8 +5534,14 @@ importDxfInput.addEventListener('change', async (event) => {
   const entities = parseDxf(text);
   doc.setEntities(entities);
   state.pendingLineStart = null;
+  state.rectangleDraft = null;
   state.circleDraft = null;
   state.arcDraft = null;
+  state.copyDraft = null;
+  state.moveDraft = null;
+  state.eraseDraft = null;
+  state.extendDraft = null;
+  state.lastCopy = null;
   state.distanceInput = '';
   state.selectedGrip = null;
   state.statusText = `Importadas ${entities.length} entidades DXF`;
