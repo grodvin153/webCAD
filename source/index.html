@@ -4,6 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="webCAD: editor CAD 2D sobre canvas con DXF.">
+  <meta name="author" content="Gonzalo Rodriguez">
+  <meta name="copyright" content="Copyright (C) 2026 Gonzalo Rodriguez">
   <title>webCAD</title>
   <link rel="stylesheet" href="./styles.css">
 </head>
@@ -16,6 +18,7 @@
           <button class="menu-title" type="button">Archivo</button>
           <div class="submenu" role="menu">
             <button class="submenu-item" type="button" data-command="new">Nuevo dibujo</button>
+            <button class="submenu-item" type="button" data-command="drawing-profile">Tipo de dibujo...</button>
             <button class="submenu-item" type="button" data-command="import-dxf">Importar DXF</button>
             <button class="submenu-item" type="button" data-command="export-dxf">Exportar DXF</button>
           </div>
@@ -26,6 +29,7 @@
             <button class="submenu-item" type="button" data-command="undo">Deshacer</button>
             <button class="submenu-item" type="button" data-command="redo">Rehacer</button>
             <button class="submenu-item" type="button" data-command="select">Seleccionar</button>
+            <button class="submenu-item" type="button" data-command="select-set">Seleccionar conjunto (DS)</button>
             <button class="submenu-item" type="button" data-command="toggle-ortho">Modo ortogonal</button>
             <button class="submenu-item" type="button" data-command="toggle-grid">Snap a rejilla</button>
           </div>
@@ -35,6 +39,8 @@
           <div class="submenu" role="menu">
             <button class="submenu-item" type="button" data-command="line">Linea</button>
             <button class="submenu-item" type="button" data-command="rectangle">Rectangulo</button>
+            <button class="submenu-item" type="button" data-command="text">Texto</button>
+            <button class="submenu-item" type="button" data-command="hatch">Sombreado</button>
             <button class="submenu-item" type="button" data-command="circle-center">Circulo centro-radio</button>
             <button class="submenu-item" type="button" data-command="circle-3p">Circulo 3 puntos</button>
             <button class="submenu-item" type="button" data-command="arc-center-radius">Arco centro-radio</button>
@@ -47,6 +53,7 @@
           <div class="submenu" role="menu">
             <button class="submenu-item" type="button" data-command="copy">Copiar</button>
             <button class="submenu-item" type="button" data-command="move">Desplazar</button>
+            <button class="submenu-item" type="button" data-command="rotate">Girar</button>
             <button class="submenu-item" type="button" data-command="trim">Recortar</button>
             <button class="submenu-item" type="button" data-command="extend">Alargar</button>
             <button class="submenu-item" type="button" data-command="erase">Borrar</button>
@@ -56,18 +63,69 @@
           <button class="menu-title" type="button">Ver</button>
           <div class="submenu" role="menu">
             <button class="submenu-item" type="button" data-command="fit">Ajustar vista</button>
+            <button class="submenu-item" type="button" data-command="navigation-mouse">Navegacion con raton</button>
+            <button class="submenu-item" type="button" data-command="navigation-trackpad">Navegacion con trackpad</button>
           </div>
         </div>
         <div class="menu-item">
           <button class="menu-title" type="button">Ayuda</button>
           <div class="submenu" role="menu">
-            <button class="submenu-item" type="button" data-command="about">Autor: Gonzalo Rodriguez</button>
+            <button class="submenu-item" type="button" data-command="about">Acerca de webCAD...</button>
           </div>
         </div>
       </nav>
     </div>
     <nav class="menu-actions" aria-label="Acciones principales">
       <div class="line-style-control" title="Capa / grosor activo">
+        <span>Capa</span>
+        <div class="layer-picker">
+          <button
+            id="layer-toggle"
+            class="layer-toggle"
+            type="button"
+            aria-label="Capa activa"
+            aria-expanded="false"
+          >
+            <span id="layer-label">Normal</span>
+          </button>
+          <div class="layer-options" role="menu" aria-label="Capas">
+            <div id="layer-list" class="layer-list"></div>
+            <button id="layer-create-open" class="layer-create-open" type="button">+ Crear capa</button>
+          </div>
+          <div class="layer-create-panel" aria-label="Crear capa">
+            <strong>Nueva capa</strong>
+            <label>Nombre<input id="layer-name-input" type="text" maxlength="32" value="Capa 1"></label>
+            <label>Grosor
+              <select id="layer-style-input">
+                <option value="auxiliar">Fino</option>
+                <option value="normal" selected>Medio</option>
+                <option value="gruesa">Gruesa</option>
+              </select>
+            </label>
+            <label>Tipo
+              <select id="layer-type-input">
+                <option value="continuous" selected>Continua</option>
+                <option value="hidden">Oculta</option>
+                <option value="center">Trazo y punto</option>
+              </select>
+            </label>
+            <label>Color
+              <select id="layer-color-input">
+                <option value="aci7" selected>Negro / blanco</option>
+                <option value="red">Rojo</option>
+                <option value="yellow">Amarillo</option>
+                <option value="green">Verde</option>
+                <option value="cyan">Cian</option>
+                <option value="blue">Azul</option>
+                <option value="magenta">Magenta</option>
+              </select>
+            </label>
+            <div class="layer-create-actions">
+              <button id="layer-create-cancel" type="button">Cancelar</button>
+              <button id="layer-create-confirm" type="button">Crear</button>
+            </div>
+          </div>
+        </div>
         <span>Grosor</span>
         <div class="line-style-picker">
           <button
@@ -77,14 +135,91 @@
             aria-label="Grosor de linea activo"
             aria-expanded="false"
           >
-            <span id="line-style-label">Normal</span>
+            <span id="line-style-label">Medio</span>
           </button>
           <div class="line-style-options" role="menu" aria-label="Grosores de linea">
-            <button class="line-style-option" type="button" data-line-style="auxiliar" role="menuitem">Auxiliar</button>
-            <button class="line-style-option is-active" type="button" data-line-style="normal" role="menuitem">Normal</button>
+            <button class="line-style-option" type="button" data-line-style="auxiliar" role="menuitem">Fino</button>
+            <button class="line-style-option is-active" type="button" data-line-style="normal" role="menuitem">Medio</button>
             <button class="line-style-option" type="button" data-line-style="gruesa" role="menuitem">Gruesa</button>
           </div>
         </div>
+        <span>Tipo</span>
+        <div class="line-type-picker">
+          <button
+            id="line-type-toggle"
+            class="line-type-toggle"
+            type="button"
+            aria-label="Tipo de linea activo"
+            aria-expanded="false"
+          >
+            <svg id="line-type-label" class="line-type-current" viewBox="0 0 58 10" aria-hidden="true"><path d="M2 5h54"></path></svg>
+          </button>
+          <div class="line-type-options" role="menu" aria-label="Tipos de linea">
+            <button class="line-type-option is-active" type="button" data-line-type="continuous" role="menuitem" aria-label="Continua" title="Continua">
+              <svg class="line-type-sample" viewBox="0 0 72 10" aria-hidden="true"><path d="M2 5h68"></path></svg>
+            </button>
+            <button class="line-type-option" type="button" data-line-type="hidden" role="menuitem" aria-label="Oculta" title="Oculta">
+              <svg class="line-type-sample" viewBox="0 0 72 10" aria-hidden="true"><path d="M2 5h68" stroke-dasharray="11 6"></path></svg>
+            </button>
+            <button class="line-type-option" type="button" data-line-type="center" role="menuitem" aria-label="Trazo y punto" title="Trazo y punto">
+              <svg class="line-type-sample" viewBox="0 0 72 10" aria-hidden="true"><path d="M2 5h68" stroke-dasharray="20 5 2 5"></path></svg>
+            </button>
+          </div>
+        </div>
+        <span>Color</span>
+        <div class="line-color-picker">
+          <button
+            id="line-color-toggle"
+            class="line-color-toggle"
+            type="button"
+            aria-label="Color de linea activo"
+            aria-expanded="false"
+          >
+            <span id="line-color-label" class="line-color-current is-default" aria-hidden="true"></span>
+          </button>
+          <div class="line-color-options" role="menu" aria-label="Colores de linea">
+            <button class="line-color-option is-active" type="button" data-line-color="default" role="menuitem" aria-label="Por defecto" title="Por defecto"><span class="line-color-swatch is-default"></span></button>
+            <button class="line-color-option" type="button" data-line-color="red" role="menuitem" aria-label="Rojo" title="Rojo"><span class="line-color-swatch is-red"></span></button>
+            <button class="line-color-option" type="button" data-line-color="yellow" role="menuitem" aria-label="Amarillo" title="Amarillo"><span class="line-color-swatch is-yellow"></span></button>
+            <button class="line-color-option" type="button" data-line-color="green" role="menuitem" aria-label="Verde" title="Verde"><span class="line-color-swatch is-green"></span></button>
+            <button class="line-color-option" type="button" data-line-color="cyan" role="menuitem" aria-label="Cian" title="Cian"><span class="line-color-swatch is-cyan"></span></button>
+            <button class="line-color-option" type="button" data-line-color="blue" role="menuitem" aria-label="Azul" title="Azul"><span class="line-color-swatch is-blue"></span></button>
+            <button class="line-color-option" type="button" data-line-color="magenta" role="menuitem" aria-label="Magenta" title="Magenta"><span class="line-color-swatch is-magenta"></span></button>
+            <button class="line-color-option" type="button" data-line-color="aci7" role="menuitem" aria-label="Blanco o negro" title="Blanco / negro"><span class="line-color-swatch is-aci7"></span></button>
+          </div>
+        </div>
+      </div>
+      <div class="navigation-device-control" role="group" aria-label="Periferico de navegacion">
+        <button
+          id="navigation-mouse"
+          class="menu-button navigation-device-button"
+          type="button"
+          title="Modo raton: rueda para zoom y boton central para pan"
+          aria-label="Navegacion con raton"
+          aria-pressed="false"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="7" y="2.5" width="10" height="19" rx="5"></rect>
+            <path d="M12 3v6"></path>
+            <path d="M9 9h6"></path>
+            <path d="M12 5v2"></path>
+          </svg>
+        </button>
+        <button
+          id="navigation-trackpad"
+          class="menu-button navigation-device-button"
+          type="button"
+          title="Modo trackpad: dos dedos para pan y Shift para zoom"
+          aria-label="Navegacion con trackpad"
+          aria-pressed="false"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="3" y="5" width="18" height="14" rx="2"></rect>
+            <circle cx="9" cy="11" r="1.25"></circle>
+            <circle cx="15" cy="11" r="1.25"></circle>
+            <path d="M8 15h8"></path>
+          </svg>
+        </button>
       </div>
       <button id="action-undo" class="menu-button" type="button" title="Deshacer" aria-label="Deshacer">
         <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -130,7 +265,9 @@
   </header>
 
   <main class="workspace">
-    <aside class="toolbox" aria-label="Herramientas de dibujo">
+    <aside class="toolbox" aria-label="Herramientas CAD">
+      <section class="tool-section tool-section-selection" aria-labelledby="tools-selection-title">
+        <h2 id="tools-selection-title" class="tool-section-title">Selección</h2>
       <button
         id="tool-select"
         class="tool-button is-active"
@@ -144,6 +281,10 @@
           <path d="M26 28 35 39"></path>
         </svg>
       </button>
+      </section>
+
+      <section class="tool-section" aria-labelledby="tools-draw-title">
+        <h2 id="tools-draw-title" class="tool-section-title">Dibujar</h2>
       <button
         id="tool-line"
         class="tool-button"
@@ -172,13 +313,40 @@
           <circle cx="37" cy="35" r="2.5"></circle>
         </svg>
       </button>
+      <button
+        id="tool-text"
+        class="tool-button"
+        type="button"
+        data-tool="text"
+        title="Texto (T)"
+        aria-label="Texto"
+      >
+        <svg viewBox="0 0 48 48" aria-hidden="true">
+          <path d="M12 12h24"></path>
+          <path d="M24 12v25"></path>
+          <path d="M17 37h14"></path>
+        </svg>
+      </button>
+      <button
+        id="tool-hatch"
+        class="tool-button"
+        type="button"
+        data-tool="hatch"
+        title="Sombreado (H)"
+        aria-label="Sombreado"
+      >
+        <svg viewBox="0 0 48 48" aria-hidden="true">
+          <rect x="11" y="11" width="26" height="26" rx="2"></rect>
+          <path d="m12 30 18-18M12 38l26-26M20 38l18-18M29 38l9-9"></path>
+        </svg>
+      </button>
       <div class="tool-group" data-tool-group="circle">
         <button
           id="tool-circle"
           class="tool-button tool-button-main"
           type="button"
           data-tool="circle-center"
-          title="Circulo"
+          title="Circulo (CI)"
           aria-label="Circulo"
         >
           <svg viewBox="0 0 48 48" aria-hidden="true">
@@ -237,6 +405,10 @@
           <button class="tool-flyout-item" type="button" data-command="arc-center-start-end">Centro-inicio-final</button>
         </div>
       </div>
+      </section>
+
+      <section class="tool-section" aria-labelledby="tools-modify-title">
+        <h2 id="tools-modify-title" class="tool-section-title">Modificar</h2>
       <button
         id="tool-trim"
         class="tool-button"
@@ -305,6 +477,20 @@
         </svg>
       </button>
       <button
+        id="tool-rotate"
+        class="tool-button"
+        type="button"
+        data-tool="rotate"
+        title="Girar (G)"
+        aria-label="Girar"
+      >
+        <svg viewBox="0 0 48 48" aria-hidden="true">
+          <path d="M37 18a15 15 0 1 0 1 15"></path>
+          <path d="m36 9 1 9-9-1"></path>
+          <circle cx="24" cy="24" r="2.5"></circle>
+        </svg>
+      </button>
+      <button
         id="tool-erase"
         class="tool-button"
         type="button"
@@ -318,6 +504,7 @@
           <path d="M32 16 16 32"></path>
         </svg>
       </button>
+      </section>
     </aside>
 
     <section class="canvas-panel" aria-label="Area de dibujo">
@@ -368,6 +555,162 @@
   </main>
 
   <input id="import-dxf-input" type="file" accept=".dxf,text/plain" hidden>
+
+  <div id="drawing-profile-dialog" class="cad-dialog-backdrop" hidden>
+    <section class="cad-dialog" role="dialog" aria-modal="true" aria-labelledby="drawing-profile-title">
+      <header>
+        <div>
+          <span class="cad-dialog-kicker">UNIDADES Y ESCALA</span>
+          <h2 id="drawing-profile-title">Tipo de dibujo</h2>
+        </div>
+        <button id="drawing-profile-close" class="cad-dialog-close" type="button" aria-label="Cerrar">×</button>
+      </header>
+      <fieldset class="cad-dialog-choice profile-choice">
+        <legend>Seleccione el entorno de trabajo</legend>
+        <label>
+          <input type="radio" name="drawing-profile" value="engineering" checked>
+          <span><strong>Ingeniería</strong><small>Milímetros · 200 × 200 mm · texto 5 mm</small></span>
+        </label>
+        <label>
+          <input type="radio" name="drawing-profile" value="architecture">
+          <span><strong>Arquitectura</strong><small>Metros · 20 × 20 m · texto 0,25 m</small></span>
+        </label>
+      </fieldset>
+      <p class="cad-dialog-note">El perfil ajusta rejilla, zoom, texto y estilos. No escala las entidades ya dibujadas.</p>
+      <footer>
+        <button id="drawing-profile-cancel" type="button">Cancelar</button>
+        <button id="drawing-profile-confirm" class="is-primary" type="button">Aplicar</button>
+      </footer>
+    </section>
+  </div>
+
+  <div id="text-dialog" class="cad-dialog-backdrop" hidden>
+    <section class="cad-dialog" role="dialog" aria-modal="true" aria-labelledby="text-dialog-title">
+      <header>
+        <div>
+          <span class="cad-dialog-kicker">ROMANS</span>
+          <h2 id="text-dialog-title">Crear texto</h2>
+        </div>
+        <button id="text-dialog-close" class="cad-dialog-close" type="button" aria-label="Cerrar">×</button>
+      </header>
+      <label class="cad-dialog-field">
+        <span>Contenido</span>
+        <input id="text-content-input" type="text" maxlength="240" autocomplete="off" placeholder="Escriba el texto">
+      </label>
+      <label class="cad-dialog-field">
+        <span>Altura del texto (mm)</span>
+        <input id="text-height-input" type="number" min="0.1" step="0.5" value="5">
+      </label>
+      <div id="text-dialog-error" class="cad-dialog-error" aria-live="polite"></div>
+      <footer>
+        <button id="text-dialog-cancel" type="button">Cancelar</button>
+        <button id="text-dialog-confirm" class="is-primary" type="button">Aceptar</button>
+      </footer>
+    </section>
+  </div>
+
+  <div id="hatch-dialog" class="cad-dialog-backdrop" hidden>
+    <section class="cad-dialog" role="dialog" aria-modal="true" aria-labelledby="hatch-dialog-title">
+      <header>
+        <div>
+          <span class="cad-dialog-kicker">HATCH</span>
+          <h2 id="hatch-dialog-title">Crear sombreado</h2>
+        </div>
+        <button id="hatch-dialog-close" class="cad-dialog-close" type="button" aria-label="Cerrar">×</button>
+      </header>
+      <label class="cad-dialog-field">
+        <span>Tipo de sombreado</span>
+        <select id="hatch-pattern-input">
+          <option value="solid" selected>Sólido</option>
+        </select>
+      </label>
+      <label class="cad-dialog-field">
+        <span>Capa de destino</span>
+        <select id="hatch-layer-input"></select>
+      </label>
+      <label class="cad-dialog-field">
+        <span>Color</span>
+        <select id="hatch-color-input">
+          <option value="bylayer" selected>Por capa</option>
+          <option value="default">Por defecto</option>
+          <option value="aci7">Negro / blanco</option>
+          <option value="red">Rojo</option>
+          <option value="yellow">Amarillo</option>
+          <option value="green">Verde</option>
+          <option value="cyan">Cian</option>
+          <option value="blue">Azul</option>
+          <option value="magenta">Magenta</option>
+        </select>
+      </label>
+      <fieldset id="hatch-mode-choice" class="cad-dialog-choice">
+        <legend>Elija el método para continuar</legend>
+        <label><input type="radio" name="hatch-mode" value="point" checked><span>Punto interior</span></label>
+        <label><input type="radio" name="hatch-mode" value="polyline"><span>Polilínea cerrada</span></label>
+      </fieldset>
+      <div id="hatch-dialog-error" class="cad-dialog-error" aria-live="polite"></div>
+      <footer>
+        <button id="hatch-dialog-cancel" type="button">Cancelar</button>
+        <button id="hatch-dialog-confirm" class="is-primary" type="button">Continuar</button>
+      </footer>
+    </section>
+  </div>
+
+  <div id="about-dialog" class="cad-dialog-backdrop" hidden>
+    <section class="cad-dialog about-dialog" role="dialog" aria-modal="true" aria-labelledby="about-dialog-title">
+      <header>
+        <div>
+          <span class="cad-dialog-kicker">AUTORIA Y VERSION</span>
+          <h2 id="about-dialog-title">webCAD 0.2.0</h2>
+        </div>
+        <button id="about-dialog-close" class="cad-dialog-close" type="button" aria-label="Cerrar">×</button>
+      </header>
+
+      <div class="about-identity">
+        <div class="about-mark" aria-hidden="true">wC</div>
+        <div>
+          <strong>Gonzalo Rodriguez</strong>
+          <span>Autor y desarrollador de webCAD</span>
+          <small>Editor CAD 2D para navegador · Versión estable 0.2.0</small>
+        </div>
+      </div>
+
+      <dl class="about-metadata">
+        <div><dt>Licencia</dt><dd>GNU GPL v3 o posterior · Autoría y código fuente protegidos</dd></div>
+        <div><dt>Formato</dt><dd>DXF · Importación y exportación</dd></div>
+        <div><dt>Entorno</dt><dd>Ingeniería en mm · Arquitectura en m</dd></div>
+      </dl>
+
+      <p class="about-license-note">
+        Copyright © 2026 Gonzalo Rodriguez. Se permite usar, estudiar, modificar y redistribuir webCAD
+        conservando la atribución, esta licencia y el acceso al código fuente.
+      </p>
+
+      <div class="about-columns">
+        <section class="about-feature-card">
+          <h3>Funciones disponibles</h3>
+          <ul>
+            <li>Líneas continuas, rectángulos, círculos, arcos, texto y sombreado sólido.</li>
+            <li>Selección múltiple, pinzamientos, copiar, desplazar, girar, borrar, recortar y alargar.</li>
+            <li>Snaps de extremo, medio, centro, intersección y perpendicular; rejilla y modo ortogonal.</li>
+            <li>Capas, colores, tipos y grosores de línea, historial y entrada por coordenadas.</li>
+          </ul>
+        </section>
+        <section class="about-feature-card is-release">
+          <h3>Novedades de 0.2.0</h3>
+          <ul>
+            <li>Polilíneas agrupadas y recorte en bloque de rectángulos y sombreados.</li>
+            <li>Perfiles de dibujo para ingeniería y arquitectura con escalas independientes.</li>
+            <li>Renderizado optimizado para dibujos grandes y respuesta de teclado más rápida.</li>
+            <li>Navegación independiente y persistente para ratón y trackpad.</li>
+          </ul>
+        </section>
+      </div>
+
+      <footer>
+        <button id="about-dialog-confirm" class="is-primary" type="button">Cerrar</button>
+      </footer>
+    </section>
+  </div>
 
   <script type="module" src="./main.js"></script>
 </body>

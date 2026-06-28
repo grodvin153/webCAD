@@ -1,7 +1,15 @@
+/*
+ * webCAD - Editor CAD 2D para navegador
+ * Copyright (C) 2026 Gonzalo Rodriguez
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
 const canvas = document.getElementById('cad-canvas');
 const selectToolButton = document.getElementById('tool-select');
 const lineToolButton = document.getElementById('tool-line');
 const rectangleToolButton = document.getElementById('tool-rectangle');
+const textToolButton = document.getElementById('tool-text');
+const hatchToolButton = document.getElementById('tool-hatch');
 const circleToolButton = document.getElementById('tool-circle');
 const circleToolMenuButton = document.getElementById('tool-circle-menu');
 const arcToolButton = document.getElementById('tool-arc');
@@ -10,8 +18,11 @@ const trimToolButton = document.getElementById('tool-trim');
 const extendToolButton = document.getElementById('tool-extend');
 const copyToolButton = document.getElementById('tool-copy');
 const moveToolButton = document.getElementById('tool-move');
+const rotateToolButton = document.getElementById('tool-rotate');
 const eraseToolButton = document.getElementById('tool-erase');
 const fitButton = document.getElementById('action-fit');
+const navigationMouseButton = document.getElementById('navigation-mouse');
+const navigationTrackpadButton = document.getElementById('navigation-trackpad');
 const undoButton = document.getElementById('action-undo');
 const redoButton = document.getElementById('action-redo');
 const newButton = document.getElementById('action-new');
@@ -22,6 +33,25 @@ const lineStylePicker = document.querySelector('.line-style-picker');
 const lineStyleToggle = document.getElementById('line-style-toggle');
 const lineStyleLabel = document.getElementById('line-style-label');
 const lineStyleOptionButtons = document.querySelectorAll('[data-line-style]');
+const lineTypePicker = document.querySelector('.line-type-picker');
+const lineTypeToggle = document.getElementById('line-type-toggle');
+const lineTypeLabel = document.getElementById('line-type-label');
+const lineTypeOptionButtons = document.querySelectorAll('[data-line-type]');
+const lineColorPicker = document.querySelector('.line-color-picker');
+const lineColorToggle = document.getElementById('line-color-toggle');
+const lineColorLabel = document.getElementById('line-color-label');
+const lineColorOptionButtons = document.querySelectorAll('[data-line-color]');
+const layerPicker = document.querySelector('.layer-picker');
+const layerToggle = document.getElementById('layer-toggle');
+const layerLabel = document.getElementById('layer-label');
+const layerList = document.getElementById('layer-list');
+const layerCreateOpenButton = document.getElementById('layer-create-open');
+const layerCreateCancelButton = document.getElementById('layer-create-cancel');
+const layerCreateConfirmButton = document.getElementById('layer-create-confirm');
+const layerNameInput = document.getElementById('layer-name-input');
+const layerStyleInput = document.getElementById('layer-style-input');
+const layerTypeInput = document.getElementById('layer-type-input');
+const layerColorInput = document.getElementById('layer-color-input');
 const menuCommandButtons = document.querySelectorAll('[data-command]');
 const undoCommandButtons = document.querySelectorAll('[data-command="undo"]');
 const redoCommandButtons = document.querySelectorAll('[data-command="redo"]');
@@ -37,15 +67,38 @@ const statusLength = document.getElementById('status-length');
 const statusLayer = document.getElementById('status-layer');
 const statusMessage = document.getElementById('status-message');
 const statusDxf = document.getElementById('status-dxf');
+const drawingProfileDialog = document.getElementById('drawing-profile-dialog');
+const drawingProfileCloseButton = document.getElementById('drawing-profile-close');
+const drawingProfileCancelButton = document.getElementById('drawing-profile-cancel');
+const drawingProfileConfirmButton = document.getElementById('drawing-profile-confirm');
+const drawingProfileInputs = document.querySelectorAll('input[name="drawing-profile"]');
+const textDialog = document.getElementById('text-dialog');
+const textDialogTitle = document.getElementById('text-dialog-title');
+const textDialogCloseButton = document.getElementById('text-dialog-close');
+const textDialogCancelButton = document.getElementById('text-dialog-cancel');
+const textDialogConfirmButton = document.getElementById('text-dialog-confirm');
+const textContentInput = document.getElementById('text-content-input');
+const textHeightInput = document.getElementById('text-height-input');
+const textDialogError = document.getElementById('text-dialog-error');
+const hatchDialog = document.getElementById('hatch-dialog');
+const hatchDialogTitle = document.getElementById('hatch-dialog-title');
+const hatchDialogCloseButton = document.getElementById('hatch-dialog-close');
+const hatchDialogCancelButton = document.getElementById('hatch-dialog-cancel');
+const hatchDialogConfirmButton = document.getElementById('hatch-dialog-confirm');
+const hatchPatternInput = document.getElementById('hatch-pattern-input');
+const hatchLayerInput = document.getElementById('hatch-layer-input');
+const hatchColorInput = document.getElementById('hatch-color-input');
+const hatchModeChoice = document.getElementById('hatch-mode-choice');
+const hatchModeInputs = document.querySelectorAll('input[name="hatch-mode"]');
+const hatchDialogError = document.getElementById('hatch-dialog-error');
+const aboutDialog = document.getElementById('about-dialog');
+const aboutDialogCloseButton = document.getElementById('about-dialog-close');
+const aboutDialogConfirmButton = document.getElementById('about-dialog-confirm');
 
-const GRID_BASE = 10;
 const CANVAS_SCALE = 2;
-const MIN_VIEW_SCALE = 0.05;
-const MAX_VIEW_SCALE = 24;
 const VIEW_SCALE_FACTOR = 1.15;
 const SNAP_THRESHOLD = 0.001;
 const FIT_PADDING = 48;
-const DEFAULT_DRAWING_SIZE = 200;
 const SPATIAL_CELL_SIZE = 100;
 const SPATIAL_MAX_ENTITY_CELLS = 256;
 const SPATIAL_MAX_QUERY_CELLS = 12000;
@@ -53,6 +106,8 @@ const HISTORY_LIMIT = 50;
 const REPEATABLE_COMMANDS = new Set([
   'line',
   'rectangle',
+  'text',
+  'hatch',
   'circle-center',
   'circle-3p',
   'arc-center-radius',
@@ -60,11 +115,48 @@ const REPEATABLE_COMMANDS = new Set([
   'arc-center-start-end',
   'copy',
   'move',
+  'rotate',
   'trim',
   'extend',
   'erase',
 ]);
-const UNITS_LABEL = 'mm';
+const DRAWING_PROFILES = {
+  engineering: {
+    id: 'engineering',
+    label: 'Ingeniería',
+    shortLabel: 'ING · mm',
+    unitsLabel: 'mm',
+    dxfInsUnits: 4,
+    gridBase: 10,
+    defaultDrawingSize: 200,
+    defaultTextHeight: 5,
+    minViewScale: 0.05,
+    maxViewScale: 24,
+    lineTypeScale: 1,
+    dxfLineTypeScale: 1,
+    hatchOpacity: 0.32,
+  },
+  architecture: {
+    id: 'architecture',
+    label: 'Arquitectura',
+    shortLabel: 'ARQ · m',
+    unitsLabel: 'm',
+    dxfInsUnits: 6,
+    gridBase: 0.5,
+    defaultDrawingSize: 20,
+    defaultTextHeight: 0.25,
+    minViewScale: 0.01,
+    maxViewScale: 2400,
+    lineTypeScale: 0.85,
+    dxfLineTypeScale: 0.1,
+    hatchOpacity: 0.27,
+  },
+};
+let GRID_BASE = DRAWING_PROFILES.engineering.gridBase;
+let MIN_VIEW_SCALE = DRAWING_PROFILES.engineering.minViewScale;
+let MAX_VIEW_SCALE = DRAWING_PROFILES.engineering.maxViewScale;
+let DEFAULT_DRAWING_SIZE = DRAWING_PROFILES.engineering.defaultDrawingSize;
+let UNITS_LABEL = DRAWING_PROFILES.engineering.unitsLabel;
 const BACKGROUND_COLOR = '#f8f7f2';
 const LINE_COLOR = '#18262a';
 const PREVIEW_COLOR = '#b64d1f';
@@ -73,11 +165,14 @@ const SNAP_COLOR = '#d05a1f';
 const SNAP_MARKER_SIZE = 16;
 const AXIS_COLOR = 'rgba(30, 90, 99, 0.28)';
 const DEFAULT_LINE_STYLE = 'normal';
+const DEFAULT_LINE_TYPE = 'continuous';
+const DEFAULT_LINE_COLOR = 'default';
 const TWO_PI = Math.PI * 2;
+const CAD_TEXT_FONT = '"Arial Narrow", "Liberation Sans Narrow", "Nimbus Sans Narrow", sans-serif';
 const LINE_STYLES = {
   auxiliar: {
     id: 'auxiliar',
-    label: 'Auxiliar',
+    label: 'Fino',
     layer: 'AUXILIAR',
     color: '#6f8085',
     width: 2,
@@ -85,7 +180,7 @@ const LINE_STYLES = {
   },
   normal: {
     id: 'normal',
-    label: 'Normal',
+    label: 'Medio',
     layer: 'NORMAL',
     color: LINE_COLOR,
     width: 4,
@@ -99,6 +194,42 @@ const LINE_STYLES = {
     width: 7,
     dxfLineWeight: 80,
   },
+};
+const LINE_TYPES = {
+  continuous: {
+    id: 'continuous',
+    label: 'Continua',
+    dxfName: 'CONTINUOUS',
+    dash: [],
+  },
+  hidden: {
+    id: 'hidden',
+    label: 'Oculta',
+    dxfName: 'HIDDEN',
+    dash: [12, 7],
+  },
+  center: {
+    id: 'center',
+    label: 'Trazo y punto',
+    dxfName: 'CENTER',
+    dash: [18, 6, 2, 6],
+  },
+};
+const LINE_COLORS = {
+  default: { id: 'default', label: 'Por defecto', color: null, aci: null },
+  red: { id: 'red', label: 'Rojo', color: '#e53935', aci: 1 },
+  yellow: { id: 'yellow', label: 'Amarillo', color: '#d9a900', aci: 2 },
+  green: { id: 'green', label: 'Verde', color: '#16a34a', aci: 3 },
+  cyan: { id: 'cyan', label: 'Cian', color: '#0891b2', aci: 4 },
+  blue: { id: 'blue', label: 'Azul', color: '#2563eb', aci: 5 },
+  magenta: { id: 'magenta', label: 'Magenta', color: '#d946ef', aci: 6 },
+  aci7: { id: 'aci7', label: 'Blanco / negro', color: LINE_COLOR, aci: 7 },
+};
+const DEFAULT_LAYER = {
+  name: 'Normal',
+  lineStyle: 'normal',
+  lineType: 'continuous',
+  lineColor: 'default',
 };
 let nextEntityGroupId = 1;
 
@@ -583,6 +714,9 @@ function activeDraftOrigin(state) {
   if (state.moveDraft?.basePoint) {
     return state.moveDraft.basePoint;
   }
+  if (state.rotateDraft?.basePoint) {
+    return state.rotateDraft.basePoint;
+  }
   return null;
 }
 
@@ -627,6 +761,15 @@ function parseDistanceInput(value) {
   const normalized = value.replace(',', '.');
   const distanceValue = Number(normalized);
   return Number.isFinite(distanceValue) && distanceValue > 0 ? distanceValue : null;
+}
+
+function parseAngleInput(value) {
+  const normalized = value.trim().replace(',', '.');
+  if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(normalized)) {
+    return null;
+  }
+  const angle = Number(normalized);
+  return Number.isFinite(angle) ? angle : null;
 }
 
 function parseRelativeCoordinateInput(value) {
@@ -813,12 +956,104 @@ function applyLineStyleToEntity(entity, styleId) {
   const style = getLineStyle(styleId);
   entity.lineStyle = style.id;
   entity.layer = style.layer;
-  entity.color = style.color;
+  entity.color = getLineColor(entity.lineColor).color || style.color;
+}
+
+function normalizeLineTypeId(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  const byDxfName = Object.values(LINE_TYPES).find(
+    (lineType) => lineType.dxfName.toLowerCase() === normalized,
+  );
+  return byDxfName?.id || (LINE_TYPES[normalized] ? normalized : DEFAULT_LINE_TYPE);
+}
+
+function getLineType(lineTypeId) {
+  return LINE_TYPES[normalizeLineTypeId(lineTypeId)];
+}
+
+function drawingProfileById(profileId) {
+  return DRAWING_PROFILES[profileId] || DRAWING_PROFILES.engineering;
+}
+
+function activeDrawingProfile() {
+  return drawingProfileById(state.drawingProfile);
+}
+
+function profileLineTypeDash(lineTypeId) {
+  const scale = activeDrawingProfile().lineTypeScale;
+  return getLineType(lineTypeId).dash.map((length) => length * scale);
+}
+
+function activeLineTypeId() {
+  return normalizeLineTypeId(state.activeLineType);
+}
+
+function applyLineTypeToEntity(entity, lineTypeId) {
+  entity.lineType = getLineType(lineTypeId).id;
+}
+
+function lineTypeFromDxf(record) {
+  return normalizeLineTypeId(record['6']);
+}
+
+function normalizeLineColorId(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  const numericAci = Number(normalized);
+  const byAci = Number.isFinite(numericAci)
+    ? Object.values(LINE_COLORS).find((lineColor) => lineColor.aci === Math.abs(numericAci))
+    : null;
+  return byAci?.id || (LINE_COLORS[normalized] ? normalized : DEFAULT_LINE_COLOR);
+}
+
+function getLineColor(lineColorId) {
+  return LINE_COLORS[normalizeLineColorId(lineColorId)];
+}
+
+function activeLineColorId() {
+  return normalizeLineColorId(state.activeLineColor);
+}
+
+function applyLineColorToEntity(entity, lineColorId) {
+  const lineColor = getLineColor(lineColorId);
+  entity.lineColor = lineColor.id;
+  entity.color = lineColor.color || getLineStyle(entity.lineStyle).color;
+}
+
+function lineColorFromDxf(record) {
+  return normalizeLineColorId(record['62']);
+}
+
+function activeLayerDefinition() {
+  return state.layers.find((layer) => layer.name === state.activeLayer) || state.layers[0];
+}
+
+function activeLayerName() {
+  return activeLayerDefinition()?.name || DEFAULT_LAYER.name;
+}
+
+function applyLayerToEntity(entity, layer) {
+  if (!entity || !layer) {
+    return;
+  }
+  entity.layer = layer.name;
+  applyLineStyleToEntity(entity, layer.lineStyle);
+  applyLineTypeToEntity(entity, layer.lineType);
+  applyLineColorToEntity(entity, layer.lineColor);
+}
+
+function gripPoint(selectedGrip) {
+  if (!selectedGrip) {
+    return null;
+  }
+  if (selectedGrip.entity.type === 'HATCH') {
+    return selectedGrip.entity.boundary[selectedGrip.index] || null;
+  }
+  return selectedGrip.entity[selectedGrip.key] || null;
 }
 
 function gripReferencePoint(selectedGrip) {
   if (!selectedGrip || selectedGrip.entity.type !== 'LINE') {
-    return selectedGrip ? selectedGrip.entity[selectedGrip.key] : null;
+    return gripPoint(selectedGrip);
   }
   return selectedGrip.key === 'start' ? selectedGrip.entity.end : selectedGrip.entity.start;
 }
@@ -1074,6 +1309,19 @@ function entityDistanceToPoint(entity, point) {
   if (entity.type === 'ARC') {
     return distancePointToArc(point, entity);
   }
+  if (entity.type === 'TEXT') {
+    const localPoint = rotatePointAround(point, entity.insertionPoint, -entity.angle);
+    const minX = entity.insertionPoint.x;
+    const maxX = minX + entity.width();
+    const minY = entity.insertionPoint.y - entity.height;
+    const maxY = entity.insertionPoint.y + entity.height * 0.22;
+    const deltaX = Math.max(minX - localPoint.x, 0, localPoint.x - maxX);
+    const deltaY = Math.max(minY - localPoint.y, 0, localPoint.y - maxY);
+    return Math.hypot(deltaX, deltaY);
+  }
+  if (entity.type === 'HATCH') {
+    return polygonDistanceToPoint(point, entity.boundary);
+  }
   return Infinity;
 }
 
@@ -1088,13 +1336,55 @@ function selectionWindowMode(selectionWindow) {
   return selectionWindow.currentWorld.x >= selectionWindow.startWorld.x ? 'window' : 'capture';
 }
 
+function polygonSignedArea(points) {
+  let area = 0;
+  for (let index = 0; index < points.length; index += 1) {
+    const current = points[index];
+    const next = points[(index + 1) % points.length];
+    area += current.x * next.y - next.x * current.y;
+  }
+  return area * 0.5;
+}
+
+function pointInPolygon(point, polygon) {
+  let inside = false;
+  for (let index = 0, previous = polygon.length - 1; index < polygon.length; previous = index, index += 1) {
+    const first = polygon[index];
+    const second = polygon[previous];
+    const intersects = (first.y > point.y) !== (second.y > point.y) &&
+      point.x < (second.x - first.x) * (point.y - first.y) /
+        ((second.y - first.y) || Number.EPSILON) + first.x;
+    if (intersects) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+function polygonDistanceToPoint(point, polygon) {
+  if (pointInPolygon(point, polygon)) {
+    return 0;
+  }
+  let nearest = Infinity;
+  for (let index = 0; index < polygon.length; index += 1) {
+    nearest = Math.min(
+      nearest,
+      distancePointToSegment(point, polygon[index], polygon[(index + 1) % polygon.length]),
+    );
+  }
+  return nearest;
+}
+
 class LineEntity {
   constructor(start, end, options = {}) {
     this.type = 'LINE';
     this.start = { x: start.x, y: start.y };
     this.end = { x: end.x, y: end.y };
     this.groupId = options.groupId || null;
-    applyLineStyleToEntity(this, options.lineStyle || options.layer || DEFAULT_LINE_STYLE);
+    this.layer = options.layer || DEFAULT_LAYER.name;
+    applyLineStyleToEntity(this, options.lineStyle || DEFAULT_LINE_STYLE);
+    applyLineTypeToEntity(this, options.lineType || DEFAULT_LINE_TYPE);
+    applyLineColorToEntity(this, options.lineColor || DEFAULT_LINE_COLOR);
   }
 
   bounds() {
@@ -1117,7 +1407,10 @@ class CircleEntity {
     this.center = { x: center.x, y: center.y };
     this.radius = radius;
     this.groupId = options.groupId || null;
-    applyLineStyleToEntity(this, options.lineStyle || options.layer || DEFAULT_LINE_STYLE);
+    this.layer = options.layer || DEFAULT_LAYER.name;
+    applyLineStyleToEntity(this, options.lineStyle || DEFAULT_LINE_STYLE);
+    applyLineTypeToEntity(this, options.lineType || DEFAULT_LINE_TYPE);
+    applyLineColorToEntity(this, options.lineColor || DEFAULT_LINE_COLOR);
   }
 
   bounds() {
@@ -1142,7 +1435,10 @@ class ArcEntity {
     this.startAngle = normalizeAngle(startAngle);
     this.endAngle = normalizeAngle(endAngle);
     this.groupId = options.groupId || null;
-    applyLineStyleToEntity(this, options.lineStyle || options.layer || DEFAULT_LINE_STYLE);
+    this.layer = options.layer || DEFAULT_LAYER.name;
+    applyLineStyleToEntity(this, options.lineStyle || DEFAULT_LINE_STYLE);
+    applyLineTypeToEntity(this, options.lineType || DEFAULT_LINE_TYPE);
+    applyLineColorToEntity(this, options.lineColor || DEFAULT_LINE_COLOR);
   }
 
   bounds() {
@@ -1169,13 +1465,78 @@ class ArcEntity {
   }
 }
 
+class TextEntity {
+  constructor(insertionPoint, text, height, options = {}) {
+    this.type = 'TEXT';
+    this.insertionPoint = { x: insertionPoint.x, y: insertionPoint.y };
+    this.text = String(text || '');
+    this.height = Math.max(Number(height) || 0, SNAP_THRESHOLD);
+    this.angle = Number(options.angle) || 0;
+    this.groupId = options.groupId || null;
+    this.layer = options.layer || DEFAULT_LAYER.name;
+    applyLineStyleToEntity(this, options.lineStyle || DEFAULT_LINE_STYLE);
+    applyLineTypeToEntity(this, options.lineType || DEFAULT_LINE_TYPE);
+    applyLineColorToEntity(this, options.lineColor || DEFAULT_LINE_COLOR);
+  }
+
+  width() {
+    return Math.max(this.height * 0.35, this.text.length * this.height * 0.56);
+  }
+
+  bounds() {
+    const corners = [
+      { x: this.insertionPoint.x, y: this.insertionPoint.y - this.height },
+      { x: this.insertionPoint.x + this.width(), y: this.insertionPoint.y - this.height },
+      { x: this.insertionPoint.x + this.width(), y: this.insertionPoint.y + this.height * 0.22 },
+      { x: this.insertionPoint.x, y: this.insertionPoint.y + this.height * 0.22 },
+    ].map((point) => rotatePointAround(point, this.insertionPoint, this.angle));
+    return createBounds(
+      Math.min(...corners.map((point) => point.x)),
+      Math.min(...corners.map((point) => point.y)),
+      Math.max(...corners.map((point) => point.x)),
+      Math.max(...corners.map((point) => point.y)),
+    );
+  }
+
+  length() {
+    return this.width();
+  }
+}
+
+class HatchEntity {
+  constructor(boundary, options = {}) {
+    this.type = 'HATCH';
+    this.boundary = boundary.map((point) => ({ x: point.x, y: point.y }));
+    this.pattern = 'solid';
+    this.groupId = null;
+    this.layer = options.layer || DEFAULT_LAYER.name;
+    applyLineStyleToEntity(this, options.lineStyle || DEFAULT_LINE_STYLE);
+    applyLineTypeToEntity(this, options.lineType || DEFAULT_LINE_TYPE);
+    applyLineColorToEntity(this, options.lineColor || DEFAULT_LINE_COLOR);
+  }
+
+  bounds() {
+    return createBounds(
+      Math.min(...this.boundary.map((point) => point.x)),
+      Math.min(...this.boundary.map((point) => point.y)),
+      Math.max(...this.boundary.map((point) => point.x)),
+      Math.max(...this.boundary.map((point) => point.y)),
+    );
+  }
+
+  length() {
+    return this.boundary.reduce((total, point, index) =>
+      total + distance(point, this.boundary[(index + 1) % this.boundary.length]), 0);
+  }
+}
+
 function cloneEntityWithOffset(entity, vector, options = {}) {
   const groupId = Object.prototype.hasOwnProperty.call(options, 'groupId') ? options.groupId : entity.groupId;
   if (entity.type === 'LINE') {
     return new LineEntity(
       offsetPoint(entity.start, vector),
       offsetPoint(entity.end, vector),
-      { lineStyle: entity.lineStyle, groupId },
+      { layer: entity.layer, lineStyle: entity.lineStyle, lineType: entity.lineType, lineColor: entity.lineColor, groupId },
     );
   }
 
@@ -1183,7 +1544,7 @@ function cloneEntityWithOffset(entity, vector, options = {}) {
     return new CircleEntity(
       offsetPoint(entity.center, vector),
       entity.radius,
-      { lineStyle: entity.lineStyle, groupId },
+      { layer: entity.layer, lineStyle: entity.lineStyle, lineType: entity.lineType, lineColor: entity.lineColor, groupId },
     );
   }
 
@@ -1193,7 +1554,34 @@ function cloneEntityWithOffset(entity, vector, options = {}) {
       entity.radius,
       entity.startAngle,
       entity.endAngle,
-      { lineStyle: entity.lineStyle, groupId },
+      { layer: entity.layer, lineStyle: entity.lineStyle, lineType: entity.lineType, lineColor: entity.lineColor, groupId },
+    );
+  }
+
+  if (entity.type === 'TEXT') {
+    return new TextEntity(
+      offsetPoint(entity.insertionPoint, vector),
+      entity.text,
+      entity.height,
+      {
+        layer: entity.layer,
+        lineStyle: entity.lineStyle,
+        lineType: entity.lineType,
+        lineColor: entity.lineColor,
+        angle: entity.angle,
+        groupId,
+      },
+    );
+  }
+  if (entity.type === 'HATCH') {
+    return new HatchEntity(
+      entity.boundary.map((point) => offsetPoint(point, vector)),
+      {
+        layer: entity.layer,
+        lineStyle: entity.lineStyle,
+        lineType: entity.lineType,
+        lineColor: entity.lineColor,
+      },
     );
   }
 
@@ -1232,7 +1620,67 @@ function moveEntityByVector(entity, vector) {
     return true;
   }
 
+  if (entity.type === 'TEXT') {
+    entity.insertionPoint = offsetPoint(entity.insertionPoint, vector);
+    return true;
+  }
+  if (entity.type === 'HATCH') {
+    entity.boundary = entity.boundary.map((point) => offsetPoint(point, vector));
+    return true;
+  }
+
   return false;
+}
+
+function rotatePointAround(point, basePoint, angleDegrees) {
+  const angle = -angleDegrees * Math.PI / 180;
+  const cosine = Math.cos(angle);
+  const sine = Math.sin(angle);
+  const deltaX = point.x - basePoint.x;
+  const deltaY = point.y - basePoint.y;
+  return {
+    x: basePoint.x + deltaX * cosine - deltaY * sine,
+    y: basePoint.y + deltaX * sine + deltaY * cosine,
+  };
+}
+
+function rotateEntityByAngle(entity, basePoint, angleDegrees) {
+  if (entity.type === 'LINE') {
+    entity.start = rotatePointAround(entity.start, basePoint, angleDegrees);
+    entity.end = rotatePointAround(entity.end, basePoint, angleDegrees);
+    return true;
+  }
+
+  if (entity.type === 'CIRCLE' || entity.type === 'ARC') {
+    entity.center = rotatePointAround(entity.center, basePoint, angleDegrees);
+    if (entity.type === 'ARC') {
+      const canvasAngle = -angleDegrees * Math.PI / 180;
+      entity.startAngle = normalizeAngle(entity.startAngle + canvasAngle);
+      entity.endAngle = normalizeAngle(entity.endAngle + canvasAngle);
+    }
+    return true;
+  }
+
+  if (entity.type === 'TEXT') {
+    entity.insertionPoint = rotatePointAround(entity.insertionPoint, basePoint, angleDegrees);
+    entity.angle += angleDegrees;
+    return true;
+  }
+  if (entity.type === 'HATCH') {
+    entity.boundary = entity.boundary.map((point) =>
+      rotatePointAround(point, basePoint, angleDegrees));
+    return true;
+  }
+
+  return false;
+}
+
+function rotationAngleFromPoint(basePoint, point, orthoEnabled = false) {
+  if (!basePoint || !point || distance(basePoint, point) <= SNAP_THRESHOLD) {
+    return 0;
+  }
+  const angle = -Math.atan2(point.y - basePoint.y, point.x - basePoint.x) * 180 / Math.PI;
+  return orthoEnabled ? Math.round(angle / 90) * 90 : angle;
 }
 
 class CadDocument {
@@ -1601,7 +2049,7 @@ function trimLineEntityAtPoint(doc, entity, pickPoint) {
     replacements.push(new LineEntity(
       pointAtLineParameter(entity, startParameter),
       pointAtLineParameter(entity, endParameter),
-      { lineStyle: entity.lineStyle },
+      { layer: entity.layer, lineStyle: entity.lineStyle, lineType: entity.lineType, lineColor: entity.lineColor },
     ));
   }
 
@@ -1616,7 +2064,12 @@ function createArcFromParameters(entity, startParameter, endParameter) {
     if (arcSweep(startAngle, endAngle) <= SNAP_THRESHOLD) {
       return null;
     }
-    return new ArcEntity(entity.center, entity.radius, startAngle, endAngle, { lineStyle: entity.lineStyle });
+    return new ArcEntity(entity.center, entity.radius, startAngle, endAngle, {
+      lineStyle: entity.lineStyle,
+      lineType: entity.lineType,
+      lineColor: entity.lineColor,
+      layer: entity.layer,
+    });
   }
 
   const sweep = arcSweep(entity.startAngle, entity.endAngle);
@@ -1625,7 +2078,12 @@ function createArcFromParameters(entity, startParameter, endParameter) {
   if (arcSweep(startAngle, endAngle) <= SNAP_THRESHOLD) {
     return null;
   }
-  return new ArcEntity(entity.center, entity.radius, startAngle, endAngle, { lineStyle: entity.lineStyle });
+  return new ArcEntity(entity.center, entity.radius, startAngle, endAngle, {
+    lineStyle: entity.lineStyle,
+    lineType: entity.lineType,
+    lineColor: entity.lineColor,
+    layer: entity.layer,
+  });
 }
 
 function trimCircularEntityAtPoint(doc, entity, pickPoint) {
@@ -1802,6 +2260,146 @@ function lineGroupPointAt(component, traversalParameter) {
   return pointAtLineParameter(component.entity, entityParameter);
 }
 
+function closedLineGroupPolygon(doc, entity) {
+  if (!entity?.groupId) {
+    return null;
+  }
+  const path = orderedLineGroup(doc.groupEntities(entity));
+  if (!path?.closed || path.components.length < 3) {
+    return null;
+  }
+  return path.components.map((component) =>
+    component.reversed ? { ...component.entity.end } : { ...component.entity.start });
+}
+
+function circlePolygon(circle, segments = 96) {
+  return Array.from({ length: segments }, (_, index) =>
+    pointAtCircleAngle(circle, index * TWO_PI / segments));
+}
+
+function lineArrangementFaces(doc) {
+  const lines = doc.entities.filter((entity) => entity.type === 'LINE');
+  if (!lines.length || lines.length > 1200) {
+    return [];
+  }
+
+  const lineIndexes = new Map(lines.map((line, index) => [line, index]));
+  const parameters = new Map(lines.map((line) => [line, [0, 1]]));
+  lines.forEach((line) => {
+    for (const other of doc.queryBounds(line.bounds())) {
+      if (other.type !== 'LINE' || (lineIndexes.get(other) ?? -1) <= lineIndexes.get(line)) {
+        continue;
+      }
+      const intersection = lineSegmentIntersection(line, other);
+      if (!intersection) {
+        continue;
+      }
+      parameters.get(line).push(lineParameter(line, intersection));
+      parameters.get(other).push(lineParameter(other, intersection));
+    }
+  });
+
+  const nodes = new Map();
+  const edgeKeys = new Set();
+  let nextNodeId = 1;
+  const nodeForPoint = (point) => {
+    const key = `${Math.round(point.x / SNAP_THRESHOLD)}:${Math.round(point.y / SNAP_THRESHOLD)}`;
+    if (!nodes.has(key)) {
+      nodes.set(key, { id: nextNodeId, point: { ...point }, outgoing: [] });
+      nextNodeId += 1;
+    }
+    return nodes.get(key);
+  };
+
+  lines.forEach((line) => {
+    const sorted = uniqueSortedParameters(parameters.get(line));
+    for (let index = 0; index < sorted.length - 1; index += 1) {
+      const startPoint = pointAtLineParameter(line, sorted[index]);
+      const endPoint = pointAtLineParameter(line, sorted[index + 1]);
+      if (distance(startPoint, endPoint) <= SNAP_THRESHOLD) {
+        continue;
+      }
+      const startNode = nodeForPoint(startPoint);
+      const endNode = nodeForPoint(endPoint);
+      const key = [startNode.id, endNode.id]
+        .sort((first, second) => first - second)
+        .join(':');
+      if (edgeKeys.has(key)) {
+        continue;
+      }
+      edgeKeys.add(key);
+      const forward = { from: startNode, to: endNode, twin: null, visited: false };
+      const reverse = { from: endNode, to: startNode, twin: forward, visited: false };
+      forward.twin = reverse;
+      startNode.outgoing.push(forward);
+      endNode.outgoing.push(reverse);
+    }
+  });
+
+  nodes.forEach((node) => {
+    node.outgoing.sort((first, second) =>
+      Math.atan2(first.to.point.y - node.point.y, first.to.point.x - node.point.x) -
+      Math.atan2(second.to.point.y - node.point.y, second.to.point.x - node.point.x));
+  });
+
+  const faces = [];
+  const halfEdges = [...nodes.values()].flatMap((node) => node.outgoing);
+  halfEdges.forEach((startEdge) => {
+    if (startEdge.visited) {
+      return;
+    }
+    const polygon = [];
+    let edge = startEdge;
+    let closed = false;
+    for (let step = 0; step <= halfEdges.length; step += 1) {
+      if (edge.visited && edge !== startEdge) {
+        break;
+      }
+      edge.visited = true;
+      polygon.push({ ...edge.from.point });
+      const outgoing = edge.to.outgoing;
+      const reverseIndex = outgoing.indexOf(edge.twin);
+      if (reverseIndex < 0 || !outgoing.length) {
+        break;
+      }
+      edge = outgoing[(reverseIndex - 1 + outgoing.length) % outgoing.length];
+      if (edge === startEdge) {
+        closed = true;
+        break;
+      }
+    }
+    if (closed && polygon.length >= 3 && Math.abs(polygonSignedArea(polygon)) > SNAP_THRESHOLD) {
+      faces.push(polygon);
+    }
+  });
+  return faces;
+}
+
+function hatchBoundaryAtPoint(doc, point) {
+  const candidates = [];
+  const visitedGroups = new Set();
+  doc.entities.forEach((entity) => {
+    if (entity.type === 'LINE' && entity.groupId && !visitedGroups.has(entity.groupId)) {
+      visitedGroups.add(entity.groupId);
+      const polygon = closedLineGroupPolygon(doc, entity);
+      if (polygon && pointInPolygon(point, polygon)) {
+        candidates.push(polygon);
+      }
+    }
+    if (entity.type === 'CIRCLE' && distance(entity.center, point) < entity.radius - SNAP_THRESHOLD) {
+      candidates.push(circlePolygon(entity));
+    }
+  });
+  lineArrangementFaces(doc).forEach((polygon) => {
+    if (pointInPolygon(point, polygon)) {
+      candidates.push(polygon);
+    }
+  });
+  candidates.sort((first, second) =>
+    Math.abs(polygonSignedArea(first)) - Math.abs(polygonSignedArea(second)));
+  return candidates[0] || null;
+}
+
 function lineGroupRangeEntities(path, startDistance, endDistance, groupId) {
   const replacements = [];
   if (endDistance - startDistance <= SNAP_THRESHOLD || path.totalLength <= SNAP_THRESHOLD) {
@@ -1826,7 +2424,13 @@ function lineGroupRangeEntities(path, startDistance, endDistance, groupId) {
       replacements.push(new LineEntity(
         lineGroupPointAt(component, startParameter),
         lineGroupPointAt(component, endParameter),
-        { lineStyle: component.entity.lineStyle, groupId },
+        {
+          lineStyle: component.entity.lineStyle,
+          lineType: component.entity.lineType,
+          lineColor: component.entity.lineColor,
+          layer: component.entity.layer,
+          groupId,
+        },
       ));
     }
   }
@@ -1934,6 +2538,170 @@ function trimLineGroupAtPoint(doc, entity, pickPoint) {
   };
 }
 
+function hatchBoundaryPath(entity) {
+  if (!entity || entity.type !== 'HATCH' || entity.boundary.length < 3) {
+    return null;
+  }
+
+  let offset = 0;
+  const components = entity.boundary.map((start, index) => {
+    const end = entity.boundary[(index + 1) % entity.boundary.length];
+    const length = distance(start, end);
+    const component = { start, end, length, offset };
+    offset += length;
+    return component;
+  }).filter((component) => component.length > SNAP_THRESHOLD);
+  return components.length >= 3 && offset > SNAP_THRESHOLD
+    ? { components, totalLength: offset }
+    : null;
+}
+
+function hatchBoundaryPointAt(path, pathDistance) {
+  let normalizedDistance = pathDistance % path.totalLength;
+  if (normalizedDistance < 0) {
+    normalizedDistance += path.totalLength;
+  }
+  if (path.totalLength - normalizedDistance <= SNAP_THRESHOLD) {
+    normalizedDistance = 0;
+  }
+  const component = path.components.find((candidate) =>
+    normalizedDistance <= candidate.offset + candidate.length + SNAP_THRESHOLD) || path.components[0];
+  const parameter = clamp(
+    (normalizedDistance - component.offset) / component.length,
+    0,
+    1,
+  );
+  return {
+    x: component.start.x + (component.end.x - component.start.x) * parameter,
+    y: component.start.y + (component.end.y - component.start.y) * parameter,
+  };
+}
+
+function hatchBoundaryRange(path, startDistance, endDistance) {
+  if (endDistance - startDistance <= SNAP_THRESHOLD) {
+    return [];
+  }
+
+  const points = [hatchBoundaryPointAt(path, startDistance)];
+  const firstCycle = Math.floor(startDistance / path.totalLength);
+  const lastCycle = Math.floor(endDistance / path.totalLength);
+  for (let cycle = firstCycle; cycle <= lastCycle; cycle += 1) {
+    for (const component of path.components) {
+      const componentEnd = cycle * path.totalLength + component.offset + component.length;
+      if (
+        componentEnd > startDistance + SNAP_THRESHOLD &&
+        componentEnd < endDistance - SNAP_THRESHOLD
+      ) {
+        points.push({ ...component.end });
+      }
+    }
+  }
+  points.push(hatchBoundaryPointAt(path, endDistance));
+
+  const uniquePoints = points.filter((point, index) =>
+    index === 0 || distance(point, points[index - 1]) > SNAP_THRESHOLD);
+  if (
+    uniquePoints.length > 1 &&
+    distance(uniquePoints[0], uniquePoints[uniquePoints.length - 1]) <= SNAP_THRESHOLD
+  ) {
+    uniquePoints.pop();
+  }
+  return uniquePoints;
+}
+
+function trimHatchEntityAtPoint(doc, entity, pickPoint) {
+  const path = hatchBoundaryPath(entity);
+  if (!doc || !path || !pickPoint) {
+    return { trimmed: false, keptCount: 0, grouped: true, hatch: true };
+  }
+
+  const breakDistances = [];
+  let nearestComponent = null;
+  let nearestParameter = 0;
+  let nearestDistance = Infinity;
+
+  for (const component of path.components) {
+    const edge = new LineEntity(component.start, component.end, {
+      layer: entity.layer,
+      lineStyle: entity.lineStyle,
+      lineType: entity.lineType,
+      lineColor: entity.lineColor,
+    });
+    const pickParameter = lineParameter(edge, pickPoint);
+    const projectedPick = pointAtLineParameter(edge, pickParameter);
+    const pickDistance = distance(projectedPick, pickPoint);
+    if (pickDistance < nearestDistance) {
+      nearestDistance = pickDistance;
+      nearestComponent = component;
+      nearestParameter = pickParameter;
+    }
+
+    for (const otherEntity of doc.queryBounds(edge.bounds())) {
+      if (otherEntity === entity || otherEntity.type === 'HATCH' || otherEntity.type === 'TEXT') {
+        continue;
+      }
+      for (const intersection of entityIntersectionPoints(edge, otherEntity)) {
+        const parameter = lineParameter(edge, intersection);
+        // A contact at an existing corner does not cut the hatch area.
+        if (parameter <= SNAP_THRESHOLD || parameter >= 1 - SNAP_THRESHOLD) {
+          continue;
+        }
+        breakDistances.push(component.offset + component.length * parameter);
+      }
+    }
+  }
+
+  const sortedBreaks = breakDistances
+    .sort((first, second) => first - second)
+    .filter((value, index, values) => index === 0 || value - values[index - 1] > SNAP_THRESHOLD);
+  if (sortedBreaks.length < 2 || !nearestComponent) {
+    return { trimmed: false, keptCount: 1, grouped: true, hatch: true };
+  }
+
+  const pickDistance = nearestComponent.offset + nearestComponent.length * nearestParameter;
+  let trimStart = null;
+  let trimEnd = null;
+  for (let index = 0; index < sortedBreaks.length; index += 1) {
+    const start = sortedBreaks[index];
+    const next = sortedBreaks[(index + 1) % sortedBreaks.length];
+    const end = index === sortedBreaks.length - 1 ? next + path.totalLength : next;
+    const adjustedPick = pickDistance < start - SNAP_THRESHOLD
+      ? pickDistance + path.totalLength
+      : pickDistance;
+    if (adjustedPick >= start - SNAP_THRESHOLD && adjustedPick <= end + SNAP_THRESHOLD) {
+      trimStart = start;
+      trimEnd = end;
+      break;
+    }
+  }
+  if (trimStart === null || trimEnd === null) {
+    return { trimmed: false, keptCount: 1, grouped: true, hatch: true };
+  }
+
+  const keepStart = trimEnd % path.totalLength;
+  let keepEnd = trimStart;
+  if (keepEnd <= keepStart + SNAP_THRESHOLD) {
+    keepEnd += path.totalLength;
+  }
+  const boundary = hatchBoundaryRange(path, keepStart, keepEnd);
+  if (boundary.length < 3 || Math.abs(polygonSignedArea(boundary)) <= SNAP_THRESHOLD) {
+    return { trimmed: false, keptCount: 1, grouped: true, hatch: true };
+  }
+
+  const replacement = new HatchEntity(boundary, {
+    layer: entity.layer,
+    lineStyle: entity.lineStyle,
+    lineType: entity.lineType,
+    lineColor: entity.lineColor,
+  });
+  return {
+    trimmed: doc.replaceEntity(entity, [replacement]),
+    keptCount: 1,
+    grouped: true,
+    hatch: true,
+  };
+}
+
 function trimEntityAtPoint(doc, entity, pickPoint) {
   if (!doc || !entity) {
     return { trimmed: false, keptCount: 0, grouped: false };
@@ -1941,6 +2709,10 @@ function trimEntityAtPoint(doc, entity, pickPoint) {
 
   if (entity.groupId) {
     return trimLineGroupAtPoint(doc, entity, pickPoint);
+  }
+
+  if (entity.type === 'HATCH') {
+    return trimHatchEntityAtPoint(doc, entity, pickPoint);
   }
 
   if (entity.type === 'LINE') {
@@ -2124,23 +2896,71 @@ function dxfDegreesToCanvasAngle(degrees) {
 }
 
 function serializeDocumentToDxf(doc) {
+  const profile = activeDrawingProfile();
+  const dxfLineTypeScale = profile.dxfLineTypeScale;
+  const layerMap = new Map(state.layers.map((layer) => [layer.name, { ...layer }]));
+  doc.entities.forEach((entity) => {
+    if (!layerMap.has(entity.layer)) {
+      layerMap.set(entity.layer, {
+        name: entity.layer,
+        lineStyle: entity.lineStyle,
+        lineType: entity.lineType,
+        lineColor: entity.lineColor,
+      });
+    }
+  });
+  const layerDefinitions = [...layerMap.values()];
   const lines = [
     '0', 'SECTION',
     '2', 'HEADER',
     '9', '$ACADVER',
     '1', 'AC1015',
     '9', '$INSUNITS',
-    '70', '4',
+    '70', String(profile.dxfInsUnits),
     '0', 'ENDSEC',
     '0', 'SECTION',
-    '2', 'ENTITIES',
+    '2', 'TABLES',
+    '0', 'TABLE',
+    '2', 'LTYPE',
+    '70', '3',
+    '0', 'LTYPE', '2', 'CONTINUOUS', '70', '0', '3', 'Solid line', '72', '65', '73', '0', '40', '0',
+    '0', 'LTYPE', '2', 'HIDDEN', '70', '0', '3', 'Hidden __ __', '72', '65', '73', '2', '40', String(9 * dxfLineTypeScale),
+    '49', String(6 * dxfLineTypeScale), '74', '0', '49', String(-3 * dxfLineTypeScale), '74', '0',
+    '0', 'LTYPE', '2', 'CENTER', '70', '0', '3', 'Center ____ _ ____', '72', '65', '73', '4', '40', String(17 * dxfLineTypeScale),
+    '49', String(10 * dxfLineTypeScale), '74', '0', '49', String(-3 * dxfLineTypeScale), '74', '0', '49', String(1 * dxfLineTypeScale), '74', '0', '49', String(-3 * dxfLineTypeScale), '74', '0',
+    '0', 'ENDTAB',
+    '0', 'TABLE',
+    '2', 'LAYER',
+    '70', String(layerDefinitions.length),
   ];
+
+  layerDefinitions.forEach((layer) => {
+    lines.push(
+      '0', 'LAYER',
+      '2', layer.name,
+      '70', '0',
+      '62', String(getLineColor(layer.lineColor).aci || 7),
+      '6', getLineType(layer.lineType).dxfName,
+      '370', String(getLineStyle(layer.lineStyle).dxfLineWeight),
+    );
+  });
+  lines.push(
+    '0', 'ENDTAB',
+    '0', 'TABLE', '2', 'STYLE', '70', '1',
+    '0', 'STYLE', '2', 'ROMANS', '70', '0', '40', '0', '41', '1', '50', '0', '71', '0',
+    '42', '2.5', '3', 'romans.shx', '4', '',
+    '0', 'ENDTAB',
+    '0', 'ENDSEC',
+    '0', 'SECTION', '2', 'ENTITIES',
+  );
 
   for (const entity of doc.entities) {
     if (entity.type === 'LINE') {
       lines.push(
         '0', 'LINE',
         '8', entity.layer,
+        '6', getLineType(entity.lineType).dxfName,
+        '62', String(getLineColor(entity.lineColor).aci || 256),
         '370', String(getLineStyle(entity.lineStyle).dxfLineWeight),
         '10', String(entity.start.x),
         '20', String(-entity.start.y),
@@ -2155,6 +2975,8 @@ function serializeDocumentToDxf(doc) {
       lines.push(
         '0', 'CIRCLE',
         '8', entity.layer,
+        '6', getLineType(entity.lineType).dxfName,
+        '62', String(getLineColor(entity.lineColor).aci || 256),
         '370', String(getLineStyle(entity.lineStyle).dxfLineWeight),
         '10', String(entity.center.x),
         '20', String(-entity.center.y),
@@ -2167,6 +2989,8 @@ function serializeDocumentToDxf(doc) {
       lines.push(
         '0', 'ARC',
         '8', entity.layer,
+        '6', getLineType(entity.lineType).dxfName,
+        '62', String(getLineColor(entity.lineColor).aci || 256),
         '370', String(getLineStyle(entity.lineStyle).dxfLineWeight),
         '10', String(entity.center.x),
         '20', String(-entity.center.y),
@@ -2175,6 +2999,43 @@ function serializeDocumentToDxf(doc) {
         '50', String(canvasAngleToDxfDegrees(entity.endAngle)),
         '51', String(canvasAngleToDxfDegrees(entity.startAngle)),
       );
+    }
+
+    if (entity.type === 'TEXT') {
+      lines.push(
+        '0', 'TEXT',
+        '8', entity.layer,
+        '7', 'ROMANS',
+        '62', String(getLineColor(entity.lineColor).aci || 256),
+        '10', String(entity.insertionPoint.x),
+        '20', String(-entity.insertionPoint.y),
+        '30', '0',
+        '40', String(entity.height),
+        '1', entity.text.replace(/[\r\n]+/g, ' '),
+        '50', String(entity.angle),
+      );
+    }
+
+    if (entity.type === 'HATCH') {
+      lines.push(
+        '0', 'HATCH',
+        '8', entity.layer,
+        '62', String(getLineColor(entity.lineColor).aci || 256),
+        '10', '0', '20', '0', '30', '0',
+        '210', '0', '220', '0', '230', '1',
+        '2', 'SOLID',
+        '70', '1',
+        '71', '0',
+        '91', '1',
+        '92', '2',
+        '72', '0',
+        '73', '1',
+        '93', String(entity.boundary.length),
+      );
+      entity.boundary.forEach((point) => {
+        lines.push('10', String(point.x), '20', String(-point.y));
+      });
+      lines.push('97', '0', '75', '0', '76', '1', '98', '0');
     }
   }
 
@@ -2192,6 +3053,36 @@ function parseDxf(text) {
       break;
     }
     pairs.push([code.trim(), value.trim()]);
+  }
+
+  const layerDefinitions = [];
+  let dxfInsUnits = null;
+  for (let headerIndex = 0; headerIndex < pairs.length - 1; headerIndex += 1) {
+    if (pairs[headerIndex][0] === '9' && pairs[headerIndex][1] === '$INSUNITS') {
+      dxfInsUnits = Number(pairs[headerIndex + 1][1]);
+      break;
+    }
+  }
+  for (let layerIndex = 0; layerIndex < pairs.length; layerIndex += 1) {
+    const [code, value] = pairs[layerIndex];
+    if (code !== '0' || value !== 'LAYER') {
+      continue;
+    }
+    const record = {};
+    layerIndex += 1;
+    while (layerIndex < pairs.length && pairs[layerIndex][0] !== '0') {
+      record[pairs[layerIndex][0]] = pairs[layerIndex][1];
+      layerIndex += 1;
+    }
+    layerIndex -= 1;
+    if (record['2']) {
+      layerDefinitions.push({
+        name: record['2'],
+        lineStyle: lineStyleFromDxf(record),
+        lineType: lineTypeFromDxf(record),
+        lineColor: lineColorFromDxf(record),
+      });
+    }
   }
 
   const entities = [];
@@ -2226,7 +3117,12 @@ function parseDxf(text) {
         Number.isFinite(end.x) &&
         Number.isFinite(end.y)
       ) {
-        entities.push(new LineEntity(start, end, { lineStyle: lineStyleFromDxf(record) }));
+        entities.push(new LineEntity(start, end, {
+          layer: record['8'] || DEFAULT_LAYER.name,
+          lineStyle: lineStyleFromDxf(record),
+          lineType: lineTypeFromDxf(record),
+          lineColor: lineColorFromDxf(record),
+        }));
       }
       continue;
     }
@@ -2255,7 +3151,12 @@ function parseDxf(text) {
         Number.isFinite(radius) &&
         radius > SNAP_THRESHOLD
       ) {
-        entities.push(new CircleEntity(center, radius, { lineStyle: lineStyleFromDxf(record) }));
+        entities.push(new CircleEntity(center, radius, {
+          layer: record['8'] || DEFAULT_LAYER.name,
+          lineStyle: lineStyleFromDxf(record),
+          lineType: lineTypeFromDxf(record),
+          lineColor: lineColorFromDxf(record),
+        }));
       }
       continue;
     }
@@ -2286,7 +3187,83 @@ function parseDxf(text) {
         Number.isFinite(radius) &&
         radius > SNAP_THRESHOLD
       ) {
-        entities.push(new ArcEntity(center, radius, startAngle, endAngle, { lineStyle: lineStyleFromDxf(record) }));
+        entities.push(new ArcEntity(center, radius, startAngle, endAngle, {
+          layer: record['8'] || DEFAULT_LAYER.name,
+          lineStyle: lineStyleFromDxf(record),
+          lineType: lineTypeFromDxf(record),
+          lineColor: lineColorFromDxf(record),
+        }));
+      }
+      continue;
+    }
+
+    if (code === '0' && value === 'TEXT') {
+      const record = {};
+      index += 1;
+      while (index < pairs.length) {
+        const [groupCode, groupValue] = pairs[index];
+        if (groupCode === '0') {
+          break;
+        }
+        record[groupCode] = groupValue;
+        index += 1;
+      }
+
+      const insertionPoint = {
+        x: Number(record['10'] || 0),
+        y: -Number(record['20'] || 0),
+      };
+      const height = Number(record['40'] || 0);
+      if (
+        Number.isFinite(insertionPoint.x) &&
+        Number.isFinite(insertionPoint.y) &&
+        Number.isFinite(height) &&
+        height > SNAP_THRESHOLD &&
+        record['1']
+      ) {
+        entities.push(new TextEntity(insertionPoint, record['1'], height, {
+          layer: record['8'] || DEFAULT_LAYER.name,
+          lineStyle: lineStyleFromDxf(record),
+          lineType: lineTypeFromDxf(record),
+          lineColor: lineColorFromDxf(record),
+          angle: Number(record['50'] || 0),
+        }));
+      }
+      continue;
+    }
+
+    if (code === '0' && value === 'HATCH') {
+      const record = {};
+      const boundary = [];
+      let readingBoundary = false;
+      let pendingX = null;
+      index += 1;
+      while (index < pairs.length) {
+        const [groupCode, groupValue] = pairs[index];
+        if (groupCode === '0') {
+          break;
+        }
+        record[groupCode] = groupValue;
+        if (groupCode === '92') {
+          readingBoundary = true;
+        }
+        else if (readingBoundary && groupCode === '10') {
+          pendingX = Number(groupValue);
+        }
+        else if (readingBoundary && groupCode === '20' && pendingX !== null) {
+          boundary.push({ x: pendingX, y: -Number(groupValue) });
+          pendingX = null;
+        }
+        index += 1;
+      }
+      if (boundary.length >= 3 && boundary.every((point) =>
+        Number.isFinite(point.x) && Number.isFinite(point.y))) {
+        entities.push(new HatchEntity(boundary, {
+          layer: record['8'] || DEFAULT_LAYER.name,
+          lineStyle: lineStyleFromDxf(record),
+          lineType: lineTypeFromDxf(record),
+          lineColor: lineColorFromDxf(record),
+        }));
       }
       continue;
     }
@@ -2294,6 +3271,10 @@ function parseDxf(text) {
     index += 1;
   }
 
+  entities.layerDefinitions = layerDefinitions;
+  entities.drawingProfile = dxfInsUnits === DRAWING_PROFILES.architecture.dxfInsUnits
+    ? 'architecture'
+    : dxfInsUnits === DRAWING_PROFILES.engineering.dxfInsUnits ? 'engineering' : null;
   return entities;
 }
 
@@ -2502,6 +3483,10 @@ class CadRenderer {
     ctx.lineWidth = lineWidth;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
+    const dash = profileLineTypeDash(entity.lineType);
+    if (dash.length) {
+      ctx.setLineDash(dash.map((length) => length / this.state.viewScale));
+    }
     ctx.moveTo(entity.start.x, entity.start.y);
     ctx.lineTo(entity.end.x, entity.end.y);
     ctx.stroke();
@@ -2519,6 +3504,10 @@ class CadRenderer {
     ctx.lineWidth = options.width / this.state.viewScale;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
+    const dash = profileLineTypeDash(entity.lineType);
+    if (dash.length) {
+      ctx.setLineDash(dash.map((length) => length / this.state.viewScale));
+    }
     ctx.arc(entity.center.x, entity.center.y, entity.radius, 0, Math.PI * 2);
     ctx.stroke();
     ctx.restore();
@@ -2535,8 +3524,55 @@ class CadRenderer {
     ctx.lineWidth = options.width / this.state.viewScale;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
+    const dash = profileLineTypeDash(entity.lineType);
+    if (dash.length) {
+      ctx.setLineDash(dash.map((length) => length / this.state.viewScale));
+    }
     ctx.arc(entity.center.x, entity.center.y, entity.radius, entity.startAngle, entity.endAngle);
     ctx.stroke();
+    ctx.restore();
+  }
+
+  drawTextStroke(ctx, entity, options) {
+    if (!entity.text || entity.height <= SNAP_THRESHOLD) {
+      return;
+    }
+    ctx.save();
+    ctx.translate(entity.insertionPoint.x, entity.insertionPoint.y);
+    ctx.rotate(-entity.angle * Math.PI / 180);
+    ctx.fillStyle = options.color;
+    ctx.font = `${entity.height}px ${CAD_TEXT_FONT}`;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillText(entity.text, 0, 0);
+    ctx.restore();
+  }
+
+  drawHatchFill(ctx, entity, options = {}) {
+    if (entity.boundary.length < 3) {
+      return;
+    }
+    ctx.save();
+    ctx.beginPath();
+    entity.boundary.forEach((point, index) => {
+      if (index === 0) {
+        ctx.moveTo(point.x, point.y);
+      }
+      else {
+        ctx.lineTo(point.x, point.y);
+      }
+    });
+    ctx.closePath();
+    ctx.fillStyle = options.color || entity.color;
+    ctx.globalAlpha = options.alpha ?? activeDrawingProfile().hatchOpacity;
+    ctx.fill();
+    if (options.outline) {
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = options.color || entity.color;
+      ctx.lineWidth = 1.5 / this.state.viewScale;
+      ctx.setLineDash([6 / this.state.viewScale, 5 / this.state.viewScale]);
+      ctx.stroke();
+    }
     ctx.restore();
   }
 
@@ -2565,26 +3601,48 @@ class CadRenderer {
     if (entity.type === 'ARC') {
       this.drawArcStroke(ctx, entity, options);
     }
+    if (entity.type === 'TEXT') {
+      this.drawTextStroke(ctx, entity, options);
+    }
+    if (entity.type === 'HATCH') {
+      this.drawHatchFill(ctx, entity, { color, alpha: 0.42, outline: true });
+    }
   }
 
   drawEntities(ctx) {
     const viewBounds = this.visibleWorldBounds(18 / this.state.viewScale);
-    for (const entity of this.doc.queryBounds(viewBounds)) {
+    const visibleEntities = this.doc.queryBounds(viewBounds);
+    for (const entity of visibleEntities) {
+      if (entity.type !== 'HATCH' || this.doc.isSelected(entity) ||
+          !boundsIntersectsBounds(entity.bounds(), viewBounds)) {
+        continue;
+      }
+      this.drawHatchFill(ctx, entity, { color: entity.color });
+    }
+
+    for (const entity of visibleEntities) {
       if (this.doc.isSelected(entity)) {
+        continue;
+      }
+      if (entity.type === 'HATCH') {
         continue;
       }
       if (!boundsIntersectsBounds(entity.bounds(), viewBounds)) {
         continue;
       }
       const style = getLineStyle(entity.lineStyle);
+      const entityColor = entity.color || style.color;
       if (entity.type === 'LINE') {
-        this.drawLineStroke(ctx, entity, { color: style.color, width: style.width });
+        this.drawLineStroke(ctx, entity, { color: entityColor, width: style.width });
       }
       if (entity.type === 'CIRCLE') {
-        this.drawCircleStroke(ctx, entity, { color: style.color, width: style.width });
+        this.drawCircleStroke(ctx, entity, { color: entityColor, width: style.width });
       }
       if (entity.type === 'ARC') {
-        this.drawArcStroke(ctx, entity, { color: style.color, width: style.width });
+        this.drawArcStroke(ctx, entity, { color: entityColor, width: style.width });
+      }
+      if (entity.type === 'TEXT') {
+        this.drawTextStroke(ctx, entity, { color: entityColor, width: style.width });
       }
     }
 
@@ -2634,7 +3692,37 @@ class CadRenderer {
         );
         this.drawCircleGrips(ctx, selectedEntity);
       }
+      if (selectedEntity?.type === 'TEXT') {
+        this.drawTextStroke(ctx, selectedEntity, { color: SELECTED_COLOR, width: 1 });
+        this.drawTextGrip(ctx, selectedEntity);
+      }
+      if (selectedEntity?.type === 'HATCH') {
+        this.drawHatchFill(ctx, selectedEntity, {
+          color: SELECTED_COLOR,
+          alpha: 0.35,
+          outline: true,
+        });
+        this.drawHatchGrips(ctx, selectedEntity);
+      }
     }
+  }
+
+  drawTextGrip(ctx, entity) {
+    const gripSize = 7 / this.state.viewScale;
+    ctx.save();
+    ctx.fillStyle = '#ffffff';
+    ctx.strokeStyle = SELECTED_COLOR;
+    ctx.lineWidth = 1.5 / this.state.viewScale;
+    ctx.beginPath();
+    ctx.rect(
+      entity.insertionPoint.x - gripSize * 0.5,
+      entity.insertionPoint.y - gripSize * 0.5,
+      gripSize,
+      gripSize,
+    );
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
   }
 
   drawLineGrips(ctx, entity) {
@@ -2660,6 +3748,28 @@ class CadRenderer {
       ctx.stroke();
     }
 
+    ctx.restore();
+  }
+
+  drawHatchGrips(ctx, entity) {
+    const gripSize = 7 / this.state.viewScale;
+    ctx.save();
+    ctx.strokeStyle = SELECTED_COLOR;
+    ctx.lineWidth = 1.5 / this.state.viewScale;
+    entity.boundary.forEach((point, index) => {
+      const active = this.state.selectedGrip?.entity === entity &&
+        this.state.selectedGrip?.index === index;
+      ctx.fillStyle = active ? SELECTED_COLOR : '#ffffff';
+      ctx.beginPath();
+      ctx.rect(
+        point.x - gripSize * 0.5,
+        point.y - gripSize * 0.5,
+        gripSize,
+        gripSize,
+      );
+      ctx.fill();
+      ctx.stroke();
+    });
     ctx.restore();
   }
 
@@ -2697,6 +3807,9 @@ class CadRenderer {
       this.state.tool === 'arc-center-start-end' ||
       (this.state.tool === 'copy' && !this.state.copyDraft?.selecting) ||
       (this.state.tool === 'move' && !this.state.moveDraft?.selecting) ||
+      (this.state.tool === 'rotate' && !this.state.rotateDraft?.selecting) ||
+      this.state.tool === 'text' ||
+      this.state.tool === 'hatch' ||
       this.state.tool === 'trim' ||
       Boolean(this.state.selectedGrip)
     );
@@ -2771,7 +3884,9 @@ class CadRenderer {
 
     ctx.save();
     ctx.beginPath();
-    ctx.setLineDash([10 / this.state.viewScale, 8 / this.state.viewScale]);
+    const activeLineTypeDash = profileLineTypeDash(activeLineTypeId());
+    const previewDash = activeLineTypeDash.length ? activeLineTypeDash : [10, 8];
+    ctx.setLineDash(previewDash.map((length) => length / this.state.viewScale));
     const activeStyle = getLineStyle(activeLineStyleId());
     ctx.strokeStyle = PREVIEW_COLOR;
     ctx.lineWidth = activeStyle.width / this.state.viewScale;
@@ -2967,6 +4082,40 @@ class CadRenderer {
       }
     }
 
+    if (this.state.textDraft?.text) {
+      const insertionPoint = resolveCursorPoint(this.state.mouseWorld, this.state);
+      const previewText = new TextEntity(
+        insertionPoint,
+        this.state.textDraft.text,
+        this.state.textDraft.height,
+        { angle: 0 },
+      );
+      this.drawTextStroke(ctx, previewText, { color: PREVIEW_COLOR, width: 1 });
+      ctx.setLineDash([]);
+      ctx.fillStyle = PREVIEW_COLOR;
+      ctx.beginPath();
+      ctx.arc(insertionPoint.x, insertionPoint.y, 4 / this.state.viewScale, 0, TWO_PI);
+      ctx.fill();
+    }
+
+    if (this.state.hatchDraft) {
+      const markerPoint = this.state.mouseWorld;
+      const markerSize = 8 / this.state.viewScale;
+      ctx.setLineDash([]);
+      ctx.fillStyle = 'rgba(208, 90, 31, 0.16)';
+      ctx.strokeStyle = PREVIEW_COLOR;
+      ctx.lineWidth = 2 / this.state.viewScale;
+      ctx.beginPath();
+      ctx.rect(
+        markerPoint.x - markerSize * 0.5,
+        markerPoint.y - markerSize * 0.5,
+        markerSize,
+        markerSize,
+      );
+      ctx.fill();
+      ctx.stroke();
+    }
+
     ctx.setLineDash([]);
     ctx.restore();
   }
@@ -2976,7 +4125,7 @@ class CadRenderer {
       return;
     }
 
-    const origin = this.state.selectedGrip.entity[this.state.selectedGrip.key];
+    const origin = gripPoint(this.state.selectedGrip);
     const coordinateTarget = pointFromRelativeCoordinates(origin, this.state.distanceInput);
     const inputDistance = parseDistanceInput(this.state.distanceInput);
     if (inputDistance === null && !coordinateTarget) {
@@ -3075,8 +4224,71 @@ class CadRenderer {
       if (preview.type === 'ARC') {
         this.drawArcStroke(ctx, preview, { color: PREVIEW_COLOR, width });
       }
+      if (preview.type === 'TEXT') {
+        this.drawTextStroke(ctx, preview, { color: PREVIEW_COLOR, width });
+      }
+      if (preview.type === 'HATCH') {
+        this.drawHatchFill(ctx, preview, { color: PREVIEW_COLOR, alpha: 0.28, outline: true });
+      }
     }
     ctx.setLineDash([]);
+    ctx.restore();
+  }
+
+  rotatePreviewAngle() {
+    const draft = this.state.rotateDraft;
+    if (!draft?.basePoint || !this.state.mouseWorld) {
+      return null;
+    }
+    const inputAngle = parseAngleInput(this.state.distanceInput);
+    if (inputAngle !== null) {
+      return inputAngle;
+    }
+    const cursor = resolveCursorPoint(this.state.mouseWorld, this.state);
+    return rotationAngleFromPoint(draft.basePoint, cursor, this.state.orthoEnabled);
+  }
+
+  drawRotatePreview(ctx) {
+    const draft = this.state.rotateDraft;
+    const angle = this.rotatePreviewAngle();
+    if (!draft?.basePoint || angle === null) {
+      return;
+    }
+
+    ctx.save();
+    ctx.setLineDash([8 / this.state.viewScale, 6 / this.state.viewScale]);
+    const viewBounds = this.visibleWorldBounds(18 / this.state.viewScale);
+    for (const entity of draft.sourceEntities) {
+      const preview = cloneEntity(entity);
+      if (!preview || !rotateEntityByAngle(preview, draft.basePoint, angle) ||
+          !boundsIntersectsBounds(preview.bounds(), viewBounds)) {
+        continue;
+      }
+      this.drawHighlightedEntity(ctx, preview, PREVIEW_COLOR, 0);
+    }
+
+    const cursor = resolveCursorPoint(this.state.mouseWorld, this.state);
+    if (cursor) {
+      const inputAngle = parseAngleInput(this.state.distanceInput);
+      const rayPoint = inputAngle === null
+        ? cursor
+        : rotatePointAround(
+            { x: draft.basePoint.x + distance(draft.basePoint, cursor), y: draft.basePoint.y },
+            draft.basePoint,
+            inputAngle,
+          );
+      ctx.beginPath();
+      ctx.strokeStyle = PREVIEW_COLOR;
+      ctx.lineWidth = 1.5 / this.state.viewScale;
+      ctx.moveTo(draft.basePoint.x, draft.basePoint.y);
+      ctx.lineTo(rayPoint.x, rayPoint.y);
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+    ctx.fillStyle = PREVIEW_COLOR;
+    ctx.beginPath();
+    ctx.arc(draft.basePoint.x, draft.basePoint.y, 4 / this.state.viewScale, 0, TWO_PI);
+    ctx.fill();
     ctx.restore();
   }
 
@@ -3116,8 +4328,10 @@ class CadRenderer {
     if (
       !this.state.mouseWorld ||
       this.state.tool === 'select' ||
+      this.state.tool === 'select-set' ||
       (this.state.tool === 'copy' && this.state.copyDraft?.selecting) ||
-      (this.state.tool === 'move' && this.state.moveDraft?.selecting)
+      (this.state.tool === 'move' && this.state.moveDraft?.selecting) ||
+      (this.state.tool === 'rotate' && this.state.rotateDraft?.selecting)
     ) {
       return;
     }
@@ -3156,13 +4370,14 @@ class CadRenderer {
     ctx.setTransform(transformScale, 0, 0, transformScale, translateX, translateY);
     if (this.state.snapEnabled) {
       this.drawGrid(ctx);
+      this.drawAxes(ctx);
     }
-    this.drawAxes(ctx);
     this.drawCrosshair(ctx);
     this.drawEntities(ctx);
     this.drawPreview(ctx);
     this.drawGripMovePreview(ctx);
     this.drawCopyPreview(ctx);
+    this.drawRotatePreview(ctx);
     this.drawSelectionWindow(ctx);
     this.drawObjectSnapMarker(ctx);
   }
@@ -3178,6 +4393,12 @@ class CadController {
     this.gripDragState = null;
     this.shortcutPrefix = null;
     this.shortcutTimer = null;
+    this.lastTextPointerDown = null;
+    this.lastHatchPointerDown = null;
+    this.mouseWheelZoomFrame = null;
+    this.mouseWheelZoomTarget = null;
+    this.mouseWheelZoomAnchor = null;
+    this.keyboardRefreshFrame = null;
 
     this.canvas.addEventListener('pointerdown', (event) => this.onPointerDown(event));
     this.canvas.addEventListener('pointermove', (event) => this.onPointerMove(event));
@@ -3214,6 +4435,39 @@ class CadController {
     }
     this.shortcutPrefix = null;
     this.shortcutTimer = null;
+    this.lastTextPointerDown = null;
+    this.lastHatchPointerDown = null;
+  }
+
+  armShortcutPrefix(prefix) {
+    if (this.shortcutTimer) {
+      clearTimeout(this.shortcutTimer);
+    }
+    this.shortcutPrefix = prefix;
+    this.shortcutTimer = setTimeout(() => {
+      if (this.shortcutPrefix === prefix) {
+        this.clearShortcutPrefix();
+      }
+    }, 420);
+  }
+
+  cancelKeyboardRefresh() {
+    if (this.keyboardRefreshFrame !== null) {
+      cancelAnimationFrame(this.keyboardRefreshFrame);
+      this.keyboardRefreshFrame = null;
+    }
+  }
+
+  scheduleKeyboardRefresh() {
+    this.updateCursorInput();
+    statusMessage.textContent = this.state.statusText || 'Listo';
+    if (this.keyboardRefreshFrame !== null) {
+      return;
+    }
+    this.keyboardRefreshFrame = requestAnimationFrame(() => {
+      this.keyboardRefreshFrame = null;
+      this.renderer.draw();
+    });
   }
 
   handleShortcutSequence(event) {
@@ -3222,6 +4476,26 @@ class CadController {
     }
 
     const key = event.key.toLowerCase();
+    if (this.shortcutPrefix === 'd') {
+      this.clearShortcutPrefix();
+      if (key === 's') {
+        event.preventDefault();
+        runCommand('select-set');
+        return true;
+      }
+      return false;
+    }
+
+    if (this.shortcutPrefix === 'c') {
+      this.clearShortcutPrefix();
+      if (key === 'i') {
+        event.preventDefault();
+        runCommand('circle-center');
+        return true;
+      }
+      return false;
+    }
+
     if (this.shortcutPrefix === 'r') {
       this.clearShortcutPrefix();
       if (key === 'c') {
@@ -3229,24 +4503,30 @@ class CadController {
         runCommand('rectangle');
         return true;
       }
-      event.preventDefault();
-      runCommand('trim');
-      return true;
+      return false;
     }
 
     if (key === 'r') {
       event.preventDefault();
       this.clearShortcutPrefix();
-      this.shortcutPrefix = 'r';
-      this.state.statusText = 'R: pulse C para rectangulo';
-      this.updateUiStatus();
-      this.renderer.draw();
-      this.shortcutTimer = setTimeout(() => {
-        if (this.shortcutPrefix === 'r') {
-          this.clearShortcutPrefix();
-          runCommand('trim');
-        }
-      }, 420);
+      runCommand('trim');
+      this.armShortcutPrefix('r');
+      return true;
+    }
+
+    if (key === 'c') {
+      event.preventDefault();
+      this.clearShortcutPrefix();
+      runCommand('copy');
+      this.armShortcutPrefix('c');
+      return true;
+    }
+
+    if (key === 'd') {
+      event.preventDefault();
+      this.clearShortcutPrefix();
+      runCommand('move');
+      this.armShortcutPrefix('d');
       return true;
     }
 
@@ -3254,13 +4534,18 @@ class CadController {
   }
 
   setTool(tool) {
+    this.cancelKeyboardRefresh();
     this.state.tool = tool;
     this.state.pendingLineStart = null;
     this.state.rectangleDraft = null;
+    this.state.textDraft = null;
+    this.state.hatchDraft = null;
     this.state.circleDraft = null;
     this.state.arcDraft = null;
     this.state.copyDraft = null;
     this.state.moveDraft = null;
+    this.state.rotateDraft = null;
+    this.state.selectionSetDraft = null;
     this.state.eraseDraft = null;
     this.state.extendDraft = null;
     this.state.distanceInput = '';
@@ -3271,6 +4556,8 @@ class CadController {
     if (
       tool === 'line' ||
       tool === 'rectangle' ||
+      tool === 'text' ||
+      tool === 'hatch' ||
       tool === 'circle-center' ||
       tool === 'circle-3p' ||
       tool === 'arc-center-radius' ||
@@ -3278,11 +4565,13 @@ class CadController {
       tool === 'arc-center-start-end' ||
       tool === 'copy' ||
       tool === 'move' ||
+      tool === 'rotate' ||
+      tool === 'select-set' ||
       tool === 'trim' ||
       tool === 'extend' ||
       tool === 'erase'
     ) {
-      if (tool !== 'copy' && tool !== 'move' && tool !== 'erase' && tool !== 'extend') {
+      if (tool !== 'copy' && tool !== 'move' && tool !== 'rotate' && tool !== 'select-set' && tool !== 'erase' && tool !== 'extend') {
         this.doc.selectEntity(null);
       }
     }
@@ -3298,6 +4587,14 @@ class CadController {
             ? 'Copiar: indique punto origen'
             : tool === 'move'
               ? 'Desplazar: indique punto origen'
+              : tool === 'rotate'
+                ? 'Girar: indique punto base'
+                : tool === 'text'
+                  ? 'Texto: indique contenido y altura'
+                  : tool === 'select-set'
+                    ? 'Seleccionar conjunto: elija objetos y confirme'
+                    : tool === 'hatch'
+                      ? 'Sombreado: elija tipo de contorno'
           : tool === 'circle-center'
             ? 'Circulo: indique centro'
             : tool === 'circle-3p'
@@ -3314,6 +4611,8 @@ class CadController {
     selectToolButton.classList.toggle('is-active', tool === 'select');
     lineToolButton.classList.toggle('is-active', tool === 'line');
     rectangleToolButton.classList.toggle('is-active', tool === 'rectangle');
+    textToolButton.classList.toggle('is-active', tool === 'text');
+    hatchToolButton.classList.toggle('is-active', tool === 'hatch');
     circleToolButton.classList.toggle('is-active', tool === 'circle-center' || tool === 'circle-3p');
     arcToolButton.classList.toggle(
       'is-active',
@@ -3323,12 +4622,15 @@ class CadController {
     extendToolButton.classList.toggle('is-active', tool === 'extend');
     copyToolButton.classList.toggle('is-active', tool === 'copy');
     moveToolButton.classList.toggle('is-active', tool === 'move');
+    rotateToolButton.classList.toggle('is-active', tool === 'rotate');
     eraseToolButton.classList.toggle('is-active', tool === 'erase');
     toolFlyoutCommandButtons.forEach((button) => {
       button.classList.toggle('is-active', button.dataset.command === tool);
     });
     this.canvas.classList.toggle('is-select-tool', tool === 'select');
     this.canvas.classList.toggle('is-line-tool', tool === 'line' || tool === 'rectangle');
+    this.canvas.classList.toggle('is-text-tool', tool === 'text');
+    this.canvas.classList.toggle('is-hatch-tool', tool === 'hatch');
     this.canvas.classList.toggle('is-circle-tool', tool === 'circle-center' || tool === 'circle-3p');
     this.canvas.classList.toggle(
       'is-arc-tool',
@@ -3338,10 +4640,13 @@ class CadController {
     this.canvas.classList.toggle('is-extend-tool', tool === 'extend');
     this.canvas.classList.toggle('is-copy-tool', tool === 'copy' && this.state.copyDraft?.selecting);
     this.canvas.classList.toggle('is-move-tool', tool === 'move' && this.state.moveDraft?.selecting);
+    this.canvas.classList.toggle('is-rotate-tool', tool === 'rotate' && this.state.rotateDraft?.selecting);
+    this.canvas.classList.toggle('is-selection-set-tool', tool === 'select-set');
     this.canvas.classList.toggle(
       'is-point-input-tool',
       (tool === 'copy' && this.state.copyDraft && !this.state.copyDraft.selecting) ||
-        (tool === 'move' && this.state.moveDraft && !this.state.moveDraft.selecting),
+        (tool === 'move' && this.state.moveDraft && !this.state.moveDraft.selecting) ||
+        (tool === 'rotate' && this.state.rotateDraft && !this.state.rotateDraft.selecting),
     );
     this.canvas.classList.toggle('is-erase-tool', tool === 'erase');
     this.updateUiStatus();
@@ -3352,8 +4657,12 @@ class CadController {
     const tolerance = 7 / this.state.viewScale;
     const pickBounds = expandBounds(createBounds(point.x, point.y, point.x, point.y), tolerance);
     const candidates = this.doc.queryBounds(pickBounds);
-    for (let index = candidates.length - 1; index >= 0; index -= 1) {
-      const entity = candidates[index];
+    const pickCandidates = [
+      ...candidates.filter((entity) => entity.type === 'HATCH'),
+      ...candidates.filter((entity) => entity.type !== 'HATCH'),
+    ];
+    for (let index = pickCandidates.length - 1; index >= 0; index -= 1) {
+      const entity = pickCandidates[index];
       if (entity.type === 'LINE' &&
           distancePointToSegment(point, entity.start, entity.end) <= tolerance) {
         return entity;
@@ -3364,6 +4673,12 @@ class CadController {
       if (entity.type === 'ARC' && distancePointToArc(point, entity) <= tolerance) {
         return entity;
       }
+      if (entity.type === 'TEXT' && entityDistanceToPoint(entity, point) <= tolerance) {
+        return entity;
+      }
+      if (entity.type === 'HATCH' && entityDistanceToPoint(entity, point) <= tolerance) {
+        return entity;
+      }
     }
     return null;
   }
@@ -3371,10 +4686,12 @@ class CadController {
   updateCanvasCursorMode() {
     this.canvas.classList.toggle('is-copy-tool', this.state.tool === 'copy' && this.state.copyDraft?.selecting);
     this.canvas.classList.toggle('is-move-tool', this.state.tool === 'move' && this.state.moveDraft?.selecting);
+    this.canvas.classList.toggle('is-rotate-tool', this.state.tool === 'rotate' && this.state.rotateDraft?.selecting);
     this.canvas.classList.toggle(
       'is-point-input-tool',
       (this.state.tool === 'copy' && this.state.copyDraft && !this.state.copyDraft.selecting) ||
-        (this.state.tool === 'move' && this.state.moveDraft && !this.state.moveDraft.selecting),
+        (this.state.tool === 'move' && this.state.moveDraft && !this.state.moveDraft.selecting) ||
+        (this.state.tool === 'rotate' && this.state.rotateDraft && !this.state.rotateDraft.selecting),
     );
   }
 
@@ -3383,8 +4700,12 @@ class CadController {
       !this.state.pendingLineStart &&
       !this.state.circleDraft &&
       !this.state.arcDraft &&
+      !this.state.textDraft &&
+      !this.state.hatchDraft &&
       !this.state.copyDraft &&
       !this.state.moveDraft &&
+      !this.state.rotateDraft &&
+      !this.state.selectionSetDraft &&
       !this.state.eraseDraft &&
       !this.state.extendDraft &&
       !this.state.selectionWindow &&
@@ -3405,9 +4726,12 @@ class CadController {
   }
 
   cancelCurrentCommand() {
+    const clearCommandSelection = this.state.tool === 'copy' || this.state.tool === 'select-set';
     if (
       this.state.tool === 'line' ||
       this.state.tool === 'rectangle' ||
+      this.state.tool === 'text' ||
+      this.state.tool === 'hatch' ||
       this.state.tool === 'circle-center' ||
       this.state.tool === 'circle-3p' ||
       this.state.tool === 'arc-center-radius' ||
@@ -3415,19 +4739,28 @@ class CadController {
       this.state.tool === 'arc-center-start-end' ||
       this.state.tool === 'copy' ||
       this.state.tool === 'move' ||
+      this.state.tool === 'rotate' ||
+      this.state.tool === 'select-set' ||
       this.state.tool === 'trim' ||
       this.state.tool === 'extend' ||
       this.state.tool === 'erase' ||
       this.state.pendingLineStart ||
       this.state.rectangleDraft ||
+      this.state.textDraft ||
+      this.state.hatchDraft ||
       this.state.circleDraft ||
       this.state.arcDraft ||
       this.state.copyDraft ||
       this.state.moveDraft ||
+      this.state.rotateDraft ||
+      this.state.selectionSetDraft ||
       this.state.eraseDraft ||
       this.state.extendDraft
     ) {
       this.setTool('select');
+      if (clearCommandSelection) {
+        this.doc.clearSelection();
+      }
       this.state.statusText = 'Cancelado';
       return true;
     }
@@ -3444,8 +4777,26 @@ class CadController {
     if (this.state.tool === 'copy' && this.state.copyDraft?.selecting) {
       return this.confirmCopySelection();
     }
+    if (this.state.tool === 'copy' && this.state.copyDraft?.basePoint && !this.state.distanceInput) {
+      this.setTool('select');
+      this.doc.clearSelection();
+      this.state.statusText = 'Copiar terminado';
+      return true;
+    }
     if (this.state.tool === 'move' && this.state.moveDraft?.selecting) {
       return this.confirmMoveSelection();
+    }
+    if (this.state.tool === 'rotate' && this.state.rotateDraft?.selecting) {
+      return this.confirmRotateSelection();
+    }
+    if (this.state.tool === 'select-set' && this.state.selectionSetDraft?.selecting) {
+      return this.confirmSelectionSet();
+    }
+    if (this.state.rotateDraft?.basePoint) {
+      if (this.state.distanceInput) {
+        return this.handleDistanceInputKey({ key: 'Enter' });
+      }
+      return this.rotateSelectionBy(this.renderer.rotatePreviewAngle());
     }
     if (this.state.tool === 'erase' && this.state.eraseDraft?.selecting) {
       return this.confirmEraseSelection();
@@ -3470,6 +4821,8 @@ class CadController {
     if (
       this.state.tool === 'line' ||
       this.state.tool === 'rectangle' ||
+      this.state.tool === 'text' ||
+      this.state.tool === 'hatch' ||
       this.state.tool === 'circle-center' ||
       this.state.tool === 'circle-3p' ||
       this.state.tool === 'arc-center-radius' ||
@@ -3477,14 +4830,20 @@ class CadController {
       this.state.tool === 'arc-center-start-end' ||
       this.state.tool === 'copy' ||
       this.state.tool === 'move' ||
+      this.state.tool === 'rotate' ||
+      this.state.tool === 'select-set' ||
       this.state.tool === 'trim' ||
       this.state.tool === 'extend' ||
       this.state.tool === 'erase' ||
       this.state.circleDraft ||
       this.state.rectangleDraft ||
+      this.state.textDraft ||
+      this.state.hatchDraft ||
       this.state.arcDraft ||
       this.state.copyDraft ||
       this.state.moveDraft ||
+      this.state.rotateDraft ||
+      this.state.selectionSetDraft ||
       this.state.eraseDraft ||
       this.state.extendDraft
     ) {
@@ -3509,6 +4868,14 @@ class CadController {
       : nearbyEntities;
 
     for (const entity of candidates) {
+      if (entity.type === 'HATCH') {
+        for (let index = 0; index < entity.boundary.length; index += 1) {
+          if (distance(point, entity.boundary[index]) <= tolerance) {
+            return { entity, key: 'boundary', index };
+          }
+        }
+        continue;
+      }
       if (entity.type !== 'LINE') {
         continue;
       }
@@ -3524,9 +4891,7 @@ class CadController {
   }
 
   activeGripPoint() {
-    return this.state.selectedGrip
-      ? this.state.selectedGrip.entity[this.state.selectedGrip.key]
-      : null;
+    return gripPoint(this.state.selectedGrip);
   }
 
   activeGripReferencePoint() {
@@ -3631,27 +4996,142 @@ class CadController {
     return true;
   }
 
-  applyActiveLineStyleToEntity(entity) {
-    if (!entity) {
+  rememberSelectionSet(entities = [...this.doc.selectedEntities]) {
+    const validEntities = this.doc.expandEntityGroups(entities)
+      .filter((entity) => this.doc.entities.includes(entity));
+    if (!validEntities.length) {
       return false;
     }
-    return this.applyActiveLineStyleToEntities(this.doc.groupEntities(entity));
+    this.state.previousSelection = [...new Set(validEntities)];
+    return true;
   }
 
-  applyActiveLineStyleToEntities(entities) {
-    const nextStyle = activeLineStyleId();
-    const changedEntities = entities.filter((entity) => normalizeLineStyleId(entity.lineStyle) !== nextStyle);
-    if (!changedEntities.length) {
+  previousSelectionEntities() {
+    const validEntities = this.doc.expandEntityGroups(this.state.previousSelection || [])
+      .filter((entity) => this.doc.entities.includes(entity));
+    this.state.previousSelection = [...new Set(validEntities)];
+    return this.state.previousSelection;
+  }
+
+  recallPreviousSelection() {
+    const entities = this.previousSelectionEntities();
+    if (!entities.length) {
+      this.state.statusText = 'No hay seleccion previa disponible';
       return false;
     }
-    this.doc.recordHistory();
-    changedEntities.forEach((entity) => applyLineStyleToEntity(entity, nextStyle));
-    this.doc.markDirty();
+
+    if (this.state.tool === 'extend' && this.state.extendDraft?.phase === 'targets') {
+      return this.extendEntities(entities) > 0;
+    }
+    if (this.state.tool === 'select') {
+      this.doc.selectEntities(entities);
+    }
+    else if (
+      (this.state.tool === 'copy' && this.state.copyDraft?.selecting) ||
+      (this.state.tool === 'move' && this.state.moveDraft?.selecting) ||
+      (this.state.tool === 'rotate' && this.state.rotateDraft?.selecting) ||
+      (this.state.tool === 'erase' && this.state.eraseDraft?.selecting) ||
+      (this.state.tool === 'extend' && this.state.extendDraft?.phase === 'boundaries') ||
+      this.state.tool === 'select-set'
+    ) {
+      this.doc.addSelectedEntities(entities);
+    }
+    else {
+      this.state.statusText = 'La orden actual no espera una seleccion';
+      return false;
+    }
+
+    this.state.statusText = `${entities.length} entidad${entities.length === 1 ? '' : 'es'} recuperada${entities.length === 1 ? '' : 's'} de la seleccion previa`;
+    return true;
+  }
+
+  startSelectionSet() {
+    const currentSelection = [...this.doc.selectedEntities];
+    this.setTool('select-set');
+    if (currentSelection.length) {
+      this.doc.selectEntities(currentSelection);
+    }
+    this.state.selectionSetDraft = { selecting: true };
+    this.state.statusText = currentSelection.length
+      ? `${currentSelection.length} entidad${currentSelection.length === 1 ? '' : 'es'} seleccionada${currentSelection.length === 1 ? '' : 's'} - seleccione mas o confirme`
+      : 'Seleccionar conjunto: elija objetos y confirme';
+    this.updateUiStatus();
+    this.renderer.draw();
+    return true;
+  }
+
+  confirmSelectionSet() {
+    if (!this.state.selectionSetDraft?.selecting || !this.doc.selectedEntities.size) {
+      this.state.statusText = 'Seleccione al menos una entidad';
+      return false;
+    }
+    this.rememberSelectionSet();
+    const count = this.state.previousSelection.length;
+    this.setTool('select');
+    this.doc.clearSelection();
+    this.state.selectedGrip = null;
+    this.state.statusText = `Seleccion memorizada: ${count} entidad${count === 1 ? '' : 'es'}`;
+    this.updateUiStatus();
+    this.renderer.draw();
+    return true;
+  }
+
+  startText() {
+    this.setTool('text');
+    openTextDialog();
+    return true;
+  }
+
+  startHatch() {
+    this.setTool('hatch');
+    openHatchDialog();
+    return true;
+  }
+
+  createHatch(boundary) {
+    if (!boundary || boundary.length < 3 || Math.abs(polygonSignedArea(boundary)) <= SNAP_THRESHOLD) {
+      this.state.statusText = 'No se encontro un contorno cerrado valido';
+      return false;
+    }
+    const draft = this.state.hatchDraft;
+    const layer = this.state.layers.find((candidate) => candidate.name === draft?.layer) ||
+      activeLayerDefinition();
+    this.doc.addEntity(new HatchEntity(boundary, {
+      layer: layer.name,
+      lineStyle: layer.lineStyle,
+      lineType: layer.lineType,
+      lineColor: draft?.lineColor || layer.lineColor,
+    }));
+    this.setTool('select');
+    this.doc.clearSelection();
+    this.state.statusText = 'Sombreado solido creado';
+    return true;
+  }
+
+  createTextAt(insertionPoint) {
+    const draft = this.state.textDraft;
+    if (!draft?.text || !insertionPoint || draft.height <= SNAP_THRESHOLD) {
+      return false;
+    }
+    const entity = new TextEntity(insertionPoint, draft.text, draft.height, {
+      layer: activeLayerName(),
+      lineStyle: activeLineStyleId(),
+      lineType: activeLineTypeId(),
+      lineColor: activeLineColorId(),
+    });
+    this.doc.addEntity(entity);
+    this.state.lastTextHeight = draft.height;
+    this.setTool('select');
+    this.doc.clearSelection();
+    this.state.statusText = `Texto creado - altura ${formatNumber(entity.height)} ${UNITS_LABEL}`;
     return true;
   }
 
   startCopy() {
     const sourceEntities = [...this.doc.selectedEntities];
+    if (sourceEntities.length) {
+      this.rememberSelectionSet(sourceEntities);
+    }
     this.state.lastCopy = null;
     this.setTool('copy');
     this.state.copyDraft = {
@@ -3669,6 +5149,9 @@ class CadController {
 
   startMove() {
     const sourceEntities = [...this.doc.selectedEntities];
+    if (sourceEntities.length) {
+      this.rememberSelectionSet(sourceEntities);
+    }
     this.setTool('move');
     this.state.moveDraft = {
       sourceEntities,
@@ -3683,8 +5166,30 @@ class CadController {
     return true;
   }
 
+  startRotate() {
+    const sourceEntities = [...this.doc.selectedEntities];
+    if (sourceEntities.length) {
+      this.rememberSelectionSet(sourceEntities);
+    }
+    this.setTool('rotate');
+    this.state.rotateDraft = {
+      sourceEntities,
+      basePoint: null,
+      selecting: !sourceEntities.length,
+    };
+    this.state.statusText = sourceEntities.length
+      ? `Girar ${sourceEntities.length} entidad${sourceEntities.length === 1 ? '' : 'es'} - indique punto base`
+      : 'Girar: seleccione objetos y confirme con Enter, Espacio o clic derecho';
+    this.updateUiStatus();
+    this.renderer.draw();
+    return true;
+  }
+
   startErase() {
     const selectedCount = this.doc.selectedEntities.size;
+    if (selectedCount) {
+      this.rememberSelectionSet();
+    }
     this.setTool('erase');
     this.state.eraseDraft = { selecting: true };
     this.state.statusText = selectedCount
@@ -3697,6 +5202,9 @@ class CadController {
 
   startExtend() {
     const selectedBoundaries = [...this.doc.selectedEntities];
+    if (selectedBoundaries.length) {
+      this.rememberSelectionSet(selectedBoundaries);
+    }
     this.setTool('extend');
     if (selectedBoundaries.length) {
       this.doc.selectEntities(selectedBoundaries);
@@ -3726,6 +5234,8 @@ class CadController {
       return false;
     }
 
+    this.rememberSelectionSet(sourceEntities);
+
     this.state.copyDraft = {
       sourceEntities,
       basePoint: null,
@@ -3750,12 +5260,41 @@ class CadController {
       return false;
     }
 
+    this.rememberSelectionSet(sourceEntities);
+
     this.state.moveDraft = {
       sourceEntities,
       basePoint: null,
       selecting: false,
     };
     this.state.statusText = `Desplazar ${sourceEntities.length} entidad${sourceEntities.length === 1 ? '' : 'es'} - indique punto origen`;
+    this.updateUiStatus();
+    this.renderer.draw();
+    return true;
+  }
+
+  confirmRotateSelection() {
+    if (!this.state.rotateDraft?.selecting) {
+      return false;
+    }
+
+    const sourceEntities = [...this.doc.selectedEntities];
+    if (!sourceEntities.length) {
+      this.state.statusText = 'Seleccione entidades para girar';
+      this.updateUiStatus();
+      this.renderer.draw();
+      return false;
+    }
+
+    this.rememberSelectionSet(sourceEntities);
+
+    this.state.rotateDraft = {
+      sourceEntities,
+      basePoint: null,
+      selecting: false,
+    };
+    this.state.statusText = `Girar ${sourceEntities.length} entidad${sourceEntities.length === 1 ? '' : 'es'} - indique punto base`;
+    this.updateCanvasCursorMode();
     this.updateUiStatus();
     this.renderer.draw();
     return true;
@@ -3773,6 +5312,8 @@ class CadController {
       this.renderer.draw();
       return false;
     }
+
+    this.rememberSelectionSet(entities);
 
     const removedCount = this.doc.removeEntities(entities);
     this.state.eraseDraft = null;
@@ -3796,6 +5337,8 @@ class CadController {
       this.renderer.draw();
       return false;
     }
+
+    this.rememberSelectionSet(boundaries);
 
     this.state.extendDraft = {
       phase: 'targets',
@@ -3822,6 +5365,8 @@ class CadController {
       this.state.statusText = 'Seleccione lineas o arcos para alargar';
       return 0;
     }
+
+    this.rememberSelectionSet(targetEntities);
 
     const before = this.doc.snapshot();
     let extendedCount = 0;
@@ -3871,10 +5416,7 @@ class CadController {
       sourceEntities: copyDraft.sourceEntities,
       vector,
     };
-    this.state.copyDraft = null;
-    this.setTool('select');
-    this.doc.clearSelection();
-    this.state.statusText = `${copies.length} entidad${copies.length === 1 ? '' : 'es'} copiada${copies.length === 1 ? '' : 's'} - escriba x2, x3... para repetir`;
+    this.state.statusText = `${copies.length} entidad${copies.length === 1 ? '' : 'es'} copiada${copies.length === 1 ? '' : 's'} - indique otro destino o termine la orden`;
     return true;
   }
 
@@ -3894,7 +5436,9 @@ class CadController {
     }
 
     this.doc.addEntities(copies);
-    this.doc.clearSelection();
+    if (!this.state.copyDraft) {
+      this.doc.clearSelection();
+    }
     this.state.statusText = `Matriz lineal: ${count} copias en total`;
     return true;
   }
@@ -3925,6 +5469,28 @@ class CadController {
     return true;
   }
 
+  rotateSelectionBy(angleDegrees) {
+    const rotateDraft = this.state.rotateDraft;
+    if (!rotateDraft?.basePoint || angleDegrees === null || !Number.isFinite(angleDegrees)) {
+      return false;
+    }
+    if (Math.abs(angleDegrees % 360) <= SNAP_THRESHOLD) {
+      this.state.statusText = 'Angulo nulo';
+      return false;
+    }
+
+    this.doc.recordHistory();
+    rotateDraft.sourceEntities.forEach((entity) =>
+      rotateEntityByAngle(entity, rotateDraft.basePoint, angleDegrees));
+    this.doc.markDirty();
+    const count = rotateDraft.sourceEntities.length;
+    this.state.rotateDraft = null;
+    this.setTool('select');
+    this.doc.clearSelection();
+    this.state.statusText = `${count} entidad${count === 1 ? '' : 'es'} girada${count === 1 ? '' : 's'} ${formatNumber(angleDegrees)}°`;
+    return true;
+  }
+
   selectedEntitiesFromWindow(selectionWindow) {
     if (!selectionWindow?.currentWorld) {
       return [];
@@ -3949,7 +5515,12 @@ class CadController {
 
     this.state.activeLineStyle = activeLineStyleId();
     const style = getLineStyle(activeLineStyleId());
-    this.doc.addEntity(new LineEntity(this.state.pendingLineStart, point, { lineStyle: style.id }));
+    this.doc.addEntity(new LineEntity(this.state.pendingLineStart, point, {
+      layer: activeLayerName(),
+      lineStyle: style.id,
+      lineType: activeLineTypeId(),
+      lineColor: activeLineColorId(),
+    }));
     this.state.statusText = continueFromEnd
       ? `Linea ${style.label.toLowerCase()} creada - indique siguiente punto`
       : `Linea ${style.label.toLowerCase()} creada (${this.doc.entities.length})`;
@@ -3977,10 +5548,10 @@ class CadController {
     const topRight = { x: point.x, y: firstPoint.y };
     const bottomLeft = { x: firstPoint.x, y: point.y };
     const entities = [
-      new LineEntity(firstPoint, topRight, { lineStyle: style.id, groupId }),
-      new LineEntity(topRight, point, { lineStyle: style.id, groupId }),
-      new LineEntity(point, bottomLeft, { lineStyle: style.id, groupId }),
-      new LineEntity(bottomLeft, firstPoint, { lineStyle: style.id, groupId }),
+      new LineEntity(firstPoint, topRight, { layer: activeLayerName(), lineStyle: style.id, lineType: activeLineTypeId(), lineColor: activeLineColorId(), groupId }),
+      new LineEntity(topRight, point, { layer: activeLayerName(), lineStyle: style.id, lineType: activeLineTypeId(), lineColor: activeLineColorId(), groupId }),
+      new LineEntity(point, bottomLeft, { layer: activeLayerName(), lineStyle: style.id, lineType: activeLineTypeId(), lineColor: activeLineColorId(), groupId }),
+      new LineEntity(bottomLeft, firstPoint, { layer: activeLayerName(), lineStyle: style.id, lineType: activeLineTypeId(), lineColor: activeLineColorId(), groupId }),
     ];
     this.doc.addEntities(entities);
     this.state.rectangleDraft = null;
@@ -3996,7 +5567,12 @@ class CadController {
 
     this.state.activeLineStyle = activeLineStyleId();
     const style = getLineStyle(activeLineStyleId());
-    this.doc.addEntity(new CircleEntity(center, radius, { lineStyle: style.id }));
+    this.doc.addEntity(new CircleEntity(center, radius, {
+      layer: activeLayerName(),
+      lineStyle: style.id,
+      lineType: activeLineTypeId(),
+      lineColor: activeLineColorId(),
+    }));
     this.state.circleDraft = null;
     this.state.statusText = `Circulo ${style.label.toLowerCase()} creado - radio ${formatNumber(radius)} ${UNITS_LABEL}`;
     return true;
@@ -4010,7 +5586,12 @@ class CadController {
 
     this.state.activeLineStyle = activeLineStyleId();
     const style = getLineStyle(activeLineStyleId());
-    this.doc.addEntity(new ArcEntity(center, radius, startAngle, endAngle, { lineStyle: style.id }));
+    this.doc.addEntity(new ArcEntity(center, radius, startAngle, endAngle, {
+      layer: activeLayerName(),
+      lineStyle: style.id,
+      lineType: activeLineTypeId(),
+      lineColor: activeLineColorId(),
+    }));
     this.state.arcDraft = null;
     this.state.statusText = `Arco ${style.label.toLowerCase()} creado - radio ${formatNumber(radius)} ${UNITS_LABEL}`;
     return true;
@@ -4143,7 +5724,8 @@ class CadController {
       this.state.circleDraft?.points.length ||
       this.state.arcDraft?.points.length ||
       this.state.copyDraft?.basePoint ||
-      this.state.moveDraft?.basePoint,
+      this.state.moveDraft?.basePoint ||
+      this.state.rotateDraft?.basePoint,
     );
     if (!this.state.pendingLineStart && !this.state.selectedGrip && !radiusDraft && !pointDraft && !this.state.lastCopy) {
       return false;
@@ -4154,6 +5736,8 @@ class CadController {
       const multiplier = parseCopyMultiplier(this.state.distanceInput);
       this.state.statusText = multiplier
         ? `Repetir copia: x${multiplier}`
+        : this.state.rotateDraft?.basePoint
+        ? `Angulo: ${this.state.distanceInput}°`
         : parseRelativeCoordinateInput(this.state.distanceInput)
         ? `Coordenadas: ${this.state.distanceInput} ${UNITS_LABEL}`
         : radiusDraft
@@ -4167,7 +5751,11 @@ class CadController {
         this.state.distanceInput += event.key;
       }
       this.state.statusText = parseRelativeCoordinateInput(this.state.distanceInput)
-        ? `Coordenadas: ${this.state.distanceInput} ${UNITS_LABEL}`
+        ? this.state.rotateDraft?.basePoint
+          ? `Angulo: ${this.state.distanceInput}°`
+          : `Coordenadas: ${this.state.distanceInput} ${UNITS_LABEL}`
+        : this.state.rotateDraft?.basePoint
+        ? `Angulo: ${this.state.distanceInput}°`
         : radiusDraft
         ? `Radio: ${this.state.distanceInput} ${UNITS_LABEL}`
         : `Distancia: ${this.state.distanceInput} ${UNITS_LABEL}`;
@@ -4177,14 +5765,29 @@ class CadController {
     if (event.key === 'Backspace') {
       this.state.distanceInput = this.state.distanceInput.slice(0, -1);
       this.state.statusText = this.state.distanceInput
-        ? radiusDraft
+        ? this.state.rotateDraft?.basePoint
+          ? `Angulo: ${this.state.distanceInput}°`
+          : radiusDraft
           ? `Radio: ${this.state.distanceInput} ${UNITS_LABEL}`
           : `Distancia: ${this.state.distanceInput} ${UNITS_LABEL}`
-        : radiusDraft ? 'Radio pendiente' : 'Segundo punto pendiente';
+        : this.state.rotateDraft?.basePoint
+          ? 'Angulo pendiente'
+          : radiusDraft ? 'Radio pendiente' : 'Segundo punto pendiente';
       return true;
     }
 
     if (event.key === 'Enter') {
+      if (this.state.rotateDraft?.basePoint) {
+        const inputAngle = parseAngleInput(this.state.distanceInput);
+        if (inputAngle !== null && this.rotateSelectionBy(inputAngle)) {
+          this.state.distanceInput = '';
+        }
+        else {
+          this.state.statusText = 'Angulo no valido';
+        }
+        return true;
+      }
+
       const multiplier = parseCopyMultiplier(this.state.distanceInput);
       if (multiplier !== null) {
         if (this.repeatLastCopy(multiplier)) {
@@ -4343,28 +5946,62 @@ class CadController {
     return { x: event.deltaX, y: event.deltaY };
   }
 
-  isMouseWheelZoom(event, delta) {
-    const lineMode = typeof WheelEvent === 'undefined' ? 1 : WheelEvent.DOM_DELTA_LINE;
-    if (event.deltaMode === lineMode) {
-      return true;
+  cancelMouseWheelZoom() {
+    if (this.mouseWheelZoomFrame !== null) {
+      cancelAnimationFrame(this.mouseWheelZoomFrame);
     }
+    this.mouseWheelZoomFrame = null;
+    this.mouseWheelZoomTarget = null;
+    this.mouseWheelZoomAnchor = null;
+  }
 
-    const absX = Math.abs(delta.x);
-    const absY = Math.abs(delta.y);
-    if (absY <= SNAP_THRESHOLD || absX > 1) {
+  queueMouseWheelZoom(zoomDelta) {
+    if (!Number.isFinite(zoomDelta) || Math.abs(zoomDelta) <= SNAP_THRESHOLD) {
       return false;
     }
+    const normalizedStep = clamp(Math.abs(zoomDelta) / 100, 0.35, 1.25);
+    const direction = Math.sign(zoomDelta);
+    const baseScale = this.mouseWheelZoomTarget ?? this.state.viewScale;
+    this.mouseWheelZoomTarget = clamp(
+      baseScale * Math.pow(VIEW_SCALE_FACTOR, -direction * normalizedStep),
+      MIN_VIEW_SCALE,
+      MAX_VIEW_SCALE,
+    );
+    this.mouseWheelZoomAnchor = this.state.mouseScreen
+      ? { ...this.state.mouseScreen }
+      : null;
 
-    const wheelDeltaY = Math.abs(Number(event.wheelDeltaY || 0));
-    if (wheelDeltaY >= 100 && Math.abs(wheelDeltaY % 120) <= SNAP_THRESHOLD) {
+    if (this.mouseWheelZoomFrame !== null) {
       return true;
     }
-
-    return absY >= 80;
+    const animate = () => {
+      if (this.mouseWheelZoomTarget === null) {
+        this.mouseWheelZoomFrame = null;
+        return;
+      }
+      const difference = this.mouseWheelZoomTarget - this.state.viewScale;
+      const threshold = Math.max(SNAP_THRESHOLD, this.mouseWheelZoomTarget * 0.0008);
+      if (Math.abs(difference) <= threshold) {
+        this.renderer.zoom(this.mouseWheelZoomTarget, this.mouseWheelZoomAnchor);
+        this.mouseWheelZoomFrame = null;
+        this.mouseWheelZoomTarget = null;
+        this.mouseWheelZoomAnchor = null;
+        return;
+      }
+      this.renderer.zoom(
+        this.state.viewScale + difference * 0.32,
+        this.mouseWheelZoomAnchor,
+      );
+      this.mouseWheelZoomFrame = requestAnimationFrame(animate);
+    };
+    this.mouseWheelZoomFrame = requestAnimationFrame(animate);
+    return true;
   }
 
   onPointerDown(event) {
     event.preventDefault();
+    this.cancelMouseWheelZoom();
+    this.cancelKeyboardRefresh();
     this.state.activeLineStyle = activeLineStyleId();
     if (typeof this.canvas.setPointerCapture === 'function') {
       this.canvas.setPointerCapture(event.pointerId);
@@ -4400,18 +6037,24 @@ class CadController {
       const grip = this.findGripAt(worldPoint);
       if (grip) {
         this.doc.selectEntity(grip.entity);
+        this.rememberSelectionSet();
         this.state.selectedGrip = grip;
         const referencePoint = gripReferencePoint(grip);
-        const gripPoint = grip.entity[grip.key];
+        const selectedGripPoint = gripPoint(grip);
         this.gripDragState = {
           grip,
-          startPoint: { ...gripPoint },
+          startPoint: { ...selectedGripPoint },
           axisPoint: referencePoint ? { ...referencePoint } : null,
           axisDirection: referencePoint
-            ? { x: gripPoint.x - referencePoint.x, y: gripPoint.y - referencePoint.y }
+            ? {
+                x: selectedGripPoint.x - referencePoint.x,
+                y: selectedGripPoint.y - referencePoint.y,
+              }
             : null,
         };
-        this.state.statusText = `Punto ${grip.key === 'start' ? 'inicial' : 'final'} seleccionado`;
+        this.state.statusText = grip.entity.type === 'HATCH'
+          ? `Vertice ${grip.index + 1} del sombreado seleccionado`
+          : `Punto ${grip.key === 'start' ? 'inicial' : 'final'} seleccionado`;
         this.updateUiStatus();
         this.renderer.draw();
         return;
@@ -4421,22 +6064,52 @@ class CadController {
       this.state.selectedGrip = null;
       this.state.distanceInput = '';
       if (entity) {
+        const now = Date.now();
+        const isTextDoubleClick = entity.type === 'TEXT' &&
+          this.lastTextPointerDown?.entity === entity &&
+          now - this.lastTextPointerDown.time <= 450;
+        const isHatchDoubleClick = entity.type === 'HATCH' &&
+          this.lastHatchPointerDown?.entity === entity &&
+          now - this.lastHatchPointerDown.time <= 450;
+        this.lastTextPointerDown = entity.type === 'TEXT' ? { entity, time: now } : null;
+        this.lastHatchPointerDown = entity.type === 'HATCH' ? { entity, time: now } : null;
         this.doc.selectEntity(entity);
-        this.applyActiveLineStyleToEntity(entity);
-        const activeStyle = getLineStyle(activeLineStyleId());
+        this.rememberSelectionSet();
+        if (isTextDoubleClick) {
+          this.lastTextPointerDown = null;
+          openTextDialog(entity);
+          this.state.statusText = 'Editando texto';
+          this.updateUiStatus();
+          this.renderer.draw();
+          return;
+        }
+        if (isHatchDoubleClick) {
+          this.lastHatchPointerDown = null;
+          openHatchDialog(entity);
+          this.state.statusText = 'Editando sombreado';
+          this.updateUiStatus();
+          this.renderer.draw();
+          return;
+        }
         const selectedEntities = [...this.doc.selectedEntities];
         const entityLabel = entity.groupId
           ? 'Polilinea'
           : entity.type === 'CIRCLE'
           ? 'Circulo'
-          : entity.type === 'ARC' ? 'Arco' : 'Linea';
+          : entity.type === 'ARC'
+            ? 'Arco'
+            : entity.type === 'TEXT'
+              ? 'Texto'
+              : entity.type === 'HATCH' ? 'Sombreado' : 'Linea';
         const selectedLength = selectedEntities.reduce((total, selectedEntity) => total + selectedEntity.length(), 0);
-        this.state.statusText = `${entityLabel} seleccionada - capa ${activeStyle.label} - ${formatNumber(selectedLength)} ${UNITS_LABEL}`;
+        this.state.statusText = `${entityLabel} seleccionada - capa ${entity.layer} - grosor ${getLineStyle(entity.lineStyle).label} - ${formatNumber(selectedLength)} ${UNITS_LABEL}`;
         this.updateUiStatus();
         this.renderer.draw();
         return;
       }
 
+      this.lastTextPointerDown = null;
+      this.lastHatchPointerDown = null;
       this.state.selectionWindow = {
         startWorld: { ...worldPoint },
         currentWorld: { ...worldPoint },
@@ -4444,6 +6117,27 @@ class CadController {
         dragging: false,
       };
       this.state.statusText = 'Ventana de seleccion';
+      this.updateUiStatus();
+      this.renderer.draw();
+      return;
+    }
+
+    if (this.state.tool === 'select-set') {
+      const entity = this.findEntityAt(worldPoint);
+      if (entity) {
+        this.doc.addSelectedEntities([entity]);
+        this.state.statusText = `${this.doc.selectedEntities.size} entidad${this.doc.selectedEntities.size === 1 ? '' : 'es'} en el conjunto`;
+      }
+      else {
+        this.state.selectionWindow = {
+          startWorld: { ...worldPoint },
+          currentWorld: { ...worldPoint },
+          startScreen: { ...this.state.mouseScreen },
+          dragging: false,
+          purpose: 'select-set',
+        };
+        this.state.statusText = 'Ventana para seleccionar conjunto';
+      }
       this.updateUiStatus();
       this.renderer.draw();
       return;
@@ -4531,6 +6225,53 @@ class CadController {
       return;
     }
 
+    if (this.state.tool === 'rotate') {
+      if (!this.state.rotateDraft) {
+        this.startRotate();
+        return;
+      }
+
+      if (this.state.rotateDraft.selecting) {
+        const entity = this.findEntityAt(worldPoint);
+        if (entity) {
+          this.doc.addSelectedEntities([entity]);
+          this.state.statusText = `${this.doc.selectedEntities.size} entidad${this.doc.selectedEntities.size === 1 ? '' : 'es'} seleccionada${this.doc.selectedEntities.size === 1 ? '' : 's'} para girar`;
+        }
+        else {
+          this.state.selectionWindow = {
+            startWorld: { ...worldPoint },
+            currentWorld: { ...worldPoint },
+            startScreen: { ...this.state.mouseScreen },
+            dragging: false,
+            purpose: 'rotate',
+          };
+          this.state.statusText = 'Ventana de seleccion para girar';
+        }
+        this.updateUiStatus();
+        this.renderer.draw();
+        return;
+      }
+
+      const point = this.resolveInputPoint(worldPoint);
+      if (!this.state.rotateDraft.basePoint) {
+        this.state.rotateDraft.basePoint = point;
+        this.state.statusText = 'Punto base indicado - indique angulo o escribalo';
+      }
+      else {
+        const angle = rotationAngleFromPoint(
+          this.state.rotateDraft.basePoint,
+          point,
+          this.state.orthoEnabled,
+        );
+        this.rotateSelectionBy(angle);
+      }
+      this.state.distanceInput = '';
+      this.updateCanvasCursorMode();
+      this.updateUiStatus();
+      this.renderer.draw();
+      return;
+    }
+
     if (this.state.tool === 'trim') {
       const entity = this.findEntityAt(worldPoint);
       if (!entity) {
@@ -4544,7 +6285,9 @@ class CadController {
       this.state.selectedGrip = null;
       this.state.distanceInput = '';
       this.state.statusText = result.trimmed
-        ? result.grouped
+        ? result.hatch
+          ? 'Sombreado recortado'
+          : result.grouped
           ? `Polilinea recortada en bloque - quedan ${result.keptCount} componente${result.keptCount === 1 ? '' : 's'}`
           : `Tramo recortado - quedan ${result.keptCount} tramo${result.keptCount === 1 ? '' : 's'}`
         : 'No se pudo recortar';
@@ -4624,6 +6367,43 @@ class CadController {
       return;
     }
 
+    if (this.state.tool === 'text') {
+      if (!this.state.textDraft?.text) {
+        openTextDialog();
+        return;
+      }
+      const point = this.resolveInputPoint(worldPoint);
+      this.createTextAt(point);
+      this.updateUiStatus();
+      this.renderer.draw();
+      return;
+    }
+
+    if (this.state.tool === 'hatch') {
+      if (!this.state.hatchDraft) {
+        openHatchDialog();
+        return;
+      }
+      let boundary = null;
+      if (this.state.hatchDraft.mode === 'point') {
+        boundary = hatchBoundaryAtPoint(this.doc, worldPoint);
+      }
+      else {
+        boundary = closedLineGroupPolygon(this.doc, this.findEntityAt(worldPoint));
+      }
+      if (!boundary) {
+        this.state.statusText = this.state.hatchDraft.mode === 'point'
+          ? 'No se encontro un recinto cerrado en ese punto'
+          : 'Seleccione una polilinea cerrada';
+      }
+      else {
+        this.createHatch(boundary);
+      }
+      this.updateUiStatus();
+      this.renderer.draw();
+      return;
+    }
+
     if (this.state.tool === 'circle-center' || this.state.tool === 'circle-3p') {
       const point = this.resolveInputPoint(worldPoint);
       this.handleCirclePoint(point);
@@ -4690,8 +6470,12 @@ class CadController {
       const mode = selectionWindowMode(this.state.selectionWindow) === 'window' ? 'ventana' : 'captura';
       this.state.statusText = this.state.selectionWindow.purpose === 'copy'
         ? `Seleccion para copiar por ${mode}`
+        : this.state.selectionWindow.purpose === 'select-set'
+          ? `Seleccion de conjunto por ${mode}`
         : this.state.selectionWindow.purpose === 'move'
           ? `Seleccion para desplazar por ${mode}`
+          : this.state.selectionWindow.purpose === 'rotate'
+            ? `Seleccion para girar por ${mode}`
           : this.state.selectionWindow.purpose === 'erase'
             ? `Seleccion para borrar por ${mode}`
             : this.state.selectionWindow.purpose === 'extend-boundaries'
@@ -4750,7 +6534,9 @@ class CadController {
       if (!selectionWindow.dragging) {
         if (
           selectionWindow.purpose !== 'copy' &&
+          selectionWindow.purpose !== 'select-set' &&
           selectionWindow.purpose !== 'move' &&
+          selectionWindow.purpose !== 'rotate' &&
           selectionWindow.purpose !== 'erase' &&
           selectionWindow.purpose !== 'extend-boundaries' &&
           selectionWindow.purpose !== 'extend-targets'
@@ -4759,8 +6545,12 @@ class CadController {
         }
         this.state.statusText = selectionWindow.purpose === 'copy'
           ? 'Seleccione objetos para copiar'
+          : selectionWindow.purpose === 'select-set'
+            ? 'Seleccione objetos para el conjunto'
           : selectionWindow.purpose === 'move'
             ? 'Seleccione objetos para desplazar'
+            : selectionWindow.purpose === 'rotate'
+              ? 'Seleccione objetos para girar'
             : selectionWindow.purpose === 'erase'
               ? 'Seleccione objetos para borrar'
               : selectionWindow.purpose === 'extend-boundaries'
@@ -4773,7 +6563,9 @@ class CadController {
         const entities = this.selectedEntitiesFromWindow(selectionWindow);
         if (
           selectionWindow.purpose === 'copy' ||
+          selectionWindow.purpose === 'select-set' ||
           selectionWindow.purpose === 'move' ||
+          selectionWindow.purpose === 'rotate' ||
           selectionWindow.purpose === 'erase' ||
           selectionWindow.purpose === 'extend-boundaries'
         ) {
@@ -4787,13 +6579,17 @@ class CadController {
         }
         else {
           this.doc.selectEntities(entities);
-          this.applyActiveLineStyleToEntities(entities);
+          this.rememberSelectionSet(entities);
         }
         const mode = selectionWindowMode(selectionWindow) === 'window' ? 'ventana' : 'captura';
         const selectedCount = selectionWindow.purpose === 'copy'
           ? this.doc.selectedEntities.size
+          : selectionWindow.purpose === 'select-set'
+            ? this.doc.selectedEntities.size
           : selectionWindow.purpose === 'move'
             ? this.doc.selectedEntities.size
+            : selectionWindow.purpose === 'rotate'
+              ? this.doc.selectedEntities.size
             : selectionWindow.purpose === 'erase'
               ? this.doc.selectedEntities.size
               : selectionWindow.purpose === 'extend-boundaries'
@@ -4803,8 +6599,12 @@ class CadController {
           ? `${selectedCount} entidad${selectedCount === 1 ? '' : 'es'} seleccionada${selectedCount === 1 ? '' : 's'}${
               selectionWindow.purpose === 'copy'
                 ? ' para copiar'
+                : selectionWindow.purpose === 'select-set'
+                  ? ' para el conjunto'
                 : selectionWindow.purpose === 'move'
                   ? ' para desplazar'
+                  : selectionWindow.purpose === 'rotate'
+                    ? ' para girar'
                   : selectionWindow.purpose === 'erase'
                     ? ' para borrar'
                     : selectionWindow.purpose === 'extend-boundaries' ? ' como limite' : ''
@@ -4821,28 +6621,33 @@ class CadController {
     event.preventDefault();
     this.updateMouse(event);
     const delta = this.normalizeWheelDelta(event);
-
-    const verticalWheelDelta = Math.abs(delta.y) > SNAP_THRESHOLD && Math.abs(delta.y) >= Math.abs(delta.x);
-    const shouldZoom = event.shiftKey ||
-      this.state.shiftKeyDown ||
-      verticalWheelDelta ||
-      this.isMouseWheelZoom(event, delta);
-    if (shouldZoom) {
-      const zoomDelta = verticalWheelDelta ? delta.y : Math.abs(delta.y) >= Math.abs(delta.x) ? delta.y : delta.x;
+    const shiftZoom = event.shiftKey || this.state.shiftKeyDown;
+    if (this.state.navigationDevice === 'mouse') {
+      const zoomDelta = Math.abs(delta.y) >= Math.abs(delta.x) ? delta.y : delta.x;
       if (zoomDelta !== 0) {
-        const zoomFactor = Math.pow(VIEW_SCALE_FACTOR, -zoomDelta / 100);
-        this.state.statusText = event.shiftKey || this.state.shiftKeyDown
-          ? 'Zoom con Shift + dos dedos'
-          : 'Zoom con rueda de raton';
+        this.state.statusText = 'Zoom con rueda de raton';
         this.updateUiStatus();
+        this.queueMouseWheelZoom(zoomDelta);
+      }
+      return;
+    }
+
+    if (shiftZoom) {
+      const zoomDelta = Math.abs(delta.y) >= Math.abs(delta.x) ? delta.y : delta.x;
+      if (zoomDelta !== 0) {
+        this.cancelMouseWheelZoom();
+        this.state.statusText = 'Zoom con Shift + dos dedos';
+        this.updateUiStatus();
+        const zoomFactor = Math.pow(VIEW_SCALE_FACTOR, -zoomDelta / 100);
         this.renderer.zoom(this.state.viewScale * zoomFactor, this.state.mouseScreen);
       }
       return;
     }
 
+    this.cancelMouseWheelZoom();
     this.state.viewOffset = {
       x: this.state.viewOffset.x + delta.x / this.state.viewScale,
-      y: this.state.viewOffset.y,
+      y: this.state.viewOffset.y + delta.y / this.state.viewScale,
     };
     if (this.state.mouseScreen) {
       this.state.mouseWorld = this.renderer.screenToWorld(this.state.mouseScreen);
@@ -4853,6 +6658,14 @@ class CadController {
   }
 
   onKeyDown(event) {
+    if (!drawingProfileDialog.hidden || !textDialog.hidden || !hatchDialog.hidden || !aboutDialog.hidden) {
+      return;
+    }
+    if (event.target instanceof HTMLInputElement ||
+        event.target instanceof HTMLSelectElement ||
+        event.target instanceof HTMLTextAreaElement) {
+      return;
+    }
     if (event.key === 'Shift') {
       this.state.shiftKeyDown = true;
       if (this.gripDragState && this.state.mouseWorld) {
@@ -4881,6 +6694,7 @@ class CadController {
     }
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
+      this.cancelKeyboardRefresh();
       this.handleCommandEnter();
       this.updateUiStatus();
       this.renderer.draw();
@@ -4922,6 +6736,13 @@ class CadController {
       this.confirmExtendBoundaries();
       return;
     }
+    if (event.key.toLowerCase() === 'p' && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      event.preventDefault();
+      this.recallPreviousSelection();
+      this.updateUiStatus();
+      this.renderer.draw();
+      return;
+    }
     if (event.key.toLowerCase() === 'l' && !event.metaKey && !event.ctrlKey && !event.altKey) {
       event.preventDefault();
       runCommand('line');
@@ -4937,24 +6758,29 @@ class CadController {
       runCommand('erase');
       return;
     }
-    if (event.key.toLowerCase() === 'c' && !event.metaKey && !event.ctrlKey && !event.altKey) {
+    if (event.key.toLowerCase() === 'g' && !event.metaKey && !event.ctrlKey && !event.altKey) {
       event.preventDefault();
-      runCommand('copy');
+      runCommand('rotate');
       return;
     }
-    if (event.key.toLowerCase() === 'd' && !event.metaKey && !event.ctrlKey && !event.altKey) {
+    if (event.key.toLowerCase() === 't' && !event.metaKey && !event.ctrlKey && !event.altKey) {
       event.preventDefault();
-      runCommand('move');
+      runCommand('text');
+      return;
+    }
+    if (event.key.toLowerCase() === 'h' && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      event.preventDefault();
+      runCommand('hatch');
       return;
     }
     if (this.handleDistanceInputKey(event)) {
       event.preventDefault();
-      this.updateUiStatus();
-      this.renderer.draw();
+      this.scheduleKeyboardRefresh();
       return;
     }
     if (event.key === 'Escape') {
       event.preventDefault();
+      this.cancelKeyboardRefresh();
       this.cancelCurrentCommand();
       this.updateUiStatus();
       this.renderer.draw();
@@ -4984,6 +6810,7 @@ class CadController {
         this.state.arcDraft ||
         this.state.copyDraft ||
         this.state.moveDraft ||
+        this.state.rotateDraft ||
         copyMultiplierDraft
       ) &&
       this.state.distanceInput &&
@@ -4997,7 +6824,9 @@ class CadController {
       return;
     }
 
-    cursorInput.textContent = multiplier || copyMultiplierDraft
+    cursorInput.textContent = this.state.rotateDraft?.basePoint
+      ? `${this.state.distanceInput}°`
+      : multiplier || copyMultiplierDraft
       ? this.state.distanceInput
       : `${this.state.distanceInput} ${UNITS_LABEL}`;
 
@@ -5028,6 +6857,12 @@ class CadController {
     if (this.state.tool === 'rectangle') {
       toolLabel = 'Rectangulo';
     }
+    if (this.state.tool === 'text') {
+      toolLabel = 'Texto';
+    }
+    if (this.state.tool === 'hatch') {
+      toolLabel = 'Sombreado';
+    }
     if (this.state.tool === 'circle-center') {
       toolLabel = 'Circulo C-R';
     }
@@ -5057,6 +6892,12 @@ class CadController {
     }
     if (this.state.tool === 'move') {
       toolLabel = 'Desplazar';
+    }
+    if (this.state.tool === 'select-set') {
+      toolLabel = 'Seleccionar DS';
+    }
+    if (this.state.tool === 'rotate') {
+      toolLabel = 'Girar';
     }
     const inputDistance = parseDistanceInput(this.state.distanceInput);
     const activeGripPoint = this.activeGripPoint();
@@ -5127,6 +6968,8 @@ class CadController {
       const multiplier = parseCopyMultiplier(this.state.distanceInput);
       this.state.statusText = multiplier
         ? `Repetir copia: x${multiplier}`
+        : this.state.rotateDraft?.basePoint
+        ? `Angulo: ${this.state.distanceInput}°`
         : coordinateTarget
         ? `Coordenadas: ${this.state.distanceInput} ${UNITS_LABEL}`
         : (
@@ -5139,6 +6982,12 @@ class CadController {
     else if (this.state.pendingLineStart && previewEnd) {
       const lineLength = formatNumber(previewLength);
       this.state.statusText = `Segundo punto pendiente - longitud ${lineLength} ${UNITS_LABEL}`;
+    }
+    else if (this.state.rotateDraft?.basePoint) {
+      const previewAngle = this.renderer.rotatePreviewAngle();
+      this.state.statusText = previewAngle === null
+        ? 'Angulo pendiente'
+        : `Angulo pendiente - ${formatNumber(previewAngle)}°${this.state.orthoEnabled ? ' (orto)' : ''}`;
     }
     else if (this.state.rectangleDraft?.firstPoint && rectanglePreviewTarget) {
       const width = Math.abs(rectanglePreviewTarget.x - this.state.rectangleDraft.firstPoint.x);
@@ -5165,9 +7014,9 @@ class CadController {
     statusLength.textContent = previewLength !== null
       ? `${this.state.circleDraft?.mode === 'center-radius' || this.state.arcDraft?.mode === 'center-radius' ? 'Radio' : 'Longitud'}: ${formatNumber(previewLength)} ${UNITS_LABEL}`
       : 'Longitud: -';
-    statusLayer.textContent = `Capa: ${getLineStyle(activeLineStyleId()).label}`;
+    statusLayer.textContent = `Capa: ${activeLayerName()} · ${getLineStyle(activeLineStyleId()).label} · ${getLineType(activeLineTypeId()).label} · ${getLineColor(activeLineColorId()).label}`;
     statusMessage.textContent = this.state.statusText || 'Listo';
-    statusDxf.textContent = 'DXF: LINE/CIRCLE/ARC';
+    statusDxf.textContent = `${activeDrawingProfile().shortLabel} · DXF`;
     statusOrthoButton.classList.toggle('is-active', this.state.orthoEnabled);
     statusOrthoButton.setAttribute('aria-pressed', String(this.state.orthoEnabled));
     statusOrthoButton.title = this.state.orthoEnabled
@@ -5191,17 +7040,38 @@ class CadController {
 }
 
 const doc = new CadDocument();
+
+function loadNavigationDevice() {
+  try {
+    const savedDevice = localStorage.getItem('webcad-navigation-device');
+    return savedDevice === 'mouse' || savedDevice === 'trackpad'
+      ? savedDevice
+      : 'trackpad';
+  }
+  catch {
+    return 'trackpad';
+  }
+}
+
 const state = {
   tool: 'select',
   pendingLineStart: null,
   rectangleDraft: null,
+  textDraft: null,
+  hatchDraft: null,
   circleDraft: null,
   arcDraft: null,
   copyDraft: null,
   moveDraft: null,
+  rotateDraft: null,
+  selectionSetDraft: null,
   eraseDraft: null,
   extendDraft: null,
   lastCopy: null,
+  drawingProfile: 'engineering',
+  navigationDevice: loadNavigationDevice(),
+  lastTextHeight: DRAWING_PROFILES.engineering.defaultTextHeight,
+  previousSelection: [],
   mouseWorld: null,
   mouseScreen: null,
   viewScale: 1,
@@ -5214,6 +7084,10 @@ const state = {
   activeObjectSnap: null,
   snapPixelTolerance: 11,
   activeLineStyle: DEFAULT_LINE_STYLE,
+  activeLineType: DEFAULT_LINE_TYPE,
+  activeLineColor: DEFAULT_LINE_COLOR,
+  layers: [{ ...DEFAULT_LAYER }],
+  activeLayer: DEFAULT_LAYER.name,
   lastCommand: null,
   lastCircleTool: 'circle-center',
   lastArcTool: 'arc-center-start-end',
@@ -5226,8 +7100,281 @@ const state = {
 const renderer = new CadRenderer(canvas, doc, state);
 const controller = new CadController(canvas, doc, renderer, state);
 state.doc = doc;
+let textDialogEntity = null;
+let hatchDialogEntity = null;
 
 window.webcadDebug = { doc, state, renderer, controller };
+
+function syncNavigationDeviceButtons() {
+  const mouseActive = state.navigationDevice === 'mouse';
+  navigationMouseButton.classList.toggle('is-active', mouseActive);
+  navigationMouseButton.setAttribute('aria-pressed', String(mouseActive));
+  navigationTrackpadButton.classList.toggle('is-active', !mouseActive);
+  navigationTrackpadButton.setAttribute('aria-pressed', String(!mouseActive));
+}
+
+function setNavigationDevice(device) {
+  if (device !== 'mouse' && device !== 'trackpad') {
+    return false;
+  }
+  controller.cancelMouseWheelZoom();
+  state.navigationDevice = device;
+  try {
+    localStorage.setItem('webcad-navigation-device', device);
+  }
+  catch {
+    // The selected mode still works for this session when storage is unavailable.
+  }
+  syncNavigationDeviceButtons();
+  state.statusText = device === 'mouse'
+    ? 'Modo raton: rueda para zoom · boton central para pan'
+    : 'Modo trackpad: dos dedos para pan · Shift + dos dedos para zoom';
+  controller.updateUiStatus();
+  renderer.draw();
+  requestAnimationFrame(() => canvas.focus({ preventScroll: true }));
+  return true;
+}
+
+function setDrawingProfileRuntime(profileId) {
+  const profile = drawingProfileById(profileId);
+  state.drawingProfile = profile.id;
+  GRID_BASE = profile.gridBase;
+  MIN_VIEW_SCALE = profile.minViewScale;
+  MAX_VIEW_SCALE = profile.maxViewScale;
+  DEFAULT_DRAWING_SIZE = profile.defaultDrawingSize;
+  UNITS_LABEL = profile.unitsLabel;
+  state.lastTextHeight = profile.defaultTextHeight;
+  return profile;
+}
+
+function applyDrawingProfile(profileId) {
+  const previousProfile = activeDrawingProfile();
+  const profile = drawingProfileById(profileId);
+  if (profile.id === previousProfile.id) {
+    state.statusText = `Perfil activo: ${profile.label} (${profile.unitsLabel})`;
+    controller.updateUiStatus();
+    renderer.draw();
+    return false;
+  }
+
+  controller.cancelCurrentCommand();
+  setDrawingProfileRuntime(profile.id);
+  renderer.fitToDocument();
+  state.statusText = `Tipo de dibujo: ${profile.label} · unidades en ${profile.unitsLabel}`;
+  controller.updateUiStatus();
+  renderer.draw();
+  return true;
+}
+
+function openDrawingProfileDialog() {
+  drawingProfileInputs.forEach((input) => {
+    input.checked = input.value === state.drawingProfile;
+  });
+  drawingProfileDialog.hidden = false;
+  setLayerPickerOpen(false);
+  setLineStylePickerOpen(false);
+  setLineTypePickerOpen(false);
+  setLineColorPickerOpen(false);
+}
+
+function closeDrawingProfileDialog() {
+  drawingProfileDialog.hidden = true;
+  requestAnimationFrame(() => canvas.focus({ preventScroll: true }));
+}
+
+function confirmDrawingProfileDialog() {
+  const selectedProfile = [...drawingProfileInputs].find((input) => input.checked)?.value;
+  if (!selectedProfile) {
+    return false;
+  }
+  drawingProfileDialog.hidden = true;
+  applyDrawingProfile(selectedProfile);
+  requestAnimationFrame(() => canvas.focus({ preventScroll: true }));
+  return true;
+}
+
+function openTextDialog(entity = null) {
+  textDialogEntity = entity?.type === 'TEXT' ? entity : null;
+  textDialogTitle.textContent = textDialogEntity ? 'Editar texto' : 'Crear texto';
+  textContentInput.value = textDialogEntity?.text || '';
+  textHeightInput.value = String(
+    textDialogEntity?.height || state.lastTextHeight || activeDrawingProfile().defaultTextHeight,
+  );
+  textDialogError.textContent = '';
+  textDialog.hidden = false;
+  setLayerPickerOpen(false);
+  setLineStylePickerOpen(false);
+  setLineTypePickerOpen(false);
+  setLineColorPickerOpen(false);
+  requestAnimationFrame(() => {
+    textContentInput.focus();
+    textContentInput.select();
+  });
+}
+
+function closeTextDialog(cancelled = true) {
+  const wasEditing = Boolean(textDialogEntity);
+  textDialog.hidden = true;
+  textDialogEntity = null;
+  textDialogError.textContent = '';
+  if (cancelled && !wasEditing && state.tool === 'text') {
+    controller.setTool('select');
+    state.statusText = 'Texto cancelado';
+  }
+  else if (cancelled && wasEditing) {
+    state.statusText = 'Edicion de texto cancelada';
+  }
+  controller.updateUiStatus();
+  renderer.draw();
+  requestAnimationFrame(() => canvas.focus({ preventScroll: true }));
+}
+
+function confirmTextDialog() {
+  const text = textContentInput.value.trim();
+  const height = Number(String(textHeightInput.value).replace(',', '.'));
+  if (!text) {
+    textDialogError.textContent = 'Escriba el contenido del texto.';
+    textContentInput.focus();
+    return false;
+  }
+  if (!Number.isFinite(height) || height <= SNAP_THRESHOLD) {
+    textDialogError.textContent = 'Indique una altura mayor que cero.';
+    textHeightInput.focus();
+    return false;
+  }
+
+  if (textDialogEntity) {
+    const entity = textDialogEntity;
+    if (entity.text !== text || Math.abs(entity.height - height) > SNAP_THRESHOLD) {
+      doc.recordHistory();
+      entity.text = text;
+      entity.height = height;
+      doc.markDirty();
+    }
+    state.lastTextHeight = height;
+    textDialog.hidden = true;
+    textDialogEntity = null;
+    state.statusText = 'Texto actualizado';
+    controller.updateUiStatus();
+    renderer.draw();
+    requestAnimationFrame(() => canvas.focus({ preventScroll: true }));
+    return true;
+  }
+
+  state.lastTextHeight = height;
+  state.textDraft = { text, height };
+  textDialog.hidden = true;
+  state.statusText = 'Indique el punto de insercion del texto';
+  controller.updateUiStatus();
+  renderer.draw();
+  requestAnimationFrame(() => canvas.focus({ preventScroll: true }));
+  return true;
+}
+
+function openHatchDialog(entity = null) {
+  hatchDialogEntity = entity?.type === 'HATCH' ? entity : null;
+  hatchDialogTitle.textContent = hatchDialogEntity ? 'Editar sombreado' : 'Crear sombreado';
+  hatchDialogConfirmButton.textContent = hatchDialogEntity ? 'Aceptar' : 'Continuar';
+  hatchModeChoice.hidden = Boolean(hatchDialogEntity);
+  hatchPatternInput.value = hatchDialogEntity?.pattern || 'solid';
+  hatchLayerInput.replaceChildren();
+  const selectedLayerName = hatchDialogEntity?.layer || state.activeLayer;
+  state.layers.forEach((layer) => {
+    const option = document.createElement('option');
+    option.value = layer.name;
+    option.textContent = layer.name;
+    option.selected = layer.name === selectedLayerName;
+    hatchLayerInput.append(option);
+  });
+  const selectedLayer = state.layers.find((layer) => layer.name === selectedLayerName);
+  hatchColorInput.value = hatchDialogEntity &&
+    normalizeLineColorId(hatchDialogEntity.lineColor) !== normalizeLineColorId(selectedLayer?.lineColor)
+    ? normalizeLineColorId(hatchDialogEntity.lineColor)
+    : 'bylayer';
+  const pointMode = [...hatchModeInputs].find((input) => input.value === 'point');
+  if (pointMode) {
+    pointMode.checked = true;
+  }
+  hatchDialogError.textContent = '';
+  hatchDialog.hidden = false;
+  setLayerPickerOpen(false);
+  setLineStylePickerOpen(false);
+  setLineTypePickerOpen(false);
+  setLineColorPickerOpen(false);
+}
+
+function closeHatchDialog(cancelled = true) {
+  const wasEditing = Boolean(hatchDialogEntity);
+  hatchDialog.hidden = true;
+  hatchDialogEntity = null;
+  hatchDialogError.textContent = '';
+  if (cancelled && !wasEditing && state.tool === 'hatch') {
+    controller.setTool('select');
+    state.statusText = 'Sombreado cancelado';
+  }
+  else if (cancelled && wasEditing) {
+    state.statusText = 'Edicion de sombreado cancelada';
+  }
+  controller.updateUiStatus();
+  renderer.draw();
+  requestAnimationFrame(() => canvas.focus({ preventScroll: true }));
+}
+
+function confirmHatchDialog(forcedMode = null) {
+  const layer = state.layers.find((candidate) => candidate.name === hatchLayerInput.value);
+  if (!layer) {
+    hatchDialogError.textContent = 'Seleccione una capa de destino válida.';
+    return false;
+  }
+  const selectedColor = hatchColorInput.value === 'bylayer'
+    ? layer.lineColor
+    : normalizeLineColorId(hatchColorInput.value);
+
+  if (hatchDialogEntity) {
+    const entity = hatchDialogEntity;
+    const changed = entity.pattern !== hatchPatternInput.value ||
+      entity.layer !== layer.name ||
+      normalizeLineStyleId(entity.lineStyle) !== normalizeLineStyleId(layer.lineStyle) ||
+      normalizeLineTypeId(entity.lineType) !== normalizeLineTypeId(layer.lineType) ||
+      normalizeLineColorId(entity.lineColor) !== normalizeLineColorId(selectedColor);
+    if (changed) {
+      doc.recordHistory();
+      entity.pattern = hatchPatternInput.value;
+      entity.layer = layer.name;
+      applyLineStyleToEntity(entity, layer.lineStyle);
+      applyLineTypeToEntity(entity, layer.lineType);
+      applyLineColorToEntity(entity, selectedColor);
+      doc.markDirty();
+    }
+    hatchDialog.hidden = true;
+    hatchDialogEntity = null;
+    state.statusText = changed ? 'Sombreado actualizado' : 'Sombreado sin cambios';
+    controller.updateUiStatus();
+    renderer.draw();
+    requestAnimationFrame(() => canvas.focus({ preventScroll: true }));
+    return true;
+  }
+
+  const selectedMode = forcedMode || [...hatchModeInputs].find((input) => input.checked)?.value;
+  if (!selectedMode) {
+    hatchDialogError.textContent = 'Seleccione cómo definir el contorno.';
+    return false;
+  }
+  state.hatchDraft = {
+    pattern: hatchPatternInput.value,
+    mode: selectedMode,
+    layer: layer.name,
+    lineColor: selectedColor,
+  };
+  hatchDialog.hidden = true;
+  state.statusText = selectedMode === 'point'
+    ? 'Sombreado solido: indique un punto interior'
+    : 'Sombreado solido: seleccione una polilinea cerrada';
+  controller.updateUiStatus();
+  renderer.draw();
+  requestAnimationFrame(() => canvas.focus({ preventScroll: true }));
+  return true;
+}
 
 function toggleOrthoMode() {
   state.orthoEnabled = !state.orthoEnabled;
@@ -5252,18 +7399,33 @@ function fitView() {
 
 function newDrawing() {
   doc.clear();
+  state.layers = [{ ...DEFAULT_LAYER }];
+  state.activeLayer = DEFAULT_LAYER.name;
+  state.activeLineStyle = DEFAULT_LAYER.lineStyle;
+  state.activeLineType = DEFAULT_LAYER.lineType;
+  state.activeLineColor = DEFAULT_LAYER.lineColor;
   state.pendingLineStart = null;
   state.rectangleDraft = null;
+  state.textDraft = null;
+  state.hatchDraft = null;
   state.circleDraft = null;
   state.arcDraft = null;
   state.copyDraft = null;
   state.moveDraft = null;
+  state.rotateDraft = null;
+  state.selectionSetDraft = null;
   state.eraseDraft = null;
   state.extendDraft = null;
   state.lastCopy = null;
+  state.lastTextHeight = activeDrawingProfile().defaultTextHeight;
+  state.previousSelection = [];
   state.distanceInput = '';
   state.selectedGrip = null;
-  state.statusText = 'Nuevo dibujo';
+  state.statusText = `Nuevo dibujo · ${activeDrawingProfile().label} (${UNITS_LABEL})`;
+  syncLayerPicker();
+  syncLineStylePicker();
+  syncLineTypePicker();
+  syncLineColorPicker();
   renderer.fitToDocument();
   controller.updateUiStatus();
   renderer.draw();
@@ -5288,18 +7450,29 @@ function importDxf() {
 }
 
 function showAbout() {
-  state.statusText = 'webCAD - Autor: Gonzalo Rodriguez';
+  aboutDialog.hidden = false;
+  state.statusText = 'webCAD 0.2.0 · Autor: Gonzalo Rodriguez';
   controller.updateUiStatus();
   renderer.draw();
+  requestAnimationFrame(() => aboutDialogCloseButton.focus());
+}
+
+function closeAboutDialog() {
+  aboutDialog.hidden = true;
+  requestAnimationFrame(() => canvas.focus({ preventScroll: true }));
 }
 
 function resetInteractionState() {
   state.pendingLineStart = null;
   state.rectangleDraft = null;
+  state.textDraft = null;
+  state.hatchDraft = null;
   state.circleDraft = null;
   state.arcDraft = null;
   state.copyDraft = null;
   state.moveDraft = null;
+  state.rotateDraft = null;
+  state.selectionSetDraft = null;
   state.eraseDraft = null;
   state.extendDraft = null;
   state.distanceInput = '';
@@ -5339,9 +7512,206 @@ function redoDrawing() {
   renderer.draw();
 }
 
+function layerDisplayColor(layer) {
+  return getLineColor(layer.lineColor).color || getLineStyle(layer.lineStyle).color;
+}
+
+function setLayerPickerOpen(open) {
+  if (open) {
+    setLineStylePickerOpen(false);
+    setLineTypePickerOpen(false);
+    setLineColorPickerOpen(false);
+  }
+  layerPicker.classList.toggle('is-open', open);
+  if (!open) {
+    layerPicker.classList.remove('is-creating');
+  }
+  layerToggle.setAttribute('aria-expanded', String(open));
+}
+
+function syncLayerPicker() {
+  layerLabel.textContent = activeLayerName();
+  layerList.replaceChildren();
+  state.layers.forEach((layer) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `layer-option${layer.name === state.activeLayer ? ' is-active' : ''}`;
+    button.dataset.layerName = layer.name;
+    button.setAttribute('role', 'menuitem');
+
+    const swatch = document.createElement('span');
+    swatch.className = 'layer-swatch';
+    swatch.style.setProperty('--layer-color', layerDisplayColor(layer));
+    const label = document.createElement('span');
+    label.textContent = layer.name;
+    button.append(swatch, label);
+    button.addEventListener('pointerdown', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      setActiveLayer(layer.name);
+    });
+    layerList.append(button);
+  });
+}
+
+function setActiveLayer(layerName) {
+  const layer = state.layers.find((candidate) => candidate.name === layerName);
+  if (!layer) {
+    return false;
+  }
+
+  state.activeLayer = layer.name;
+  state.activeLineStyle = normalizeLineStyleId(layer.lineStyle);
+  state.activeLineType = normalizeLineTypeId(layer.lineType);
+  state.activeLineColor = normalizeLineColorId(layer.lineColor);
+  const selectedEntities = state.selectedGrip?.entity
+    ? doc.groupEntities(state.selectedGrip.entity)
+    : [...doc.selectedEntities];
+  if (state.tool === 'select' && selectedEntities.length) {
+    doc.recordHistory();
+    selectedEntities.forEach((entity) => applyLayerToEntity(entity, layer));
+    doc.markDirty();
+    state.statusText = `${selectedEntities.length} entidad${selectedEntities.length === 1 ? '' : 'es'} movida${selectedEntities.length === 1 ? '' : 's'} a capa ${layer.name}`;
+  }
+  else {
+    state.statusText = `Capa activa: ${layer.name}`;
+  }
+
+  syncLayerPicker();
+  syncLineStylePicker();
+  syncLineTypePicker();
+  syncLineColorPicker();
+  setLayerPickerOpen(false);
+  controller.updateUiStatus();
+  renderer.draw();
+  requestAnimationFrame(() => canvas.focus({ preventScroll: true }));
+  return true;
+}
+
+function nextLayerName() {
+  let index = 1;
+  while (state.layers.some((layer) => layer.name.toLowerCase() === `capa ${index}`)) {
+    index += 1;
+  }
+  return `Capa ${index}`;
+}
+
+function openLayerCreation() {
+  layerNameInput.value = nextLayerName();
+  layerStyleInput.value = 'normal';
+  layerTypeInput.value = 'continuous';
+  layerColorInput.value = 'aci7';
+  layerPicker.classList.add('is-open', 'is-creating');
+  layerToggle.setAttribute('aria-expanded', 'true');
+  requestAnimationFrame(() => {
+    layerNameInput.focus();
+    layerNameInput.select();
+  });
+}
+
+function createLayerFromPanel() {
+  const name = layerNameInput.value.trim();
+  if (!name) {
+    state.statusText = 'La capa necesita un nombre';
+    controller.updateUiStatus();
+    layerNameInput.focus();
+    return false;
+  }
+  if (state.layers.some((layer) => layer.name.toLowerCase() === name.toLowerCase())) {
+    state.statusText = `Ya existe la capa ${name}`;
+    controller.updateUiStatus();
+    layerNameInput.focus();
+    return false;
+  }
+
+  state.layers.push({
+    name,
+    lineStyle: normalizeLineStyleId(layerStyleInput.value),
+    lineType: normalizeLineTypeId(layerTypeInput.value),
+    lineColor: normalizeLineColorId(layerColorInput.value),
+  });
+  layerPicker.classList.remove('is-creating');
+  setActiveLayer(name);
+  state.statusText = `Capa ${name} creada y activada`;
+  controller.updateUiStatus();
+  renderer.draw();
+  return true;
+}
+
+function syncLayersFromEntities(entities) {
+  const layers = [{ ...DEFAULT_LAYER }];
+  const addLayer = (definition) => {
+    const name = String(definition.name || '').trim();
+    if (!name || layers.some((layer) => layer.name.toLowerCase() === name.toLowerCase())) {
+      return;
+    }
+    layers.push({
+      name,
+      lineStyle: normalizeLineStyleId(definition.lineStyle),
+      lineType: normalizeLineTypeId(definition.lineType),
+      lineColor: normalizeLineColorId(definition.lineColor),
+    });
+  };
+  (entities.layerDefinitions || []).forEach(addLayer);
+  entities.forEach((entity) => {
+    const existing = layers.find(
+      (layer) => layer.name.toLowerCase() === String(entity.layer || '').toLowerCase(),
+    );
+    if (existing) {
+      entity.layer = existing.name;
+      return;
+    }
+    addLayer({
+      name: entity.layer || `Capa ${layers.length}`,
+      lineStyle: normalizeLineStyleId(entity.lineStyle),
+      lineType: normalizeLineTypeId(entity.lineType),
+      lineColor: normalizeLineColorId(entity.lineColor),
+    });
+  });
+  state.layers = layers;
+  state.activeLayer = DEFAULT_LAYER.name;
+  state.activeLineStyle = DEFAULT_LAYER.lineStyle;
+  state.activeLineType = DEFAULT_LAYER.lineType;
+  state.activeLineColor = DEFAULT_LAYER.lineColor;
+  syncLayerPicker();
+  syncLineStylePicker();
+  syncLineTypePicker();
+  syncLineColorPicker();
+}
+
 function setLineStylePickerOpen(open) {
+  if (open) {
+    setLayerPickerOpen(false);
+    setLineTypePickerOpen(false);
+    setLineColorPickerOpen(false);
+  }
   lineStylePicker.classList.toggle('is-open', open);
   lineStyleToggle.setAttribute('aria-expanded', String(open));
+}
+
+function setLineTypePickerOpen(open) {
+  if (open) {
+    layerPicker.classList.remove('is-open', 'is-creating');
+    layerToggle.setAttribute('aria-expanded', 'false');
+    lineStylePicker.classList.remove('is-open');
+    lineStyleToggle.setAttribute('aria-expanded', 'false');
+    setLineColorPickerOpen(false);
+  }
+  lineTypePicker.classList.toggle('is-open', open);
+  lineTypeToggle.setAttribute('aria-expanded', String(open));
+}
+
+function setLineColorPickerOpen(open) {
+  if (open) {
+    layerPicker.classList.remove('is-open', 'is-creating');
+    layerToggle.setAttribute('aria-expanded', 'false');
+    lineStylePicker.classList.remove('is-open');
+    lineStyleToggle.setAttribute('aria-expanded', 'false');
+    lineTypePicker.classList.remove('is-open');
+    lineTypeToggle.setAttribute('aria-expanded', 'false');
+  }
+  lineColorPicker.classList.toggle('is-open', open);
+  lineColorToggle.setAttribute('aria-expanded', String(open));
 }
 
 function syncLineStylePicker() {
@@ -5350,6 +7720,32 @@ function syncLineStylePicker() {
   lineStyleOptionButtons.forEach((button) => {
     const active = normalizeLineStyleId(button.dataset.lineStyle) === style.id;
     button.classList.toggle('is-active', active);
+  });
+}
+
+function syncLineTypePicker() {
+  const lineType = getLineType(state.activeLineType);
+  const previewPath = lineTypeLabel.querySelector('path');
+  if (lineType.dash.length) {
+    previewPath.setAttribute('stroke-dasharray', lineType.dash.join(' '));
+  }
+  else {
+    previewPath.removeAttribute('stroke-dasharray');
+  }
+  lineTypeToggle.title = lineType.label;
+  lineTypeToggle.setAttribute('aria-label', `Tipo de linea: ${lineType.label}`);
+  lineTypeOptionButtons.forEach((button) => {
+    button.classList.toggle('is-active', normalizeLineTypeId(button.dataset.lineType) === lineType.id);
+  });
+}
+
+function syncLineColorPicker() {
+  const lineColor = getLineColor(state.activeLineColor);
+  lineColorLabel.className = `line-color-current is-${lineColor.id}`;
+  lineColorToggle.title = lineColor.label;
+  lineColorToggle.setAttribute('aria-label', `Color de linea: ${lineColor.label}`);
+  lineColorOptionButtons.forEach((button) => {
+    button.classList.toggle('is-active', normalizeLineColorId(button.dataset.lineColor) === lineColor.id);
   });
 }
 
@@ -5369,19 +7765,87 @@ function setActiveLineStyle(styleId) {
       doc.markDirty();
     }
     state.statusText = changedEntities.length === 1
-      ? `Entidad cambiada a capa ${style.label}`
+      ? `Entidad cambiada a grosor ${style.label}`
       : changedEntities.length
-        ? `${changedEntities.length} entidades cambiadas a capa ${style.label}`
-        : `Entidad ya esta en capa ${style.label}`;
+        ? `${changedEntities.length} entidades cambiadas a grosor ${style.label}`
+        : `Entidad ya tiene grosor ${style.label}`;
   }
   else {
-    state.statusText = `Capa activa: ${style.label}`;
+    state.statusText = `Grosor activo: ${style.label}`;
   }
 
   controller.updateUiStatus();
   renderer.draw();
   setLineStylePickerOpen(false);
   lineStyleToggle.blur();
+  requestAnimationFrame(() => canvas.focus({ preventScroll: true }));
+}
+
+function setActiveLineType(lineTypeId) {
+  const lineType = getLineType(lineTypeId);
+  state.activeLineType = lineType.id;
+  syncLineTypePicker();
+
+  const selectedEntities = state.selectedGrip?.entity
+    ? doc.groupEntities(state.selectedGrip.entity)
+    : [...doc.selectedEntities];
+  if (state.tool === 'select' && selectedEntities.length) {
+    const changedEntities = selectedEntities.filter(
+      (entity) => normalizeLineTypeId(entity.lineType) !== lineType.id,
+    );
+    if (changedEntities.length) {
+      doc.recordHistory();
+      changedEntities.forEach((entity) => applyLineTypeToEntity(entity, lineType.id));
+      doc.markDirty();
+    }
+    state.statusText = changedEntities.length === 1
+      ? `Entidad cambiada a linea ${lineType.label.toLowerCase()}`
+      : changedEntities.length
+        ? `${changedEntities.length} entidades cambiadas a linea ${lineType.label.toLowerCase()}`
+        : `La seleccion ya usa linea ${lineType.label.toLowerCase()}`;
+  }
+  else {
+    state.statusText = `Tipo de linea activo: ${lineType.label}`;
+  }
+
+  controller.updateUiStatus();
+  renderer.draw();
+  setLineTypePickerOpen(false);
+  lineTypeToggle.blur();
+  requestAnimationFrame(() => canvas.focus({ preventScroll: true }));
+}
+
+function setActiveLineColor(lineColorId) {
+  const lineColor = getLineColor(lineColorId);
+  state.activeLineColor = lineColor.id;
+  syncLineColorPicker();
+
+  const selectedEntities = state.selectedGrip?.entity
+    ? doc.groupEntities(state.selectedGrip.entity)
+    : [...doc.selectedEntities];
+  if (state.tool === 'select' && selectedEntities.length) {
+    const changedEntities = selectedEntities.filter(
+      (entity) => normalizeLineColorId(entity.lineColor) !== lineColor.id,
+    );
+    if (changedEntities.length) {
+      doc.recordHistory();
+      changedEntities.forEach((entity) => applyLineColorToEntity(entity, lineColor.id));
+      doc.markDirty();
+    }
+    state.statusText = changedEntities.length === 1
+      ? `Entidad cambiada a color ${lineColor.label.toLowerCase()}`
+      : changedEntities.length
+        ? `${changedEntities.length} entidades cambiadas a color ${lineColor.label.toLowerCase()}`
+        : `La seleccion ya usa color ${lineColor.label.toLowerCase()}`;
+  }
+  else {
+    state.statusText = `Color activo: ${lineColor.label}`;
+  }
+
+  controller.updateUiStatus();
+  renderer.draw();
+  setLineColorPickerOpen(false);
+  lineColorToggle.blur();
   requestAnimationFrame(() => canvas.focus({ preventScroll: true }));
 }
 
@@ -5401,6 +7865,8 @@ function commandLabel(command) {
   const labels = {
     line: 'Linea',
     rectangle: 'Rectangulo',
+    text: 'Texto',
+    hatch: 'Sombreado',
     'circle-center': 'Circulo centro-radio',
     'circle-3p': 'Circulo 3 puntos',
     'arc-center-radius': 'Arco centro-radio',
@@ -5408,6 +7874,8 @@ function commandLabel(command) {
     'arc-center-start-end': 'Arco centro-inicio-final',
     copy: 'Copiar',
     move: 'Desplazar',
+    rotate: 'Girar',
+    'select-set': 'Seleccionar conjunto',
     trim: 'Recortar',
     extend: 'Alargar',
     erase: 'Borrar',
@@ -5422,8 +7890,11 @@ function runCommand(command) {
   if (command === 'undo') undoDrawing();
   if (command === 'redo') redoDrawing();
   if (command === 'select') controller.setTool('select');
+  if (command === 'select-set') controller.startSelectionSet();
   if (command === 'line') controller.setTool('line');
   if (command === 'rectangle') controller.setTool('rectangle');
+  if (command === 'text') controller.startText();
+  if (command === 'hatch') controller.startHatch();
   if (command === 'circle-center' || command === 'circle-3p') {
     state.lastCircleTool = command;
     circleToolButton.dataset.tool = command;
@@ -5440,13 +7911,17 @@ function runCommand(command) {
   }
   if (command === 'copy') controller.startCopy();
   if (command === 'move') controller.startMove();
+  if (command === 'rotate') controller.startRotate();
   if (command === 'trim') controller.setTool('trim');
   if (command === 'extend') controller.startExtend();
   if (command === 'erase') controller.startErase();
   if (command === 'toggle-ortho') toggleOrthoMode();
   if (command === 'toggle-grid') toggleGridSnap();
   if (command === 'fit') fitView();
+  if (command === 'navigation-mouse') setNavigationDevice('mouse');
+  if (command === 'navigation-trackpad') setNavigationDevice('trackpad');
   if (command === 'new') newDrawing();
+  if (command === 'drawing-profile') openDrawingProfileDialog();
   if (command === 'export-dxf') exportDxf();
   if (command === 'import-dxf') importDxf();
   if (command === 'about') showAbout();
@@ -5459,11 +7934,15 @@ menuCommandButtons.forEach((button) => {
   button.addEventListener('click', () => runCommand(button.dataset.command));
 });
 
+navigationMouseButton.addEventListener('click', () => runCommand('navigation-mouse'));
+navigationTrackpadButton.addEventListener('click', () => runCommand('navigation-trackpad'));
 statusOrthoButton.addEventListener('click', () => runCommand('toggle-ortho'));
 statusGridButton.addEventListener('click', () => runCommand('toggle-grid'));
 selectToolButton.addEventListener('click', () => runCommand('select'));
 lineToolButton.addEventListener('click', () => runCommand('line'));
 rectangleToolButton.addEventListener('click', () => runCommand('rectangle'));
+textToolButton.addEventListener('click', () => runCommand('text'));
+hatchToolButton.addEventListener('click', () => runCommand('hatch'));
 circleToolButton.addEventListener('click', () => runCommand(state.lastCircleTool));
 function toggleToolGroupFromButton(button, event) {
   event.preventDefault();
@@ -5498,6 +7977,7 @@ trimToolButton.addEventListener('click', () => runCommand('trim'));
 extendToolButton.addEventListener('click', () => runCommand('extend'));
 copyToolButton.addEventListener('click', () => runCommand('copy'));
 moveToolButton.addEventListener('click', () => runCommand('move'));
+rotateToolButton.addEventListener('click', () => runCommand('rotate'));
 eraseToolButton.addEventListener('click', () => runCommand('erase'));
 fitButton.addEventListener('click', () => runCommand('fit'));
 undoButton.addEventListener('click', () => runCommand('undo'));
@@ -5508,6 +7988,36 @@ importDxfButton.addEventListener('click', () => runCommand('import-dxf'));
 lineStyleToggle.addEventListener('click', () => {
   setLineStylePickerOpen(!lineStylePicker.classList.contains('is-open'));
 });
+layerToggle.addEventListener('click', () => {
+  setLayerPickerOpen(!layerPicker.classList.contains('is-open'));
+});
+layerCreateOpenButton.addEventListener('pointerdown', (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  openLayerCreation();
+});
+layerCreateCancelButton.addEventListener('pointerdown', (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  layerPicker.classList.remove('is-creating');
+});
+layerCreateConfirmButton.addEventListener('pointerdown', (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  createLayerFromPanel();
+});
+layerNameInput.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    event.stopPropagation();
+    createLayerFromPanel();
+  }
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    event.stopPropagation();
+    layerPicker.classList.remove('is-creating');
+  }
+});
 lineStyleOptionButtons.forEach((button) => {
   button.addEventListener('pointerdown', (event) => {
     event.preventDefault();
@@ -5515,9 +8025,38 @@ lineStyleOptionButtons.forEach((button) => {
     setActiveLineStyle(button.dataset.lineStyle);
   });
 });
+lineTypeToggle.addEventListener('click', () => {
+  setLineTypePickerOpen(!lineTypePicker.classList.contains('is-open'));
+});
+lineTypeOptionButtons.forEach((button) => {
+  button.addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setActiveLineType(button.dataset.lineType);
+  });
+});
+lineColorToggle.addEventListener('click', () => {
+  setLineColorPickerOpen(!lineColorPicker.classList.contains('is-open'));
+});
+lineColorOptionButtons.forEach((button) => {
+  button.addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setActiveLineColor(button.dataset.lineColor);
+  });
+});
 document.addEventListener('pointerdown', (event) => {
+  if (!layerPicker.contains(event.target)) {
+    setLayerPickerOpen(false);
+  }
   if (!lineStylePicker.contains(event.target)) {
     setLineStylePickerOpen(false);
+  }
+  if (!lineTypePicker.contains(event.target)) {
+    setLineTypePickerOpen(false);
+  }
+  if (!lineColorPicker.contains(event.target)) {
+    setLineColorPickerOpen(false);
   }
   if (![...toolGroupElements].some((element) => element.contains(event.target))) {
     closeToolGroups();
@@ -5532,24 +8071,117 @@ importDxfInput.addEventListener('change', async (event) => {
 
   const text = await file.text();
   const entities = parseDxf(text);
+  if (entities.drawingProfile) {
+    setDrawingProfileRuntime(entities.drawingProfile);
+  }
+  syncLayersFromEntities(entities);
   doc.setEntities(entities);
   state.pendingLineStart = null;
   state.rectangleDraft = null;
+  state.textDraft = null;
+  state.hatchDraft = null;
   state.circleDraft = null;
   state.arcDraft = null;
   state.copyDraft = null;
   state.moveDraft = null;
+  state.rotateDraft = null;
+  state.selectionSetDraft = null;
   state.eraseDraft = null;
   state.extendDraft = null;
   state.lastCopy = null;
+  state.previousSelection = [];
   state.distanceInput = '';
   state.selectedGrip = null;
-  state.statusText = `Importadas ${entities.length} entidades DXF`;
+  state.statusText = `Importadas ${entities.length} entidades DXF · ${activeDrawingProfile().label} (${UNITS_LABEL})`;
   renderer.fitToDocument();
   controller.updateUiStatus();
   renderer.draw();
 });
 
+drawingProfileConfirmButton.addEventListener('click', confirmDrawingProfileDialog);
+drawingProfileCancelButton.addEventListener('click', closeDrawingProfileDialog);
+drawingProfileCloseButton.addEventListener('click', closeDrawingProfileDialog);
+drawingProfileDialog.addEventListener('pointerdown', (event) => {
+  if (event.target === drawingProfileDialog) {
+    closeDrawingProfileDialog();
+  }
+});
+drawingProfileDialog.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    event.stopPropagation();
+    confirmDrawingProfileDialog();
+  }
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    event.stopPropagation();
+    closeDrawingProfileDialog();
+  }
+});
+
+textDialogConfirmButton.addEventListener('click', confirmTextDialog);
+textDialogCancelButton.addEventListener('click', () => closeTextDialog(true));
+textDialogCloseButton.addEventListener('click', () => closeTextDialog(true));
+textDialog.addEventListener('pointerdown', (event) => {
+  if (event.target === textDialog) {
+    closeTextDialog(true);
+  }
+});
+[textContentInput, textHeightInput].forEach((input) => {
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      confirmTextDialog();
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeTextDialog(true);
+    }
+  });
+});
+hatchDialogConfirmButton.addEventListener('click', () => confirmHatchDialog());
+hatchDialogCancelButton.addEventListener('click', () => closeHatchDialog(true));
+hatchDialogCloseButton.addEventListener('click', () => closeHatchDialog(true));
+hatchModeInputs.forEach((input) => {
+  input.addEventListener('click', () => confirmHatchDialog(input.value));
+});
+hatchDialog.addEventListener('pointerdown', (event) => {
+  if (event.target === hatchDialog) {
+    closeHatchDialog(true);
+  }
+});
+hatchDialog.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    event.stopPropagation();
+    confirmHatchDialog();
+  }
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    event.stopPropagation();
+    closeHatchDialog(true);
+  }
+});
+
+aboutDialogCloseButton.addEventListener('click', closeAboutDialog);
+aboutDialogConfirmButton.addEventListener('click', closeAboutDialog);
+aboutDialog.addEventListener('pointerdown', (event) => {
+  if (event.target === aboutDialog) {
+    closeAboutDialog();
+  }
+});
+aboutDialog.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' || event.key === 'Enter') {
+    event.preventDefault();
+    event.stopPropagation();
+    closeAboutDialog();
+  }
+});
+
 renderer.resize();
+syncLayerPicker();
 syncLineStylePicker();
+syncLineTypePicker();
+syncLineColorPicker();
+syncNavigationDeviceButtons();
 controller.setTool('select');
