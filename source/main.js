@@ -7,6 +7,7 @@
 const canvas = document.getElementById('cad-canvas');
 const selectToolButton = document.getElementById('tool-select');
 const lineToolButton = document.getElementById('tool-line');
+const polylineToolButton = document.getElementById('tool-polyline');
 const rectangleToolButton = document.getElementById('tool-rectangle');
 const textToolButton = document.getElementById('tool-text');
 const hatchToolButton = document.getElementById('tool-hatch');
@@ -91,6 +92,13 @@ const hatchColorInput = document.getElementById('hatch-color-input');
 const hatchModeChoice = document.getElementById('hatch-mode-choice');
 const hatchModeInputs = document.querySelectorAll('input[name="hatch-mode"]');
 const hatchDialogError = document.getElementById('hatch-dialog-error');
+const polylineWidthDialog = document.getElementById('polyline-width-dialog');
+const polylineWidthCloseButton = document.getElementById('polyline-width-close');
+const polylineWidthCancelButton = document.getElementById('polyline-width-cancel');
+const polylineWidthConfirmButton = document.getElementById('polyline-width-confirm');
+const polylineStartWidthInput = document.getElementById('polyline-start-width');
+const polylineEndWidthInput = document.getElementById('polyline-end-width');
+const polylineWidthError = document.getElementById('polyline-width-error');
 const aboutDialog = document.getElementById('about-dialog');
 const aboutDialogCloseButton = document.getElementById('about-dialog-close');
 const aboutDialogConfirmButton = document.getElementById('about-dialog-confirm');
@@ -105,6 +113,7 @@ const SPATIAL_MAX_QUERY_CELLS = 12000;
 const HISTORY_LIMIT = 50;
 const REPEATABLE_COMMANDS = new Set([
   'line',
+  'polyline',
   'rectangle',
   'text',
   'hatch',
@@ -347,17 +356,20 @@ function circularParameter(entity, point) {
     return angleParameter(angle);
   }
 
-  const sweep = arcSweep(entity.startAngle, entity.endAngle);
+  const sweep = entityArcSweep(entity);
   if (sweep <= SNAP_THRESHOLD) {
     return 0;
   }
-  return clamp(normalizeAngle(angle - entity.startAngle) / sweep, 0, 1);
+  const angleDistance = entity.clockwise === false
+    ? normalizeAngle(entity.startAngle - angle)
+    : normalizeAngle(angle - entity.startAngle);
+  return clamp(angleDistance / sweep, 0, 1);
 }
 
 function pointAtCircularParameter(entity, parameter) {
   const angle = entity.type === 'CIRCLE'
     ? parameter * TWO_PI
-    : entity.startAngle + arcSweep(entity.startAngle, entity.endAngle) * parameter;
+    : entity.startAngle + (entity.clockwise === false ? -1 : 1) * entityArcSweep(entity) * parameter;
   return pointAtCircleAngle(entity, angle);
 }
 
@@ -398,6 +410,16 @@ function arcSweep(startAngle, endAngle) {
   return normalizeAngle(endAngle - startAngle);
 }
 
+function directedArcSweep(startAngle, endAngle, clockwise = true) {
+  return clockwise
+    ? arcSweep(startAngle, endAngle)
+    : normalizeAngle(startAngle - endAngle);
+}
+
+function entityArcSweep(entity) {
+  return directedArcSweep(entity.startAngle, entity.endAngle, entity.clockwise !== false);
+}
+
 function angleInSweep(angle, startAngle, endAngle) {
   return normalizeAngle(angle - startAngle) <= arcSweep(startAngle, endAngle) + SNAP_THRESHOLD;
 }
@@ -406,11 +428,14 @@ function angleOnArc(angle, entity) {
   if (entity.type === 'CIRCLE') {
     return true;
   }
-  return angleInSweep(angle, entity.startAngle, entity.endAngle);
+  return entity.clockwise === false
+    ? normalizeAngle(entity.startAngle - angle) <= entityArcSweep(entity) + SNAP_THRESHOLD
+    : angleInSweep(angle, entity.startAngle, entity.endAngle);
 }
 
 function arcMidAngle(entity) {
-  return normalizeAngle(entity.startAngle + arcSweep(entity.startAngle, entity.endAngle) * 0.5);
+  const direction = entity.clockwise === false ? -1 : 1;
+  return normalizeAngle(entity.startAngle + direction * entityArcSweep(entity) * 0.5);
 }
 
 function perpendicularFootOnSegment(origin, entity) {
@@ -558,19 +583,19 @@ function circularReferencePoints(entity) {
 
   if (entity.type === 'ARC') {
     return [
-      { type: 'endpoint', point: pointAtCircleAngle(entity, entity.startAngle) },
-      { type: 'endpoint', point: pointAtCircleAngle(entity, entity.endAngle) },
-      { type: 'midpoint', point: pointAtCircleAngle(entity, arcMidAngle(entity)) },
-      { type: 'center', point: entity.center },
+      { type: 'endpoint', key: 'start', point: pointAtCircleAngle(entity, entity.startAngle) },
+      { type: 'endpoint', key: 'end', point: pointAtCircleAngle(entity, entity.endAngle) },
+      { type: 'midpoint', key: 'midpoint', point: pointAtCircleAngle(entity, arcMidAngle(entity)) },
+      { type: 'center', key: 'center', point: entity.center },
     ];
   }
 
   const candidates = [
-    { type: 'center', point: entity.center },
-    { type: 'quadrant', point: { x: entity.center.x + entity.radius, y: entity.center.y } },
-    { type: 'quadrant', point: { x: entity.center.x, y: entity.center.y + entity.radius } },
-    { type: 'quadrant', point: { x: entity.center.x - entity.radius, y: entity.center.y } },
-    { type: 'quadrant', point: { x: entity.center.x, y: entity.center.y - entity.radius } },
+    { type: 'center', key: 'center', point: entity.center },
+    { type: 'quadrant', key: 'quadrant-0', point: { x: entity.center.x + entity.radius, y: entity.center.y } },
+    { type: 'quadrant', key: 'quadrant-1', point: { x: entity.center.x, y: entity.center.y + entity.radius } },
+    { type: 'quadrant', key: 'quadrant-2', point: { x: entity.center.x - entity.radius, y: entity.center.y } },
+    { type: 'quadrant', key: 'quadrant-3', point: { x: entity.center.x, y: entity.center.y - entity.radius } },
   ];
   return candidates.filter((candidate) => pointOnCircularEntity(candidate.point, entity));
 }
@@ -585,12 +610,17 @@ function objectSnapPoint(point, state, options = {}) {
   const cursorBounds = expandBounds(createBounds(point.x, point.y, point.x, point.y), tolerance);
   const snapEntities = state.doc
     .queryBounds(cursorBounds)
-    .filter((entity) => entity.type === 'LINE' || isCircularEntity(entity));
+    .filter((entity) => entity.type === 'LINE' || entity.type === 'POLYLINE' || isCircularEntity(entity));
   const nearbySnapEntities = snapEntities.filter((entity) =>
     entity !== options.ignoreEntity && entityIsNearPoint(entity, point, tolerance),
   );
   const lineEntities = snapEntities.filter((entity) => entity.type === 'LINE');
   const nearbyLineEntities = nearbySnapEntities.filter((entity) => entity.type === 'LINE');
+  const draftPolyline = state.tool === 'polyline' ? polylineDraftEntity(state.polylineDraft) : null;
+  const nearbyDraftParts = draftPolyline
+    ? primitiveEntityParts(draftPolyline)
+      .filter((part) => boundsIntersectsBounds(part.bounds(), cursorBounds))
+    : [];
 
   for (const entity of lineEntities) {
     const ignoredKey = entity === options.ignoreEntity ? options.ignoreKey : null;
@@ -611,6 +641,27 @@ function objectSnapPoint(point, state, options = {}) {
     }
   }
 
+  for (const entity of snapEntities.filter((candidate) => candidate.type === 'POLYLINE')) {
+    for (const candidate of polylineReferencePoints(entity)) {
+      if (
+        options.axisLine &&
+        distancePointToInfiniteLine(candidate.point, options.axisLine.point, options.axisLine.direction) > tolerance
+      ) {
+        continue;
+      }
+      bestSnap = addSnapCandidate(point, candidate, tolerance, bestSnap);
+    }
+  }
+
+  if (draftPolyline) {
+    for (const candidate of polylineReferencePoints(draftPolyline)) {
+      if (!boundsContainsPoint(cursorBounds, candidate.point)) {
+        continue;
+      }
+      bestSnap = addSnapCandidate(point, candidate, tolerance, bestSnap);
+    }
+  }
+
   for (let firstIndex = 0; firstIndex < nearbySnapEntities.length - 1; firstIndex += 1) {
     const first = nearbySnapEntities[firstIndex];
 
@@ -624,6 +675,35 @@ function objectSnapPoint(point, state, options = {}) {
           continue;
         }
 
+        bestSnap = addSnapCandidate(
+          point,
+          { type: 'intersection', point: intersection },
+          tolerance,
+          bestSnap,
+        );
+      }
+    }
+  }
+
+  for (const draftPart of nearbyDraftParts) {
+    for (const entity of nearbySnapEntities) {
+      for (const intersection of entityIntersectionPoints(draftPart, entity)) {
+        bestSnap = addSnapCandidate(
+          point,
+          { type: 'intersection', point: intersection },
+          tolerance,
+          bestSnap,
+        );
+      }
+    }
+  }
+
+  for (let firstIndex = 0; firstIndex < nearbyDraftParts.length - 1; firstIndex += 1) {
+    for (let secondIndex = firstIndex + 1; secondIndex < nearbyDraftParts.length; secondIndex += 1) {
+      for (const intersection of entityIntersectionPoints(
+        nearbyDraftParts[firstIndex],
+        nearbyDraftParts[secondIndex],
+      )) {
         bestSnap = addSnapCandidate(
           point,
           { type: 'intersection', point: intersection },
@@ -668,6 +748,30 @@ function objectSnapPoint(point, state, options = {}) {
         bestSnap,
       );
     }
+    for (const entity of nearbySnapEntities.filter((candidate) => candidate.type === 'POLYLINE')) {
+      for (const segment of polylineSegmentEntities(entity).filter((candidate) => candidate.type === 'LINE')) {
+        const perpendicularFoot = perpendicularFootOnSegment(options.origin, segment);
+        if (perpendicularFoot) {
+          bestSnap = addSnapCandidate(
+            point,
+            { type: 'perpendicular', point: perpendicularFoot },
+            tolerance,
+            bestSnap,
+          );
+        }
+      }
+    }
+    for (const segment of nearbyDraftParts.filter((candidate) => candidate.type === 'LINE')) {
+      const perpendicularFoot = perpendicularFootOnSegment(options.origin, segment);
+      if (perpendicularFoot) {
+        bestSnap = addSnapCandidate(
+          point,
+          { type: 'perpendicular', point: perpendicularFoot },
+          tolerance,
+          bestSnap,
+        );
+      }
+    }
   }
 
   for (const entity of snapEntities) {
@@ -698,6 +802,9 @@ function activeDraftOrigin(state) {
   }
   if (state.rectangleDraft?.firstPoint) {
     return state.rectangleDraft.firstPoint;
+  }
+  if (state.polylineDraft?.vertices.length) {
+    return state.polylineDraft.vertices[state.polylineDraft.vertices.length - 1];
   }
   if (state.circleDraft?.mode === 'center-radius' && state.circleDraft.points.length === 1) {
     return state.circleDraft.points[0];
@@ -1048,14 +1155,328 @@ function gripPoint(selectedGrip) {
   if (selectedGrip.entity.type === 'HATCH') {
     return selectedGrip.entity.boundary[selectedGrip.index] || null;
   }
+  if (isCircularEntity(selectedGrip.entity)) {
+    return circularReferencePoints(selectedGrip.entity)
+      .find((candidate) => candidate.key === selectedGrip.key)?.point || null;
+  }
+  if (selectedGrip.entity.type === 'POLYLINE') {
+    return polylineReferencePoints(selectedGrip.entity)
+      .find((candidate) => candidate.key === selectedGrip.key)?.point || null;
+  }
   return selectedGrip.entity[selectedGrip.key] || null;
 }
 
 function gripReferencePoint(selectedGrip) {
-  if (!selectedGrip || selectedGrip.entity.type !== 'LINE') {
+  if (!selectedGrip) {
+    return null;
+  }
+  if (isCircularEntity(selectedGrip.entity) && selectedGrip.key !== 'center') {
+    return selectedGrip.entity.center;
+  }
+  if (selectedGrip.entity.type === 'POLYLINE') {
+    const vertexMatch = selectedGrip.key.match(/^vertex-(\d+)$/);
+    if (vertexMatch) {
+      const index = Number(vertexMatch[1]);
+      const referenceIndex = index > 0
+        ? index - 1
+        : selectedGrip.entity.closed ? selectedGrip.entity.vertices.length - 1 : Math.min(1, selectedGrip.entity.vertices.length - 1);
+      return selectedGrip.entity.vertices[referenceIndex] || gripPoint(selectedGrip);
+    }
+    const arcMatch = selectedGrip.key.match(/^arc-(\d+)-(?:midpoint|center)$/);
+    if (arcMatch) {
+      return selectedGrip.entity.vertices[Number(arcMatch[1])] || gripPoint(selectedGrip);
+    }
+    return gripPoint(selectedGrip);
+  }
+  if (selectedGrip.entity.type !== 'LINE') {
     return gripPoint(selectedGrip);
   }
   return selectedGrip.key === 'start' ? selectedGrip.entity.end : selectedGrip.entity.start;
+}
+
+function reshapeHatchArcGroup(entity, group, movedIndex, targetPoint) {
+  const indices = group.indices;
+  const movedPosition = indices.indexOf(movedIndex);
+  if (indices.length < 3 || movedPosition < 0) {
+    return false;
+  }
+
+  const endPosition = indices.length - 1;
+  const passPosition = movedPosition > 0 && movedPosition < endPosition
+    ? movedPosition
+    : Math.floor(endPosition * 0.5);
+  if (passPosition <= 0 || passPosition >= endPosition) {
+    return false;
+  }
+
+  const startPoint = movedPosition === 0
+    ? targetPoint
+    : entity.boundary[indices[0]];
+  const passPoint = movedPosition === passPosition
+    ? targetPoint
+    : entity.boundary[indices[passPosition]];
+  const endPoint = movedPosition === endPosition
+    ? targetPoint
+    : entity.boundary[indices[endPosition]];
+  const circle = circleFromThreePoints(startPoint, passPoint, endPoint);
+  if (!circle) {
+    return false;
+  }
+
+  const startAngle = angleOfPoint(circle.center, startPoint);
+  const passAngle = angleOfPoint(circle.center, passPoint);
+  const endAngle = angleOfPoint(circle.center, endPoint);
+  const positiveTraversal = angleInSweep(passAngle, startAngle, endAngle);
+  const firstSweep = positiveTraversal
+    ? normalizeAngle(passAngle - startAngle)
+    : -normalizeAngle(startAngle - passAngle);
+  const secondSweep = positiveTraversal
+    ? normalizeAngle(endAngle - passAngle)
+    : -normalizeAngle(passAngle - endAngle);
+  indices.forEach((boundaryIndex, position) => {
+    const angle = position <= passPosition
+      ? startAngle + firstSweep * position / passPosition
+      : passAngle + secondSweep * (position - passPosition) / (endPosition - passPosition);
+    const point = pointAtCircleAngle(circle, angle);
+    entity.boundary[boundaryIndex].x = point.x;
+    entity.boundary[boundaryIndex].y = point.y;
+  });
+  return true;
+}
+
+function resizeHatchCircleGroup(entity, group, targetPoint) {
+  const indices = [...new Set(group.indices)];
+  if (indices.length < 3) {
+    return false;
+  }
+  const center = indices.reduce((sum, index) => ({
+    x: sum.x + entity.boundary[index].x / indices.length,
+    y: sum.y + entity.boundary[index].y / indices.length,
+  }), { x: 0, y: 0 });
+  const radius = distance(center, targetPoint);
+  if (radius <= SNAP_THRESHOLD) {
+    return false;
+  }
+  const angles = indices.map((index) => angleOfPoint(center, entity.boundary[index]));
+  indices.forEach((boundaryIndex, position) => {
+    const point = {
+      x: center.x + Math.cos(angles[position]) * radius,
+      y: center.y + Math.sin(angles[position]) * radius,
+    };
+    entity.boundary[boundaryIndex].x = point.x;
+    entity.boundary[boundaryIndex].y = point.y;
+  });
+  return true;
+}
+
+function moveHatchGrip(entity, index, targetPoint) {
+  const curveGroups = entity.curveGroups.filter((group) => group.indices.includes(index));
+  let reshaped = false;
+  for (const group of curveGroups) {
+    if (group.type === 'ARC') {
+      reshaped = reshapeHatchArcGroup(entity, group, index, targetPoint) || reshaped;
+    }
+    else if (group.type === 'CIRCLE') {
+      reshaped = resizeHatchCircleGroup(entity, group, targetPoint) || reshaped;
+    }
+  }
+  if (!reshaped) {
+    entity.boundary[index].x = targetPoint.x;
+    entity.boundary[index].y = targetPoint.y;
+  }
+  return true;
+}
+
+function moveCircularGrip(entity, key, targetPoint) {
+  if (key === 'center') {
+    entity.center = { ...targetPoint };
+    return true;
+  }
+  if (entity.type === 'CIRCLE' && key.startsWith('quadrant-')) {
+    const radius = distance(entity.center, targetPoint);
+    if (radius <= SNAP_THRESHOLD) {
+      return false;
+    }
+    entity.radius = radius;
+    return true;
+  }
+  if (entity.type !== 'ARC') {
+    return false;
+  }
+  if (key === 'midpoint') {
+    const radius = distance(entity.center, targetPoint);
+    if (radius <= SNAP_THRESHOLD) {
+      return false;
+    }
+    entity.radius = radius;
+    return true;
+  }
+  if (key === 'start' || key === 'end') {
+    const angleKey = key === 'start' ? 'startAngle' : 'endAngle';
+    const previousAngle = entity[angleKey];
+    entity[angleKey] = angleOfPoint(entity.center, targetPoint);
+    if (entityArcSweep(entity) <= SNAP_THRESHOLD) {
+      entity[angleKey] = previousAngle;
+      return false;
+    }
+    return true;
+  }
+  return false;
+}
+
+function projectCenterToChordBisector(start, end, point) {
+  const midpoint = entityMidpoint({ start, end });
+  const chord = { x: end.x - start.x, y: end.y - start.y };
+  const chordLength = Math.hypot(chord.x, chord.y);
+  if (chordLength <= SNAP_THRESHOLD) {
+    return null;
+  }
+  const normal = { x: -chord.y / chordLength, y: chord.x / chordLength };
+  const offset = (point.x - midpoint.x) * normal.x + (point.y - midpoint.y) * normal.y;
+  return {
+    x: midpoint.x + normal.x * offset,
+    y: midpoint.y + normal.y * offset,
+  };
+}
+
+function normalizedVector(start, end) {
+  const vector = { x: end.x - start.x, y: end.y - start.y };
+  const length = Math.hypot(vector.x, vector.y);
+  return length > SNAP_THRESHOLD
+    ? { x: vector.x / length, y: vector.y / length }
+    : null;
+}
+
+function polylineIncomingTangent(draft) {
+  const segmentIndex = draft.segments.length - 1;
+  const segment = draft.segments[segmentIndex];
+  const start = draft.vertices[segmentIndex];
+  const end = draft.vertices[segmentIndex + 1];
+  if (!segment || !start || !end) {
+    return null;
+  }
+  if (segment.type !== 'ARC' || !segment.center) {
+    return normalizedVector(start, end);
+  }
+  const angle = angleOfPoint(segment.center, end);
+  return segment.clockwise === false
+    ? { x: Math.sin(angle), y: -Math.cos(angle) }
+    : { x: -Math.sin(angle), y: Math.cos(angle) };
+}
+
+function preferredPolylineArcClockwise(draft, start, end, center) {
+  const startAngle = angleOfPoint(center, start);
+  const endAngle = angleOfPoint(center, end);
+  const clockwiseSweep = directedArcSweep(startAngle, endAngle, true);
+  const counterclockwiseSweep = directedArcSweep(startAngle, endAngle, false);
+  const incoming = polylineIncomingTangent(draft);
+  if (incoming) {
+    const clockwiseTangent = { x: -Math.sin(startAngle), y: Math.cos(startAngle) };
+    const clockwiseAlignment = incoming.x * clockwiseTangent.x + incoming.y * clockwiseTangent.y;
+    const counterclockwiseAlignment = -clockwiseAlignment;
+    if (Math.abs(clockwiseAlignment - counterclockwiseAlignment) > SNAP_THRESHOLD) {
+      return clockwiseAlignment > counterclockwiseAlignment;
+    }
+  }
+  return clockwiseSweep <= counterclockwiseSweep;
+}
+
+function polylineTangentArcToPoint(draft, start, end) {
+  const incoming = polylineIncomingTangent(draft);
+  if (incoming) {
+    const normal = { x: -incoming.y, y: incoming.x };
+    const chord = { x: end.x - start.x, y: end.y - start.y };
+    const denominator = 2 * (chord.x * normal.x + chord.y * normal.y);
+    if (Math.abs(denominator) > SNAP_THRESHOLD) {
+      const centerOffset = (chord.x * chord.x + chord.y * chord.y) / denominator;
+      const center = {
+        x: start.x + normal.x * centerOffset,
+        y: start.y + normal.y * centerOffset,
+      };
+      return {
+        center,
+        radius: Math.abs(centerOffset),
+        clockwise: centerOffset > 0,
+      };
+    }
+  }
+  const center = entityMidpoint({ start, end });
+  return {
+    center,
+    radius: distance(center, start),
+    clockwise: preferredPolylineArcClockwise(draft, start, end, center),
+  };
+}
+
+function arcCenterFromBulge(start, end, bulge) {
+  if (Math.abs(bulge) <= SNAP_THRESHOLD) {
+    return null;
+  }
+  const chord = { x: end.x - start.x, y: end.y - start.y };
+  const chordLength = Math.hypot(chord.x, chord.y);
+  if (chordLength <= SNAP_THRESHOLD) {
+    return null;
+  }
+  const midpoint = entityMidpoint({ start, end });
+  const normal = { x: -chord.y / chordLength, y: chord.x / chordLength };
+  const offset = chordLength * (1 - bulge * bulge) / (4 * bulge);
+  return {
+    x: midpoint.x + normal.x * offset,
+    y: midpoint.y + normal.y * offset,
+  };
+}
+
+function movePolylineGrip(entity, key, targetPoint) {
+  const vertexMatch = key.match(/^vertex-(\d+)$/);
+  if (vertexMatch) {
+    const vertexIndex = Number(vertexMatch[1]);
+    const adjacentArcs = [];
+    entity.segments.forEach((segment, segmentIndex) => {
+      const endIndex = (segmentIndex + 1) % entity.vertices.length;
+      if (segment.type === 'ARC' && (segmentIndex === vertexIndex || endIndex === vertexIndex)) {
+        const geometry = polylineSegmentEntity(entity, segmentIndex);
+        if (geometry) {
+          adjacentArcs.push({
+            segmentIndex,
+            midpoint: pointAtCircleAngle(geometry, arcMidAngle(geometry)),
+          });
+        }
+      }
+    });
+    entity.vertices[vertexIndex] = { ...targetPoint };
+    adjacentArcs.forEach(({ segmentIndex, midpoint }) => {
+      const start = entity.vertices[segmentIndex];
+      const end = entity.vertices[(segmentIndex + 1) % entity.vertices.length];
+      const circle = circleFromThreePoints(start, midpoint, end);
+      if (circle) {
+        entity.segments[segmentIndex].center = circle.center;
+      }
+    });
+    return true;
+  }
+
+  const arcMatch = key.match(/^arc-(\d+)-(midpoint|center)$/);
+  if (arcMatch) {
+    const segmentIndex = Number(arcMatch[1]);
+    const start = entity.vertices[segmentIndex];
+    const end = entity.vertices[(segmentIndex + 1) % entity.vertices.length];
+    if (arcMatch[2] === 'center') {
+      const center = projectCenterToChordBisector(start, end, targetPoint);
+      if (!center) {
+        return false;
+      }
+      entity.segments[segmentIndex].center = center;
+      return true;
+    }
+    const circle = circleFromThreePoints(start, targetPoint, end);
+    if (!circle) {
+      return false;
+    }
+    entity.segments[segmentIndex].center = circle.center;
+    return true;
+  }
+
+  return false;
 }
 
 function projectPointToLine(point, linePoint, direction) {
@@ -1108,6 +1529,88 @@ function distancePointToArc(point, entity) {
     distance(point, pointAtCircleAngle(entity, entity.startAngle)),
     distance(point, pointAtCircleAngle(entity, entity.endAngle)),
   );
+}
+
+function polylineSegmentEntity(entity, index) {
+  if (!entity || entity.type !== 'POLYLINE' || !entity.segments[index]) {
+    return null;
+  }
+  const segment = entity.segments[index];
+  const start = entity.vertices[index];
+  const end = entity.vertices[(index + 1) % entity.vertices.length];
+  if (!start || !end) {
+    return null;
+  }
+  const options = {
+    layer: entity.layer,
+    lineStyle: entity.lineStyle,
+    lineType: entity.lineType,
+    lineColor: entity.lineColor,
+  };
+  if (segment.type === 'ARC' && segment.center) {
+    const radius = distance(segment.center, start);
+    if (radius <= SNAP_THRESHOLD) {
+      return null;
+    }
+    return new ArcEntity(
+      segment.center,
+      radius,
+      angleOfPoint(segment.center, start),
+      angleOfPoint(segment.center, end),
+      { ...options, clockwise: segment.clockwise !== false },
+    );
+  }
+  return new LineEntity(start, end, options);
+}
+
+function polylineSegmentEntities(entity) {
+  if (!entity || entity.type !== 'POLYLINE') {
+    return [];
+  }
+  return entity.segments
+    .map((_, index) => polylineSegmentEntity(entity, index))
+    .filter(Boolean);
+}
+
+function polylineDraftEntity(draft) {
+  if (!draft?.vertices?.length) {
+    return null;
+  }
+  return new PolylineEntity(draft.vertices, draft.segments || [], { closed: false });
+}
+
+function primitiveEntityParts(entity) {
+  return entity?.type === 'POLYLINE' ? polylineSegmentEntities(entity) : entity ? [entity] : [];
+}
+
+function polylineReferencePoints(entity) {
+  const candidates = entity.vertices.map((point, index) => ({
+    type: 'endpoint',
+    key: `vertex-${index}`,
+    point,
+  }));
+  entity.segments.forEach((segment, index) => {
+    const geometry = polylineSegmentEntity(entity, index);
+    if (!geometry) {
+      return;
+    }
+    if (geometry.type === 'ARC') {
+      candidates.push({
+        type: 'midpoint',
+        key: `arc-${index}-midpoint`,
+        point: pointAtCircleAngle(geometry, arcMidAngle(geometry)),
+      });
+      candidates.push({ type: 'center', key: `arc-${index}-center`, point: geometry.center });
+    }
+    else {
+      candidates.push({
+        type: 'midpoint',
+        key: `segment-${index}-midpoint`,
+        point: entityMidpoint(geometry),
+      });
+    }
+  });
+  return candidates;
 }
 
 function lineCircleIntersectionPoints(line, circle) {
@@ -1197,6 +1700,11 @@ function fullCircleBoundaryIntersectionPoints(circularEntity, boundary) {
     return [];
   }
 
+  if (boundary.type === 'POLYLINE') {
+    return primitiveEntityParts(boundary)
+      .flatMap((part) => fullCircleBoundaryIntersectionPoints(circularEntity, part));
+  }
+
   if (boundary.type === 'LINE') {
     return lineFullCircleIntersectionPoints(boundary, circularEntity);
   }
@@ -1209,6 +1717,19 @@ function fullCircleBoundaryIntersectionPoints(circularEntity, boundary) {
 }
 
 function entityIntersectionPoints(first, second) {
+  if (first?.type === 'POLYLINE' || second?.type === 'POLYLINE') {
+    const intersections = [];
+    for (const firstPart of primitiveEntityParts(first)) {
+      for (const secondPart of primitiveEntityParts(second)) {
+        if (firstPart === first && secondPart === second) {
+          continue;
+        }
+        intersections.push(...entityIntersectionPoints(firstPart, secondPart));
+      }
+    }
+    return intersections.filter((point, index, points) =>
+      points.findIndex((candidate) => distance(candidate, point) <= SNAP_THRESHOLD) === index);
+  }
   if (first.type === 'LINE' && second.type === 'LINE') {
     const intersection = lineSegmentIntersection(first, second);
     return intersection ? [intersection] : [];
@@ -1322,6 +1843,16 @@ function entityDistanceToPoint(entity, point) {
   if (entity.type === 'HATCH') {
     return polygonDistanceToPoint(point, entity.boundary);
   }
+  if (entity.type === 'POLYLINE') {
+    return entity.segments.reduce((nearest, segment, index) => {
+      const geometry = polylineSegmentEntity(entity, index);
+      if (!geometry) {
+        return nearest;
+      }
+      const halfWidth = Math.max(segment.startWidth, segment.endWidth) * 0.5;
+      return Math.min(nearest, Math.max(0, entityDistanceToPoint(geometry, point) - halfWidth));
+    }, Infinity);
+  }
   return Infinity;
 }
 
@@ -1434,6 +1965,7 @@ class ArcEntity {
     this.radius = radius;
     this.startAngle = normalizeAngle(startAngle);
     this.endAngle = normalizeAngle(endAngle);
+    this.clockwise = options.clockwise !== false;
     this.groupId = options.groupId || null;
     this.layer = options.layer || DEFAULT_LAYER.name;
     applyLineStyleToEntity(this, options.lineStyle || DEFAULT_LINE_STYLE);
@@ -1461,7 +1993,60 @@ class ArcEntity {
   }
 
   length() {
-    return this.radius * arcSweep(this.startAngle, this.endAngle);
+    return this.radius * entityArcSweep(this);
+  }
+}
+
+class PolylineEntity {
+  constructor(vertices, segments, options = {}) {
+    this.type = 'POLYLINE';
+    this.vertices = vertices.map((point) => ({ x: point.x, y: point.y }));
+    this.closed = Boolean(options.closed);
+    const expectedSegments = this.closed
+      ? this.vertices.length
+      : Math.max(0, this.vertices.length - 1);
+    this.segments = segments.slice(0, expectedSegments).map((segment) => ({
+      type: segment.type === 'ARC' ? 'ARC' : 'LINE',
+      center: segment.center ? { x: segment.center.x, y: segment.center.y } : null,
+      clockwise: segment.clockwise !== false,
+      startWidth: Math.max(0, Number(segment.startWidth) || 0),
+      endWidth: Math.max(0, Number(segment.endWidth) || 0),
+    }));
+    while (this.segments.length < expectedSegments) {
+      this.segments.push({ type: 'LINE', center: null, clockwise: true, startWidth: 0, endWidth: 0 });
+    }
+    this.groupId = null;
+    this.layer = options.layer || DEFAULT_LAYER.name;
+    applyLineStyleToEntity(this, options.lineStyle || DEFAULT_LINE_STYLE);
+    applyLineTypeToEntity(this, options.lineType || DEFAULT_LINE_TYPE);
+    applyLineColorToEntity(this, options.lineColor || DEFAULT_LINE_COLOR);
+  }
+
+  bounds() {
+    let bounds = null;
+    this.segments.forEach((_, index) => {
+      const geometry = polylineSegmentEntity(this, index);
+      if (geometry) {
+        bounds = mergeBounds(bounds, geometry.bounds());
+      }
+    });
+    if (!bounds && this.vertices.length) {
+      bounds = createBounds(
+        Math.min(...this.vertices.map((point) => point.x)),
+        Math.min(...this.vertices.map((point) => point.y)),
+        Math.max(...this.vertices.map((point) => point.x)),
+        Math.max(...this.vertices.map((point) => point.y)),
+      );
+    }
+    const maximumWidth = this.segments.reduce(
+      (maximum, segment) => Math.max(maximum, segment.startWidth, segment.endWidth),
+      0,
+    );
+    return bounds ? expandBounds(bounds, maximumWidth * 0.5) : createBounds(0, 0, 0, 0);
+  }
+
+  length() {
+    return polylineSegmentEntities(this).reduce((total, segment) => total + segment.length(), 0);
   }
 }
 
@@ -1506,7 +2091,19 @@ class TextEntity {
 class HatchEntity {
   constructor(boundary, options = {}) {
     this.type = 'HATCH';
+    const requestedGripIndices = options.gripIndices || boundary.gripIndices;
+    const requestedCurveGroups = options.curveGroups || boundary.curveGroups;
     this.boundary = boundary.map((point) => ({ x: point.x, y: point.y }));
+    this.gripIndices = Array.isArray(requestedGripIndices)
+      ? [...new Set(requestedGripIndices)]
+        .filter((index) => Number.isInteger(index) && index >= 0 && index < this.boundary.length)
+      : this.boundary.map((_, index) => index);
+    this.curveGroups = Array.isArray(requestedCurveGroups)
+      ? requestedCurveGroups.map((group) => ({
+        type: group.type,
+        indices: [...group.indices],
+      }))
+      : [];
     this.pattern = 'solid';
     this.groupId = null;
     this.layer = options.layer || DEFAULT_LAYER.name;
@@ -1554,7 +2151,31 @@ function cloneEntityWithOffset(entity, vector, options = {}) {
       entity.radius,
       entity.startAngle,
       entity.endAngle,
-      { layer: entity.layer, lineStyle: entity.lineStyle, lineType: entity.lineType, lineColor: entity.lineColor, groupId },
+      {
+        layer: entity.layer,
+        lineStyle: entity.lineStyle,
+        lineType: entity.lineType,
+        lineColor: entity.lineColor,
+        groupId,
+        clockwise: entity.clockwise !== false,
+      },
+    );
+  }
+
+  if (entity.type === 'POLYLINE') {
+    return new PolylineEntity(
+      entity.vertices.map((point) => offsetPoint(point, vector)),
+      entity.segments.map((segment) => ({
+        ...segment,
+        center: segment.center ? offsetPoint(segment.center, vector) : null,
+      })),
+      {
+        closed: entity.closed,
+        layer: entity.layer,
+        lineStyle: entity.lineStyle,
+        lineType: entity.lineType,
+        lineColor: entity.lineColor,
+      },
     );
   }
 
@@ -1581,6 +2202,8 @@ function cloneEntityWithOffset(entity, vector, options = {}) {
         lineStyle: entity.lineStyle,
         lineType: entity.lineType,
         lineColor: entity.lineColor,
+        gripIndices: entity.gripIndices,
+        curveGroups: entity.curveGroups,
       },
     );
   }
@@ -1628,6 +2251,15 @@ function moveEntityByVector(entity, vector) {
     entity.boundary = entity.boundary.map((point) => offsetPoint(point, vector));
     return true;
   }
+  if (entity.type === 'POLYLINE') {
+    entity.vertices = entity.vertices.map((point) => offsetPoint(point, vector));
+    entity.segments.forEach((segment) => {
+      if (segment.center) {
+        segment.center = offsetPoint(segment.center, vector);
+      }
+    });
+    return true;
+  }
 
   return false;
 }
@@ -1669,6 +2301,15 @@ function rotateEntityByAngle(entity, basePoint, angleDegrees) {
   if (entity.type === 'HATCH') {
     entity.boundary = entity.boundary.map((point) =>
       rotatePointAround(point, basePoint, angleDegrees));
+    return true;
+  }
+  if (entity.type === 'POLYLINE') {
+    entity.vertices = entity.vertices.map((point) => rotatePointAround(point, basePoint, angleDegrees));
+    entity.segments.forEach((segment) => {
+      if (segment.center) {
+        segment.center = rotatePointAround(segment.center, basePoint, angleDegrees);
+      }
+    });
     return true;
   }
 
@@ -2072,10 +2713,11 @@ function createArcFromParameters(entity, startParameter, endParameter) {
     });
   }
 
-  const sweep = arcSweep(entity.startAngle, entity.endAngle);
-  const startAngle = entity.startAngle + sweep * startParameter;
-  const endAngle = entity.startAngle + sweep * endParameter;
-  if (arcSweep(startAngle, endAngle) <= SNAP_THRESHOLD) {
+  const sweep = entityArcSweep(entity);
+  const direction = entity.clockwise === false ? -1 : 1;
+  const startAngle = entity.startAngle + direction * sweep * startParameter;
+  const endAngle = entity.startAngle + direction * sweep * endParameter;
+  if (directedArcSweep(startAngle, endAngle, entity.clockwise !== false) <= SNAP_THRESHOLD) {
     return null;
   }
   return new ArcEntity(entity.center, entity.radius, startAngle, endAngle, {
@@ -2083,6 +2725,7 @@ function createArcFromParameters(entity, startParameter, endParameter) {
     lineType: entity.lineType,
     lineColor: entity.lineColor,
     layer: entity.layer,
+    clockwise: entity.clockwise !== false,
   });
 }
 
@@ -2187,6 +2830,215 @@ function trimCircularEntityAtPoint(doc, entity, pickPoint) {
   return { trimmed: replaced, keptCount: replacements.length };
 }
 
+function polylineSegmentSlice(entity, segmentIndex, startParameter, endParameter) {
+  const geometry = polylineSegmentEntity(entity, segmentIndex);
+  const source = entity.segments[segmentIndex];
+  if (!geometry || !source || endParameter - startParameter <= SNAP_THRESHOLD) {
+    return null;
+  }
+  const start = geometry.type === 'LINE'
+    ? pointAtLineParameter(geometry, startParameter)
+    : pointAtCircularParameter(geometry, startParameter);
+  const end = geometry.type === 'LINE'
+    ? pointAtLineParameter(geometry, endParameter)
+    : pointAtCircularParameter(geometry, endParameter);
+  const widthAt = (parameter) =>
+    source.startWidth + (source.endWidth - source.startWidth) * parameter;
+  return {
+    start,
+    end,
+    segment: {
+      type: source.type,
+      center: source.center ? { ...source.center } : null,
+      clockwise: source.clockwise !== false,
+      startWidth: widthAt(startParameter),
+      endWidth: widthAt(endParameter),
+    },
+  };
+}
+
+function polylineFromSlices(source, slices) {
+  const validSlices = slices.filter(Boolean);
+  if (!validSlices.length) {
+    return null;
+  }
+  return new PolylineEntity(
+    [validSlices[0].start, ...validSlices.map((slice) => slice.end)],
+    validSlices.map((slice) => slice.segment),
+    {
+      closed: false,
+      layer: source.layer,
+      lineStyle: source.lineStyle,
+      lineType: source.lineType,
+      lineColor: source.lineColor,
+    },
+  );
+}
+
+function polylinePath(entity) {
+  if (entity?.type !== 'POLYLINE') {
+    return null;
+  }
+  const components = [];
+  let totalLength = 0;
+  entity.segments.forEach((_, index) => {
+    const geometry = polylineSegmentEntity(entity, index);
+    const length = geometry?.length() || 0;
+    if (!geometry || length <= SNAP_THRESHOLD) {
+      return;
+    }
+    components.push({ index, geometry, length, offset: totalLength });
+    totalLength += length;
+  });
+  return totalLength > SNAP_THRESHOLD
+    ? { components, totalLength, closed: entity.closed }
+    : null;
+}
+
+function polylineRangeSlices(entity, path, startDistance, endDistance) {
+  const slices = [];
+  if (!path || endDistance - startDistance <= SNAP_THRESHOLD) {
+    return slices;
+  }
+  const firstCycle = Math.floor(startDistance / path.totalLength);
+  const lastCycle = Math.floor((endDistance - SNAP_THRESHOLD) / path.totalLength);
+  for (let cycle = firstCycle; cycle <= lastCycle; cycle += 1) {
+    const cycleOffset = cycle * path.totalLength;
+    for (const component of path.components) {
+      const componentStart = cycleOffset + component.offset;
+      const componentEnd = componentStart + component.length;
+      const overlapStart = Math.max(startDistance, componentStart);
+      const overlapEnd = Math.min(endDistance, componentEnd);
+      if (overlapEnd - overlapStart <= SNAP_THRESHOLD) {
+        continue;
+      }
+      slices.push(polylineSegmentSlice(
+        entity,
+        component.index,
+        (overlapStart - componentStart) / component.length,
+        (overlapEnd - componentStart) / component.length,
+      ));
+    }
+  }
+  return slices.filter(Boolean);
+}
+
+function trimPolylineEntityAtPoint(doc, entity, pickPoint) {
+  const path = polylinePath(entity);
+  if (!doc || !path || !pickPoint) {
+    return { trimmed: false, keptCount: 0, grouped: true };
+  }
+
+  const breakDistances = [];
+  let pickDistance = 0;
+  let nearestPickDistance = Infinity;
+  for (const component of path.components) {
+    let componentPickParameter = component.geometry.type === 'LINE'
+      ? lineParameter(component.geometry, pickPoint)
+      : circularParameter(component.geometry, pickPoint);
+    if (component.geometry.type === 'ARC' &&
+        !angleOnArc(angleOfPoint(component.geometry.center, pickPoint), component.geometry)) {
+      componentPickParameter = distance(
+        pickPoint,
+        pointAtCircularParameter(component.geometry, 0),
+      ) <= distance(
+        pickPoint,
+        pointAtCircularParameter(component.geometry, 1),
+      ) ? 0 : 1;
+    }
+    const projectedPick = component.geometry.type === 'LINE'
+      ? pointAtLineParameter(component.geometry, componentPickParameter)
+      : pointAtCircularParameter(component.geometry, componentPickParameter);
+    const candidateDistance = distance(projectedPick, pickPoint);
+    if (candidateDistance < nearestPickDistance) {
+      nearestPickDistance = candidateDistance;
+      pickDistance = component.offset + component.length * componentPickParameter;
+    }
+
+    for (const otherEntity of doc.queryBounds(component.geometry.bounds())) {
+      if (otherEntity === entity || otherEntity.type === 'HATCH' || otherEntity.type === 'TEXT') {
+        continue;
+      }
+      for (const intersection of entityIntersectionPoints(component.geometry, otherEntity)) {
+        const parameter = component.geometry.type === 'LINE'
+          ? lineParameter(component.geometry, intersection)
+          : circularParameter(component.geometry, intersection);
+        let pathDistance = component.offset + component.length * parameter;
+        if (path.closed && path.totalLength - pathDistance <= SNAP_THRESHOLD) {
+          pathDistance = 0;
+        }
+        breakDistances.push(pathDistance);
+      }
+    }
+  }
+
+  const sortedBreaks = breakDistances
+    .sort((first, second) => first - second)
+    .filter((value, index, values) => index === 0 || value - values[index - 1] > SNAP_THRESHOLD);
+  if ((path.closed && sortedBreaks.length < 2) || (!path.closed && !sortedBreaks.length)) {
+    return { trimmed: false, keptCount: 1, grouped: true };
+  }
+
+  let trimStart = null;
+  let trimEnd = null;
+  if (path.closed) {
+    for (let index = 0; index < sortedBreaks.length; index += 1) {
+      const start = sortedBreaks[index];
+      const next = sortedBreaks[(index + 1) % sortedBreaks.length];
+      const end = index === sortedBreaks.length - 1 ? next + path.totalLength : next;
+      const adjustedPick = pickDistance < start - SNAP_THRESHOLD
+        ? pickDistance + path.totalLength
+        : pickDistance;
+      if (adjustedPick >= start - SNAP_THRESHOLD && adjustedPick <= end + SNAP_THRESHOLD) {
+        trimStart = start;
+        trimEnd = end;
+        break;
+      }
+    }
+  }
+  else {
+    const openBreaks = [0, ...sortedBreaks, path.totalLength]
+      .sort((first, second) => first - second)
+      .filter((value, index, values) => index === 0 || value - values[index - 1] > SNAP_THRESHOLD);
+    for (let index = 0; index < openBreaks.length - 1; index += 1) {
+      if (pickDistance >= openBreaks[index] - SNAP_THRESHOLD &&
+          pickDistance <= openBreaks[index + 1] + SNAP_THRESHOLD) {
+        trimStart = openBreaks[index];
+        trimEnd = openBreaks[index + 1];
+        break;
+      }
+    }
+  }
+  if (trimStart === null || trimEnd === null) {
+    return { trimmed: false, keptCount: 1, grouped: true };
+  }
+
+  const replacements = [];
+  if (path.closed) {
+    const keepStart = trimEnd % path.totalLength;
+    let keepEnd = trimStart;
+    if (keepEnd <= keepStart + SNAP_THRESHOLD) {
+      keepEnd += path.totalLength;
+    }
+    const replacement = polylineFromSlices(
+      entity,
+      polylineRangeSlices(entity, path, keepStart, keepEnd),
+    );
+    if (replacement) {
+      replacements.push(replacement);
+    }
+  }
+  else {
+    [
+      polylineFromSlices(entity, polylineRangeSlices(entity, path, 0, trimStart)),
+      polylineFromSlices(entity, polylineRangeSlices(entity, path, trimEnd, path.totalLength)),
+    ].filter(Boolean).forEach((replacement) => replacements.push(replacement));
+  }
+
+  const replaced = doc.replaceEntity(entity, replacements);
+  return { trimmed: replaced, keptCount: replacements.length, grouped: true };
+}
+
 function orderedLineGroup(groupEntities) {
   if (!groupEntities.length || groupEntities.some((entity) => entity.type !== 'LINE')) {
     return null;
@@ -2261,6 +3113,46 @@ function lineGroupPointAt(component, traversalParameter) {
 }
 
 function closedLineGroupPolygon(doc, entity) {
+  if (entity?.type === 'POLYLINE') {
+    if (!entity.closed || entity.vertices.length < 3) {
+      return null;
+    }
+    const polygon = [];
+    const gripIndices = [];
+    const curveGroups = [];
+    entity.segments.forEach((segment, segmentIndex) => {
+      const geometry = polylineSegmentEntity(entity, segmentIndex);
+      if (!geometry) {
+        return;
+      }
+      if (!polygon.length) {
+        polygon.push({ ...entity.vertices[segmentIndex] });
+      }
+      gripIndices.push(polygon.length - 1);
+      if (geometry.type === 'ARC') {
+        const sweep = entityArcSweep(geometry);
+        const steps = clamp(Math.ceil(sweep / (Math.PI / 32)), 4, 96);
+        const indices = [polygon.length - 1];
+        for (let step = 1; step <= steps; step += 1) {
+          const closesBoundary = segmentIndex === entity.segments.length - 1 && step === steps;
+          if (closesBoundary) {
+            indices.push(0);
+            continue;
+          }
+          const point = pointAtCircularParameter(geometry, step / steps);
+          polygon.push(point);
+          indices.push(polygon.length - 1);
+        }
+        curveGroups.push({ type: 'ARC', indices });
+      }
+      else if (segmentIndex < entity.segments.length - 1) {
+        polygon.push({ ...entity.vertices[segmentIndex + 1] });
+      }
+    });
+    polygon.gripIndices = [...new Set(gripIndices)];
+    polygon.curveGroups = curveGroups;
+    return polygon;
+  }
   if (!entity?.groupId) {
     return null;
   }
@@ -2273,68 +3165,202 @@ function closedLineGroupPolygon(doc, entity) {
 }
 
 function circlePolygon(circle, segments = 96) {
-  return Array.from({ length: segments }, (_, index) =>
+  const polygon = Array.from({ length: segments }, (_, index) =>
     pointAtCircleAngle(circle, index * TWO_PI / segments));
+  polygon.gripIndices = [0, 0.25, 0.5, 0.75]
+    .map((parameter) => Math.round(parameter * segments) % segments);
+  polygon.curveGroups = [{
+    type: 'CIRCLE',
+    indices: polygon.map((_, index) => index),
+  }];
+  return polygon;
 }
 
-function lineArrangementFaces(doc) {
-  const lines = doc.entities.filter((entity) => entity.type === 'LINE');
-  if (!lines.length || lines.length > 1200) {
+function curveGroupsFromFaceEdges(faceEdges) {
+  const runs = [];
+  faceEdges.forEach((edge, index) => {
+    if (!isCircularEntity(edge.sourceEntity)) {
+      return;
+    }
+    const previousRun = runs[runs.length - 1];
+    if (previousRun?.sourceEntity === edge.sourceEntity &&
+        previousRun.edgeIndices[previousRun.edgeIndices.length - 1] === index - 1) {
+      previousRun.edgeIndices.push(index);
+    }
+    else {
+      runs.push({ sourceEntity: edge.sourceEntity, edgeIndices: [index] });
+    }
+  });
+
+  if (
+    runs.length > 1 &&
+    runs[0].edgeIndices[0] === 0 &&
+    runs[runs.length - 1].edgeIndices[runs[runs.length - 1].edgeIndices.length - 1] === faceEdges.length - 1 &&
+    runs[0].sourceEntity === runs[runs.length - 1].sourceEntity
+  ) {
+    const firstRun = runs.shift();
+    const lastRun = runs.pop();
+    runs.unshift({
+      sourceEntity: firstRun.sourceEntity,
+      edgeIndices: [...lastRun.edgeIndices, ...firstRun.edgeIndices],
+    });
+  }
+
+  return runs.map((run) => ({
+    type: run.sourceEntity.type,
+    indices: [
+      ...run.edgeIndices,
+      (run.edgeIndices[run.edgeIndices.length - 1] + 1) % faceEdges.length,
+    ],
+  }));
+}
+
+function curveArrangementFaces(doc) {
+  const entities = doc.entities.filter((entity) =>
+    entity.type === 'LINE' || entity.type === 'ARC' || entity.type === 'CIRCLE');
+  if (!entities.length || entities.length > 1200) {
     return [];
   }
 
-  const lineIndexes = new Map(lines.map((line, index) => [line, index]));
-  const parameters = new Map(lines.map((line) => [line, [0, 1]]));
-  lines.forEach((line) => {
-    for (const other of doc.queryBounds(line.bounds())) {
-      if (other.type !== 'LINE' || (lineIndexes.get(other) ?? -1) <= lineIndexes.get(line)) {
+  const entityIndexes = new Map(entities.map((entity, index) => [entity, index]));
+  const parameters = new Map(entities.map((entity) => [
+    entity,
+    entity.type === 'ARC'
+      ? [0, 0.5, 1]
+      : entity.type === 'CIRCLE'
+        ? [0, 0.25, 0.5, 0.75, 1]
+        : [0, 1],
+  ]));
+  entities.forEach((entity) => {
+    for (const other of doc.queryBounds(entity.bounds())) {
+      if (!entityIndexes.has(other) || entityIndexes.get(other) <= entityIndexes.get(entity)) {
         continue;
       }
-      const intersection = lineSegmentIntersection(line, other);
-      if (!intersection) {
-        continue;
+      for (const intersection of entityIntersectionPoints(entity, other)) {
+        parameters.get(entity).push(entity.type === 'LINE'
+          ? lineParameter(entity, intersection)
+          : circularParameter(entity, intersection));
+        parameters.get(other).push(other.type === 'LINE'
+          ? lineParameter(other, intersection)
+          : circularParameter(other, intersection));
       }
-      parameters.get(line).push(lineParameter(line, intersection));
-      parameters.get(other).push(lineParameter(other, intersection));
     }
   });
 
   const nodes = new Map();
   const edgeKeys = new Set();
   let nextNodeId = 1;
-  const nodeForPoint = (point) => {
+  const nodeForPoint = (point, logicalGrip = false) => {
     const key = `${Math.round(point.x / SNAP_THRESHOLD)}:${Math.round(point.y / SNAP_THRESHOLD)}`;
     if (!nodes.has(key)) {
-      nodes.set(key, { id: nextNodeId, point: { ...point }, outgoing: [] });
+      nodes.set(key, {
+        id: nextNodeId,
+        point: { ...point },
+        outgoing: [],
+        logicalGrip,
+      });
       nextNodeId += 1;
     }
-    return nodes.get(key);
+    const node = nodes.get(key);
+    node.logicalGrip = node.logicalGrip || logicalGrip;
+    return node;
   };
 
-  lines.forEach((line) => {
-    const sorted = uniqueSortedParameters(parameters.get(line));
-    for (let index = 0; index < sorted.length - 1; index += 1) {
-      const startPoint = pointAtLineParameter(line, sorted[index]);
-      const endPoint = pointAtLineParameter(line, sorted[index + 1]);
-      if (distance(startPoint, endPoint) <= SNAP_THRESHOLD) {
-        continue;
-      }
-      const startNode = nodeForPoint(startPoint);
-      const endNode = nodeForPoint(endPoint);
-      const key = [startNode.id, endNode.id]
-        .sort((first, second) => first - second)
-        .join(':');
-      if (edgeKeys.has(key)) {
-        continue;
-      }
-      edgeKeys.add(key);
-      const forward = { from: startNode, to: endNode, twin: null, visited: false };
-      const reverse = { from: endNode, to: startNode, twin: forward, visited: false };
-      forward.twin = reverse;
-      startNode.outgoing.push(forward);
-      endNode.outgoing.push(reverse);
+  let generatedSegmentCount = 0;
+  const addSegment = (
+    startPoint,
+    endPoint,
+    startLogical = false,
+    endLogical = false,
+    sourceEntity = null,
+    sourceParameterStart = 0,
+    sourceParameterEnd = 1,
+  ) => {
+    if (distance(startPoint, endPoint) <= SNAP_THRESHOLD) {
+      return;
     }
-  });
+    const startNode = nodeForPoint(startPoint, startLogical);
+    const endNode = nodeForPoint(endPoint, endLogical);
+    const key = [startNode.id, endNode.id]
+      .sort((first, second) => first - second)
+      .join(':');
+    if (edgeKeys.has(key)) {
+      return;
+    }
+    edgeKeys.add(key);
+    const forward = {
+      from: startNode,
+      to: endNode,
+      twin: null,
+      visited: false,
+      sourceEntity,
+      sourceParameterStart,
+      sourceParameterEnd,
+    };
+    const reverse = {
+      from: endNode,
+      to: startNode,
+      twin: forward,
+      visited: false,
+      sourceEntity,
+      sourceParameterStart: sourceParameterEnd,
+      sourceParameterEnd: sourceParameterStart,
+    };
+    forward.twin = reverse;
+    startNode.outgoing.push(forward);
+    endNode.outgoing.push(reverse);
+    generatedSegmentCount += 1;
+  };
+
+  for (const entity of entities) {
+    const sorted = uniqueSortedParameters(parameters.get(entity));
+    for (let index = 0; index < sorted.length - 1; index += 1) {
+      const startParameter = sorted[index];
+      const endParameter = sorted[index + 1];
+      if (entity.type === 'LINE') {
+        addSegment(
+          pointAtLineParameter(entity, startParameter),
+          pointAtLineParameter(entity, endParameter),
+          true,
+          true,
+          entity,
+          startParameter,
+          endParameter,
+        );
+      }
+      else {
+        const totalSweep = entity.type === 'CIRCLE'
+          ? TWO_PI
+          : entityArcSweep(entity);
+        const intervalSweep = totalSweep * (endParameter - startParameter);
+        const subdivisionCount = Math.max(1, Math.ceil(intervalSweep / (TWO_PI / 96)));
+        let previousPoint = pointAtCircularParameter(entity, startParameter);
+        let previousLogical = true;
+        for (let subdivision = 1; subdivision <= subdivisionCount; subdivision += 1) {
+          const parameter = startParameter +
+            (endParameter - startParameter) * subdivision / subdivisionCount;
+          const nextPoint = pointAtCircularParameter(entity, parameter);
+          const nextLogical = subdivision === subdivisionCount;
+          const previousParameter = startParameter +
+            (endParameter - startParameter) * (subdivision - 1) / subdivisionCount;
+          addSegment(
+            previousPoint,
+            nextPoint,
+            previousLogical,
+            nextLogical,
+            entity,
+            previousParameter,
+            parameter,
+          );
+          previousPoint = nextPoint;
+          previousLogical = nextLogical;
+        }
+      }
+      if (generatedSegmentCount > 12000) {
+        return [];
+      }
+    }
+  }
 
   nodes.forEach((node) => {
     node.outgoing.sort((first, second) =>
@@ -2349,6 +3375,8 @@ function lineArrangementFaces(doc) {
       return;
     }
     const polygon = [];
+    const gripIndices = [];
+    const faceEdges = [];
     let edge = startEdge;
     let closed = false;
     for (let step = 0; step <= halfEdges.length; step += 1) {
@@ -2356,7 +3384,11 @@ function lineArrangementFaces(doc) {
         break;
       }
       edge.visited = true;
+      if (edge.from.logicalGrip) {
+        gripIndices.push(polygon.length);
+      }
       polygon.push({ ...edge.from.point });
+      faceEdges.push(edge);
       const outgoing = edge.to.outgoing;
       const reverseIndex = outgoing.indexOf(edge.twin);
       if (reverseIndex < 0 || !outgoing.length) {
@@ -2369,6 +3401,14 @@ function lineArrangementFaces(doc) {
       }
     }
     if (closed && polygon.length >= 3 && Math.abs(polygonSignedArea(polygon)) > SNAP_THRESHOLD) {
+      const curveGroups = curveGroupsFromFaceEdges(faceEdges);
+      curveGroups.forEach((group) => {
+        if (group.type === 'ARC' && group.indices.length >= 3) {
+          gripIndices.push(group.indices[Math.floor((group.indices.length - 1) * 0.5)]);
+        }
+      });
+      polygon.gripIndices = [...new Set(gripIndices)];
+      polygon.curveGroups = curveGroups;
       faces.push(polygon);
     }
   });
@@ -2379,6 +3419,12 @@ function hatchBoundaryAtPoint(doc, point) {
   const candidates = [];
   const visitedGroups = new Set();
   doc.entities.forEach((entity) => {
+    if (entity.type === 'POLYLINE' && entity.closed) {
+      const polygon = closedLineGroupPolygon(doc, entity);
+      if (polygon && pointInPolygon(point, polygon)) {
+        candidates.push(polygon);
+      }
+    }
     if (entity.type === 'LINE' && entity.groupId && !visitedGroups.has(entity.groupId)) {
       visitedGroups.add(entity.groupId);
       const polygon = closedLineGroupPolygon(doc, entity);
@@ -2390,7 +3436,7 @@ function hatchBoundaryAtPoint(doc, point) {
       candidates.push(circlePolygon(entity));
     }
   });
-  lineArrangementFaces(doc).forEach((polygon) => {
+  curveArrangementFaces(doc).forEach((polygon) => {
     if (pointInPolygon(point, polygon)) {
       candidates.push(polygon);
     }
@@ -2545,9 +3591,17 @@ function hatchBoundaryPath(entity) {
 
   let offset = 0;
   const components = entity.boundary.map((start, index) => {
-    const end = entity.boundary[(index + 1) % entity.boundary.length];
+    const endIndex = (index + 1) % entity.boundary.length;
+    const end = entity.boundary[endIndex];
     const length = distance(start, end);
-    const component = { start, end, length, offset };
+    const component = {
+      start,
+      end,
+      startIndex: index,
+      endIndex,
+      length,
+      offset,
+    };
     offset += length;
     return component;
   }).filter((component) => component.length > SNAP_THRESHOLD);
@@ -2556,57 +3610,99 @@ function hatchBoundaryPath(entity) {
     : null;
 }
 
-function hatchBoundaryPointAt(path, pathDistance) {
-  let normalizedDistance = pathDistance % path.totalLength;
-  if (normalizedDistance < 0) {
-    normalizedDistance += path.totalLength;
-  }
-  if (path.totalLength - normalizedDistance <= SNAP_THRESHOLD) {
-    normalizedDistance = 0;
-  }
-  const component = path.components.find((candidate) =>
-    normalizedDistance <= candidate.offset + candidate.length + SNAP_THRESHOLD) || path.components[0];
-  const parameter = clamp(
-    (normalizedDistance - component.offset) / component.length,
-    0,
-    1,
-  );
-  return {
-    x: component.start.x + (component.end.x - component.start.x) * parameter,
-    y: component.start.y + (component.end.y - component.start.y) * parameter,
-  };
-}
-
-function hatchBoundaryRange(path, startDistance, endDistance) {
+function hatchBoundaryRange(path, startDistance, endDistance, sourceEntity = null) {
   if (endDistance - startDistance <= SNAP_THRESHOLD) {
     return [];
   }
 
-  const points = [hatchBoundaryPointAt(path, startDistance)];
+  const points = [];
+  const sourceEdgeIndices = [];
+  const sourceVertexIndices = [];
   const firstCycle = Math.floor(startDistance / path.totalLength);
-  const lastCycle = Math.floor(endDistance / path.totalLength);
+  const lastCycle = Math.floor((endDistance - SNAP_THRESHOLD) / path.totalLength);
   for (let cycle = firstCycle; cycle <= lastCycle; cycle += 1) {
     for (const component of path.components) {
-      const componentEnd = cycle * path.totalLength + component.offset + component.length;
-      if (
-        componentEnd > startDistance + SNAP_THRESHOLD &&
-        componentEnd < endDistance - SNAP_THRESHOLD
-      ) {
-        points.push({ ...component.end });
+      const componentStart = cycle * path.totalLength + component.offset;
+      const componentEnd = componentStart + component.length;
+      const overlapStart = Math.max(startDistance, componentStart);
+      const overlapEnd = Math.min(endDistance, componentEnd);
+      if (overlapEnd - overlapStart <= SNAP_THRESHOLD) {
+        continue;
+      }
+
+      const startParameter = clamp((overlapStart - componentStart) / component.length, 0, 1);
+      const endParameter = clamp((overlapEnd - componentStart) / component.length, 0, 1);
+      if (!points.length) {
+        points.push({
+          x: component.start.x + (component.end.x - component.start.x) * startParameter,
+          y: component.start.y + (component.end.y - component.start.y) * startParameter,
+        });
+        sourceVertexIndices.push(startParameter <= SNAP_THRESHOLD ? component.startIndex : null);
+      }
+      points.push({
+        x: component.start.x + (component.end.x - component.start.x) * endParameter,
+        y: component.start.y + (component.end.y - component.start.y) * endParameter,
+      });
+      sourceVertexIndices.push(endParameter >= 1 - SNAP_THRESHOLD ? component.endIndex : null);
+      sourceEdgeIndices.push(component.startIndex);
+    }
+  }
+
+  if (points.length > 1 && distance(points[0], points[points.length - 1]) <= SNAP_THRESHOLD) {
+    points.pop();
+    sourceVertexIndices.pop();
+    sourceEdgeIndices.pop();
+  }
+  if (!sourceEntity || points.length < 2) {
+    return points;
+  }
+
+  const gripIndices = new Set([0, points.length - 1]);
+  sourceVertexIndices.forEach((sourceIndex, boundaryIndex) => {
+    if (sourceIndex !== null && sourceEntity.gripIndices.includes(sourceIndex)) {
+      gripIndices.add(boundaryIndex);
+    }
+  });
+
+  const curveGroups = [];
+  for (const sourceGroup of sourceEntity.curveGroups) {
+    const sourceCurveEdges = new Set(
+      sourceGroup.type === 'CIRCLE'
+        ? sourceGroup.indices
+        : sourceGroup.indices.slice(0, -1),
+    );
+    let runStart = null;
+    for (let edgeIndex = 0; edgeIndex <= sourceEdgeIndices.length; edgeIndex += 1) {
+      const belongsToCurve = edgeIndex < sourceEdgeIndices.length &&
+        sourceCurveEdges.has(sourceEdgeIndices[edgeIndex]);
+      if (belongsToCurve && runStart === null) {
+        runStart = edgeIndex;
+      }
+      if (!belongsToCurve && runStart !== null) {
+        const runEnd = edgeIndex;
+        const indices = Array.from(
+          { length: runEnd - runStart + 1 },
+          (_, index) => runStart + index,
+        );
+        if (indices.length >= 3) {
+          curveGroups.push({
+            type: sourceGroup.type === 'CIRCLE' ? 'ARC' : sourceGroup.type,
+            indices,
+          });
+          gripIndices.add(indices[0]);
+          gripIndices.add(indices[Math.floor((indices.length - 1) * 0.5)]);
+          gripIndices.add(indices[indices.length - 1]);
+        }
+        runStart = null;
       }
     }
   }
-  points.push(hatchBoundaryPointAt(path, endDistance));
 
-  const uniquePoints = points.filter((point, index) =>
-    index === 0 || distance(point, points[index - 1]) > SNAP_THRESHOLD);
-  if (
-    uniquePoints.length > 1 &&
-    distance(uniquePoints[0], uniquePoints[uniquePoints.length - 1]) <= SNAP_THRESHOLD
-  ) {
-    uniquePoints.pop();
-  }
-  return uniquePoints;
+  points.gripIndices = [...gripIndices]
+    .filter((index) => index >= 0 && index < points.length)
+    .sort((first, second) => first - second);
+  points.curveGroups = curveGroups;
+  return points;
 }
 
 function trimHatchEntityAtPoint(doc, entity, pickPoint) {
@@ -2642,8 +3738,12 @@ function trimHatchEntityAtPoint(doc, entity, pickPoint) {
       }
       for (const intersection of entityIntersectionPoints(edge, otherEntity)) {
         const parameter = lineParameter(edge, intersection);
-        // A contact at an existing corner does not cut the hatch area.
-        if (parameter <= SNAP_THRESHOLD || parameter >= 1 - SNAP_THRESHOLD) {
+        // Circular source geometry meets every tessellated edge at its endpoints.
+        // A line crossing a vertex is still a valid cut and is deduplicated below.
+        if (
+          (parameter <= SNAP_THRESHOLD || parameter >= 1 - SNAP_THRESHOLD) &&
+          otherEntity.type !== 'LINE'
+        ) {
           continue;
         }
         breakDistances.push(component.offset + component.length * parameter);
@@ -2683,7 +3783,7 @@ function trimHatchEntityAtPoint(doc, entity, pickPoint) {
   if (keepEnd <= keepStart + SNAP_THRESHOLD) {
     keepEnd += path.totalLength;
   }
-  const boundary = hatchBoundaryRange(path, keepStart, keepEnd);
+  const boundary = hatchBoundaryRange(path, keepStart, keepEnd, entity);
   if (boundary.length < 3 || Math.abs(polygonSignedArea(boundary)) <= SNAP_THRESHOLD) {
     return { trimmed: false, keptCount: 1, grouped: true, hatch: true };
   }
@@ -2715,6 +3815,10 @@ function trimEntityAtPoint(doc, entity, pickPoint) {
     return trimHatchEntityAtPoint(doc, entity, pickPoint);
   }
 
+  if (entity.type === 'POLYLINE') {
+    return trimPolylineEntityAtPoint(doc, entity, pickPoint);
+  }
+
   if (entity.type === 'LINE') {
     return trimLineEntityAtPoint(doc, entity, pickPoint);
   }
@@ -2725,6 +3829,12 @@ function trimEntityAtPoint(doc, entity, pickPoint) {
 function extensionBoundaryIntersections(line, boundary) {
   if (!line || line.type !== 'LINE' || !boundary || boundary === line) {
     return [];
+  }
+
+
+  if (boundary.type === 'POLYLINE') {
+    return primitiveEntityParts(boundary)
+      .flatMap((part) => extensionBoundaryIntersections(line, part));
   }
 
   const direction = {
@@ -2805,7 +3915,8 @@ function arcEndpointPoint(arc, endpointKey) {
 
 function arcExtensionCandidate(arc, boundaryEntities, endpointKey) {
   const candidates = [];
-  const currentSweep = arcSweep(arc.startAngle, arc.endAngle);
+  const clockwise = arc.clockwise !== false;
+  const currentSweep = entityArcSweep(arc);
   if (currentSweep <= SNAP_THRESHOLD) {
     return null;
   }
@@ -2818,8 +3929,8 @@ function arcExtensionCandidate(arc, boundaryEntities, endpointKey) {
       }
 
       if (endpointKey === 'start') {
-        const extensionSweep = normalizeAngle(arc.startAngle - angle);
-        const nextSweep = arcSweep(angle, arc.endAngle);
+        const extensionSweep = directedArcSweep(angle, arc.startAngle, clockwise);
+        const nextSweep = directedArcSweep(angle, arc.endAngle, clockwise);
         if (
           extensionSweep > SNAP_THRESHOLD &&
           nextSweep > currentSweep + SNAP_THRESHOLD &&
@@ -2830,8 +3941,8 @@ function arcExtensionCandidate(arc, boundaryEntities, endpointKey) {
       }
 
       if (endpointKey === 'end') {
-        const extensionSweep = normalizeAngle(angle - arc.endAngle);
-        const nextSweep = arcSweep(arc.startAngle, angle);
+        const extensionSweep = directedArcSweep(arc.endAngle, angle, clockwise);
+        const nextSweep = directedArcSweep(arc.startAngle, angle, clockwise);
         if (
           extensionSweep > SNAP_THRESHOLD &&
           nextSweep > currentSweep + SNAP_THRESHOLD &&
@@ -2860,8 +3971,9 @@ function extendArcToBoundaries(arc, boundaryEntities, pickPoint = null) {
       distance(pickPoint, arcEndpointPoint(arc, 'end')) ? 'start' : 'end';
   }
   else if (startCandidate !== null && endCandidate !== null) {
-    const startDistance = arc.radius * normalizeAngle(arc.startAngle - startCandidate);
-    const endDistance = arc.radius * normalizeAngle(endCandidate - arc.endAngle);
+    const clockwise = arc.clockwise !== false;
+    const startDistance = arc.radius * directedArcSweep(startCandidate, arc.startAngle, clockwise);
+    const endDistance = arc.radius * directedArcSweep(arc.endAngle, endCandidate, clockwise);
     endpointKey = startDistance <= endDistance ? 'start' : 'end';
   }
   else if (startCandidate !== null) {
@@ -2884,6 +3996,50 @@ function extendArcToBoundaries(arc, boundaryEntities, pickPoint = null) {
   else {
     arc.endAngle = normalizeAngle(targetAngle);
   }
+  return true;
+}
+
+function extendPolylineToBoundaries(entity, boundaryEntities, pickPoint = null) {
+  if (entity?.type !== 'POLYLINE' || entity.closed || !entity.segments.length ||
+      !boundaryEntities.length) {
+    return false;
+  }
+  const extensionFor = (endpointKey) => {
+    const segmentIndex = endpointKey === 'start' ? 0 : entity.segments.length - 1;
+    const geometry = polylineSegmentEntity(entity, segmentIndex);
+    const endpointPoint = endpointKey === 'start'
+      ? entity.vertices[0]
+      : entity.vertices[entity.vertices.length - 1];
+    if (!geometry) {
+      return null;
+    }
+    const extended = geometry.type === 'LINE'
+      ? extendLineToBoundaries(geometry, boundaryEntities, endpointPoint)
+      : extendArcToBoundaries(geometry, boundaryEntities, endpointPoint);
+    if (!extended) {
+      return null;
+    }
+    const targetPoint = geometry.type === 'LINE'
+      ? geometry[endpointKey]
+      : arcEndpointPoint(geometry, endpointKey);
+    return { endpointKey, targetPoint, distance: distance(endpointPoint, targetPoint) };
+  };
+  let extension;
+  if (pickPoint) {
+    const endpointKey = distance(pickPoint, entity.vertices[0]) <=
+      distance(pickPoint, entity.vertices[entity.vertices.length - 1]) ? 'start' : 'end';
+    extension = extensionFor(endpointKey);
+  }
+  else {
+    extension = [extensionFor('start'), extensionFor('end')]
+      .filter(Boolean)
+      .sort((first, second) => first.distance - second.distance)[0];
+  }
+  if (!extension) {
+    return false;
+  }
+  const vertexIndex = extension.endpointKey === 'start' ? 0 : entity.vertices.length - 1;
+  entity.vertices[vertexIndex] = { ...extension.targetPoint };
   return true;
 }
 
@@ -2971,6 +4127,36 @@ function serializeDocumentToDxf(doc) {
       );
     }
 
+    if (entity.type === 'POLYLINE') {
+      lines.push(
+        '0', 'LWPOLYLINE',
+        '8', entity.layer,
+        '6', getLineType(entity.lineType).dxfName,
+        '62', String(getLineColor(entity.lineColor).aci || 256),
+        '370', String(getLineStyle(entity.lineStyle).dxfLineWeight),
+        '90', String(entity.vertices.length),
+        '70', entity.closed ? '1' : '0',
+      );
+      entity.vertices.forEach((point, index) => {
+        const segment = entity.segments[index];
+        let bulge = 0;
+        if (segment?.type === 'ARC') {
+          const geometry = polylineSegmentEntity(entity, index);
+          if (geometry) {
+            const direction = geometry.clockwise === false ? 1 : -1;
+            bulge = direction * Math.tan(entityArcSweep(geometry) * 0.25);
+          }
+        }
+        lines.push(
+          '10', String(point.x),
+          '20', String(-point.y),
+          '40', String(segment?.startWidth || 0),
+          '41', String(segment?.endWidth || 0),
+          '42', String(bulge),
+        );
+      });
+    }
+
     if (entity.type === 'CIRCLE') {
       lines.push(
         '0', 'CIRCLE',
@@ -2986,6 +4172,8 @@ function serializeDocumentToDxf(doc) {
     }
 
     if (entity.type === 'ARC') {
+      const dxfStartAngle = entity.clockwise === false ? entity.startAngle : entity.endAngle;
+      const dxfEndAngle = entity.clockwise === false ? entity.endAngle : entity.startAngle;
       lines.push(
         '0', 'ARC',
         '8', entity.layer,
@@ -2996,8 +4184,8 @@ function serializeDocumentToDxf(doc) {
         '20', String(-entity.center.y),
         '30', '0',
         '40', String(entity.radius),
-        '50', String(canvasAngleToDxfDegrees(entity.endAngle)),
-        '51', String(canvasAngleToDxfDegrees(entity.startAngle)),
+        '50', String(canvasAngleToDxfDegrees(dxfStartAngle)),
+        '51', String(canvasAngleToDxfDegrees(dxfEndAngle)),
       );
     }
 
@@ -3090,6 +4278,71 @@ function parseDxf(text) {
 
   while (index < pairs.length) {
     const [code, value] = pairs[index];
+    if (code === '0' && value === 'LWPOLYLINE') {
+      const record = {};
+      const vertices = [];
+      let currentVertex = null;
+      index += 1;
+      while (index < pairs.length) {
+        const [groupCode, groupValue] = pairs[index];
+        if (groupCode === '0') {
+          break;
+        }
+        if (groupCode === '10') {
+          currentVertex = {
+            x: Number(groupValue),
+            y: 0,
+            startWidth: 0,
+            endWidth: 0,
+            bulge: 0,
+          };
+          vertices.push(currentVertex);
+        }
+        else if (currentVertex && groupCode === '20') {
+          currentVertex.y = -Number(groupValue);
+        }
+        else if (currentVertex && groupCode === '40') {
+          currentVertex.startWidth = Number(groupValue) || 0;
+        }
+        else if (currentVertex && groupCode === '41') {
+          currentVertex.endWidth = Number(groupValue) || 0;
+        }
+        else if (currentVertex && groupCode === '42') {
+          currentVertex.bulge = -Number(groupValue) || 0;
+        }
+        else {
+          record[groupCode] = groupValue;
+        }
+        index += 1;
+      }
+      const closed = (Number(record['70'] || 0) & 1) === 1;
+      const segmentCount = closed ? vertices.length : Math.max(0, vertices.length - 1);
+      if (vertices.length >= 2 && vertices.every((point) =>
+        Number.isFinite(point.x) && Number.isFinite(point.y))) {
+        const segments = [];
+        for (let segmentIndex = 0; segmentIndex < segmentCount; segmentIndex += 1) {
+          const vertex = vertices[segmentIndex];
+          const nextVertex = vertices[(segmentIndex + 1) % vertices.length];
+          const center = arcCenterFromBulge(vertex, nextVertex, vertex.bulge);
+          segments.push({
+            type: center ? 'ARC' : 'LINE',
+            center,
+            clockwise: vertex.bulge >= 0,
+            startWidth: Math.max(0, vertex.startWidth),
+            endWidth: Math.max(0, vertex.endWidth),
+          });
+        }
+        entities.push(new PolylineEntity(vertices, segments, {
+          closed,
+          layer: record['8'] || DEFAULT_LAYER.name,
+          lineStyle: lineStyleFromDxf(record),
+          lineType: lineTypeFromDxf(record),
+          lineColor: lineColorFromDxf(record),
+        }));
+      }
+      continue;
+    }
+
     if (code === '0' && value === 'LINE') {
       const record = {};
       index += 1;
@@ -3528,9 +4781,99 @@ class CadRenderer {
     if (dash.length) {
       ctx.setLineDash(dash.map((length) => length / this.state.viewScale));
     }
-    ctx.arc(entity.center.x, entity.center.y, entity.radius, entity.startAngle, entity.endAngle);
+    ctx.arc(
+      entity.center.x,
+      entity.center.y,
+      entity.radius,
+      entity.startAngle,
+      entity.endAngle,
+      entity.clockwise === false,
+    );
     ctx.stroke();
     ctx.restore();
+  }
+
+  drawPolylineStroke(ctx, entity, options) {
+    let hasVariableWidth = false;
+    entity.segments.forEach((segment, index) => {
+      const geometry = polylineSegmentEntity(entity, index);
+      if (!geometry) {
+        return;
+      }
+      const startWidth = Math.max(0, segment.startWidth || 0);
+      const endWidth = Math.max(0, segment.endWidth || 0);
+      if (startWidth <= SNAP_THRESHOLD && endWidth <= SNAP_THRESHOLD) {
+        if (geometry.type === 'ARC') {
+          this.drawArcStroke(ctx, geometry, options);
+        }
+        else {
+          this.drawLineStroke(ctx, geometry, options);
+        }
+        return;
+      }
+      hasVariableWidth = true;
+
+      const sampleCount = geometry.type === 'ARC'
+        ? clamp(Math.ceil(geometry.length() * this.state.viewScale / 8), 8, 160)
+        : 1;
+      const left = [];
+      const right = [];
+      for (let sampleIndex = 0; sampleIndex <= sampleCount; sampleIndex += 1) {
+        const parameter = sampleIndex / sampleCount;
+        let point;
+        let tangent;
+        if (geometry.type === 'ARC') {
+          point = pointAtCircularParameter(geometry, parameter);
+          const angle = angleOfPoint(geometry.center, point);
+          tangent = geometry.clockwise === false
+            ? { x: Math.sin(angle), y: -Math.cos(angle) }
+            : { x: -Math.sin(angle), y: Math.cos(angle) };
+        }
+        else {
+          point = pointAtLineParameter(geometry, parameter);
+          const segmentLength = geometry.length();
+          tangent = {
+            x: (geometry.end.x - geometry.start.x) / segmentLength,
+            y: (geometry.end.y - geometry.start.y) / segmentLength,
+          };
+        }
+        const halfWidth = (startWidth + (endWidth - startWidth) * parameter) * 0.5;
+        const normal = { x: -tangent.y, y: tangent.x };
+        left.push({ x: point.x + normal.x * halfWidth, y: point.y + normal.y * halfWidth });
+        right.push({ x: point.x - normal.x * halfWidth, y: point.y - normal.y * halfWidth });
+      }
+      ctx.save();
+      ctx.fillStyle = options.color;
+      ctx.beginPath();
+      ctx.moveTo(left[0].x, left[0].y);
+      left.slice(1).forEach((point) => ctx.lineTo(point.x, point.y));
+      [...right].reverse().forEach((point) => ctx.lineTo(point.x, point.y));
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    });
+    if (!hasVariableWidth) {
+      return;
+    }
+    entity.vertices.forEach((point, index) => {
+      const previousIndex = index - 1 >= 0
+        ? index - 1
+        : entity.closed ? entity.segments.length - 1 : -1;
+      const nextIndex = index < entity.segments.length ? index : -1;
+      const radius = Math.max(
+        previousIndex >= 0 ? entity.segments[previousIndex].endWidth * 0.5 : 0,
+        nextIndex >= 0 ? entity.segments[nextIndex].startWidth * 0.5 : 0,
+      );
+      if (radius <= SNAP_THRESHOLD) {
+        return;
+      }
+      ctx.save();
+      ctx.fillStyle = options.color;
+      ctx.beginPath();
+      ctx.arc(point.x, point.y, radius, 0, TWO_PI);
+      ctx.fill();
+      ctx.restore();
+    });
   }
 
   drawTextStroke(ctx, entity, options) {
@@ -3601,6 +4944,9 @@ class CadRenderer {
     if (entity.type === 'ARC') {
       this.drawArcStroke(ctx, entity, options);
     }
+    if (entity.type === 'POLYLINE') {
+      this.drawPolylineStroke(ctx, entity, options);
+    }
     if (entity.type === 'TEXT') {
       this.drawTextStroke(ctx, entity, options);
     }
@@ -3640,6 +4986,9 @@ class CadRenderer {
       }
       if (entity.type === 'ARC') {
         this.drawArcStroke(ctx, entity, { color: entityColor, width: style.width });
+      }
+      if (entity.type === 'POLYLINE') {
+        this.drawPolylineStroke(ctx, entity, { color: entityColor, width: style.width });
       }
       if (entity.type === 'TEXT') {
         this.drawTextStroke(ctx, entity, { color: entityColor, width: style.width });
@@ -3691,6 +5040,15 @@ class CadRenderer {
           { color: SELECTED_COLOR, width: Math.max(3, selectedStyle.width + 1) },
         );
         this.drawCircleGrips(ctx, selectedEntity);
+      }
+      if (selectedEntity?.type === 'POLYLINE') {
+        const selectedStyle = getLineStyle(selectedEntity.lineStyle);
+        this.drawPolylineStroke(
+          ctx,
+          selectedEntity,
+          { color: SELECTED_COLOR, width: Math.max(3, selectedStyle.width + 1) },
+        );
+        this.drawPolylineGrips(ctx, selectedEntity);
       }
       if (selectedEntity?.type === 'TEXT') {
         this.drawTextStroke(ctx, selectedEntity, { color: SELECTED_COLOR, width: 1 });
@@ -3751,12 +5109,35 @@ class CadRenderer {
     ctx.restore();
   }
 
+  drawPolylineGrips(ctx, entity) {
+    const gripSize = 7 / this.state.viewScale;
+    ctx.save();
+    ctx.strokeStyle = SELECTED_COLOR;
+    ctx.lineWidth = 1.5 / this.state.viewScale;
+    for (const candidate of polylineReferencePoints(entity)) {
+      const active = this.state.selectedGrip?.entity === entity &&
+        this.state.selectedGrip?.key === candidate.key;
+      ctx.fillStyle = active ? SELECTED_COLOR : '#ffffff';
+      ctx.beginPath();
+      ctx.rect(
+        candidate.point.x - gripSize * 0.5,
+        candidate.point.y - gripSize * 0.5,
+        gripSize,
+        gripSize,
+      );
+      ctx.fill();
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
   drawHatchGrips(ctx, entity) {
     const gripSize = 7 / this.state.viewScale;
     ctx.save();
     ctx.strokeStyle = SELECTED_COLOR;
     ctx.lineWidth = 1.5 / this.state.viewScale;
-    entity.boundary.forEach((point, index) => {
+    entity.gripIndices.forEach((index) => {
+      const point = entity.boundary[index];
       const active = this.state.selectedGrip?.entity === entity &&
         this.state.selectedGrip?.index === index;
       ctx.fillStyle = active ? SELECTED_COLOR : '#ffffff';
@@ -3778,10 +5159,12 @@ class CadRenderer {
     ctx.save();
     ctx.strokeStyle = SELECTED_COLOR;
     ctx.lineWidth = 1.5 / this.state.viewScale;
-    ctx.fillStyle = '#ffffff';
 
     for (const candidate of circularReferencePoints(entity)) {
       const point = candidate.point;
+      const active = this.state.selectedGrip?.entity === entity &&
+        this.state.selectedGrip?.key === candidate.key;
+      ctx.fillStyle = active ? SELECTED_COLOR : '#ffffff';
       ctx.beginPath();
       ctx.rect(
         point.x - gripSize * 0.5,
@@ -3800,6 +5183,7 @@ class CadRenderer {
     const snap = this.state.activeObjectSnap;
     const visibleForTool = (
       this.state.tool === 'line' ||
+      this.state.tool === 'polyline' ||
       this.state.tool === 'circle-center' ||
       this.state.tool === 'circle-3p' ||
       this.state.tool === 'arc-center-radius' ||
@@ -3919,6 +5303,75 @@ class CadRenderer {
       ctx.beginPath();
       ctx.arc(endPoint.x, endPoint.y, radius, 0, Math.PI * 2);
       ctx.fill();
+    }
+
+    if (this.state.polylineDraft?.vertices.length) {
+      const draft = this.state.polylineDraft;
+      let previewPoint = resolveCursorPoint(this.state.mouseWorld, this.state);
+      const origin = activeDraftOrigin(this.state);
+      const coordinateTarget = pointFromRelativeCoordinates(origin, this.state.distanceInput);
+      const inputDistance = parseDistanceInput(this.state.distanceInput);
+      if (coordinateTarget) {
+        previewPoint = coordinateTarget;
+      }
+      else if (inputDistance !== null) {
+        previewPoint = pointFromDistance(origin, previewPoint, inputDistance) || previewPoint;
+      }
+      const previewOptions = {
+        layer: activeLayerName(),
+        lineStyle: activeLineStyleId(),
+        lineType: activeLineTypeId(),
+        lineColor: activeLineColorId(),
+      };
+      if (draft.segments.length) {
+        const committedPreview = new PolylineEntity(
+          draft.vertices,
+          draft.segments,
+          previewOptions,
+        );
+        ctx.setLineDash([]);
+        this.drawPolylineStroke(ctx, committedPreview, {
+          color: committedPreview.color || activeStyle.color,
+          width: activeStyle.width,
+        });
+        ctx.setLineDash(previewDash.map((length) => length / this.state.viewScale));
+      }
+      const start = draft.vertices[draft.vertices.length - 1];
+      let activeSegment = null;
+      let activeEnd = previewPoint;
+      if (draft.mode === 'line') {
+        activeSegment = { type: 'LINE', center: null };
+      }
+      else if (draft.mode === 'arc-end') {
+        const arcGeometry = polylineTangentArcToPoint(draft, start, previewPoint);
+        activeSegment = {
+          type: 'ARC',
+          center: arcGeometry.center,
+          clockwise: arcGeometry.clockwise,
+        };
+      }
+      if (activeSegment && distance(start, activeEnd) > SNAP_THRESHOLD) {
+        const activePreview = new PolylineEntity(
+          [start, activeEnd],
+          [{
+            ...activeSegment,
+            startWidth: draft.startWidth,
+            endWidth: draft.endWidth,
+          }],
+          previewOptions,
+        );
+        this.drawPolylineStroke(ctx, activePreview, {
+          color: PREVIEW_COLOR,
+          width: activeStyle.width,
+        });
+      }
+      const radius = 4 / this.state.viewScale;
+      ctx.fillStyle = PREVIEW_COLOR;
+      for (const point of [...draft.vertices, activeEnd]) {
+        ctx.beginPath();
+        ctx.arc(point.x, point.y, radius, 0, TWO_PI);
+        ctx.fill();
+      }
     }
 
     if (this.state.rectangleDraft?.firstPoint) {
@@ -4537,6 +5990,7 @@ class CadController {
     this.cancelKeyboardRefresh();
     this.state.tool = tool;
     this.state.pendingLineStart = null;
+    this.state.polylineDraft = null;
     this.state.rectangleDraft = null;
     this.state.textDraft = null;
     this.state.hatchDraft = null;
@@ -4555,6 +6009,7 @@ class CadController {
     this.gripDragState = null;
     if (
       tool === 'line' ||
+      tool === 'polyline' ||
       tool === 'rectangle' ||
       tool === 'text' ||
       tool === 'hatch' ||
@@ -4607,9 +6062,12 @@ class CadController {
                     ? 'Arco centro-inicio-final: indique centro'
                     : tool === 'rectangle'
                       ? 'Rectangulo: indique primera esquina'
+                      : tool === 'polyline'
+                        ? 'Polilinea: indique primer punto'
                       : 'Linea por dos puntos';
     selectToolButton.classList.toggle('is-active', tool === 'select');
     lineToolButton.classList.toggle('is-active', tool === 'line');
+    polylineToolButton.classList.toggle('is-active', tool === 'polyline');
     rectangleToolButton.classList.toggle('is-active', tool === 'rectangle');
     textToolButton.classList.toggle('is-active', tool === 'text');
     hatchToolButton.classList.toggle('is-active', tool === 'hatch');
@@ -4628,7 +6086,7 @@ class CadController {
       button.classList.toggle('is-active', button.dataset.command === tool);
     });
     this.canvas.classList.toggle('is-select-tool', tool === 'select');
-    this.canvas.classList.toggle('is-line-tool', tool === 'line' || tool === 'rectangle');
+    this.canvas.classList.toggle('is-line-tool', tool === 'line' || tool === 'polyline' || tool === 'rectangle');
     this.canvas.classList.toggle('is-text-tool', tool === 'text');
     this.canvas.classList.toggle('is-hatch-tool', tool === 'hatch');
     this.canvas.classList.toggle('is-circle-tool', tool === 'circle-center' || tool === 'circle-3p');
@@ -4673,6 +6131,9 @@ class CadController {
       if (entity.type === 'ARC' && distancePointToArc(point, entity) <= tolerance) {
         return entity;
       }
+      if (entity.type === 'POLYLINE' && entityDistanceToPoint(entity, point) <= tolerance) {
+        return entity;
+      }
       if (entity.type === 'TEXT' && entityDistanceToPoint(entity, point) <= tolerance) {
         return entity;
       }
@@ -4698,6 +6159,7 @@ class CadController {
   isIdleForCommandRepeat() {
     return this.state.tool === 'select' &&
       !this.state.pendingLineStart &&
+      !this.state.polylineDraft &&
       !this.state.circleDraft &&
       !this.state.arcDraft &&
       !this.state.textDraft &&
@@ -4729,6 +6191,7 @@ class CadController {
     const clearCommandSelection = this.state.tool === 'copy' || this.state.tool === 'select-set';
     if (
       this.state.tool === 'line' ||
+      this.state.tool === 'polyline' ||
       this.state.tool === 'rectangle' ||
       this.state.tool === 'text' ||
       this.state.tool === 'hatch' ||
@@ -4745,6 +6208,7 @@ class CadController {
       this.state.tool === 'extend' ||
       this.state.tool === 'erase' ||
       this.state.pendingLineStart ||
+      this.state.polylineDraft ||
       this.state.rectangleDraft ||
       this.state.textDraft ||
       this.state.hatchDraft ||
@@ -4818,8 +6282,12 @@ class CadController {
       this.state.statusText = 'Linea terminada';
       return true;
     }
+    if (this.state.tool === 'polyline' && this.state.polylineDraft) {
+      return this.finishPolyline(false);
+    }
     if (
       this.state.tool === 'line' ||
+      this.state.tool === 'polyline' ||
       this.state.tool === 'rectangle' ||
       this.state.tool === 'text' ||
       this.state.tool === 'hatch' ||
@@ -4836,6 +6304,7 @@ class CadController {
       this.state.tool === 'extend' ||
       this.state.tool === 'erase' ||
       this.state.circleDraft ||
+      this.state.polylineDraft ||
       this.state.rectangleDraft ||
       this.state.textDraft ||
       this.state.hatchDraft ||
@@ -4869,9 +6338,25 @@ class CadController {
 
     for (const entity of candidates) {
       if (entity.type === 'HATCH') {
-        for (let index = 0; index < entity.boundary.length; index += 1) {
+        for (const index of entity.gripIndices) {
           if (distance(point, entity.boundary[index]) <= tolerance) {
             return { entity, key: 'boundary', index };
+          }
+        }
+        continue;
+      }
+      if (isCircularEntity(entity)) {
+        for (const candidate of circularReferencePoints(entity)) {
+          if (distance(point, candidate.point) <= tolerance) {
+            return { entity, key: candidate.key };
+          }
+        }
+        continue;
+      }
+      if (entity.type === 'POLYLINE') {
+        for (const candidate of polylineReferencePoints(entity)) {
+          if (distance(point, candidate.point) <= tolerance) {
+            return { entity, key: candidate.key };
           }
         }
         continue;
@@ -4920,9 +6405,30 @@ class CadController {
   }
 
   moveActiveGripPointTo(targetPoint) {
+    const grip = this.state.selectedGrip;
     const gripPoint = this.activeGripPoint();
-    if (!gripPoint || !targetPoint || distance(gripPoint, targetPoint) <= SNAP_THRESHOLD) {
+    if (!grip || !gripPoint || !targetPoint || distance(gripPoint, targetPoint) <= SNAP_THRESHOLD) {
       return false;
+    }
+
+    if (grip.entity.type === 'HATCH') {
+      moveHatchGrip(grip.entity, grip.index, targetPoint);
+      this.doc.markDirty();
+      return true;
+    }
+    if (isCircularEntity(grip.entity)) {
+      const moved = moveCircularGrip(grip.entity, grip.key, targetPoint);
+      if (moved) {
+        this.doc.markDirty();
+      }
+      return moved;
+    }
+    if (grip.entity.type === 'POLYLINE') {
+      const moved = movePolylineGrip(grip.entity, grip.key, targetPoint);
+      if (moved) {
+        this.doc.markDirty();
+      }
+      return moved;
     }
 
     for (const point of this.activeGripLinkedPoints()) {
@@ -5345,7 +6851,7 @@ class CadController {
       boundaries,
     };
     this.doc.clearSelection();
-    this.state.statusText = `Alargar: ${boundaries.length} limite${boundaries.length === 1 ? '' : 's'} - pique lineas o arcos a alargar`;
+    this.state.statusText = `Alargar: ${boundaries.length} limite${boundaries.length === 1 ? '' : 's'} - pique lineas, arcos o polilineas abiertas`;
     this.updateUiStatus();
     this.renderer.draw();
     return true;
@@ -5358,11 +6864,12 @@ class CadController {
     }
 
     const targetEntities = entities.filter((entity) =>
-      (entity?.type === 'LINE' || entity?.type === 'ARC') &&
+      (entity?.type === 'LINE' || entity?.type === 'ARC' ||
+        (entity?.type === 'POLYLINE' && !entity.closed)) &&
       !this.state.extendDraft.boundaries.includes(entity),
     );
     if (!targetEntities.length) {
-      this.state.statusText = 'Seleccione lineas o arcos para alargar';
+      this.state.statusText = 'Seleccione lineas, arcos o polilineas abiertas para alargar';
       return 0;
     }
 
@@ -5373,7 +6880,9 @@ class CadController {
     for (const entity of targetEntities) {
       const extended = entity.type === 'LINE'
         ? extendLineToBoundaries(entity, this.state.extendDraft.boundaries, pickPoint)
-        : extendArcToBoundaries(entity, this.state.extendDraft.boundaries, pickPoint);
+        : entity.type === 'ARC'
+          ? extendArcToBoundaries(entity, this.state.extendDraft.boundaries, pickPoint)
+          : extendPolylineToBoundaries(entity, this.state.extendDraft.boundaries, pickPoint);
       if (extended) {
         extendedCount += 1;
       }
@@ -5526,6 +7035,127 @@ class CadController {
       : `Linea ${style.label.toLowerCase()} creada (${this.doc.entities.length})`;
     this.state.pendingLineStart = continueFromEnd ? point : null;
     return true;
+  }
+
+  beginPolyline(point) {
+    this.state.polylineDraft = {
+      vertices: [{ ...point }],
+      segments: [],
+      mode: 'line',
+      startWidth: 0,
+      endWidth: 0,
+    };
+    this.state.statusText = 'Primer punto indicado - siguiente punto · A arco · W anchura · C cerrar';
+    return true;
+  }
+
+  addPolylinePoint(point) {
+    const draft = this.state.polylineDraft;
+    if (!draft) {
+      return this.beginPolyline(point);
+    }
+    const start = draft.vertices[draft.vertices.length - 1];
+    if (draft.mode === 'arc-end') {
+      if (distance(start, point) <= SNAP_THRESHOLD) {
+        this.state.statusText = 'Punto repetido';
+        return false;
+      }
+      const arcGeometry = polylineTangentArcToPoint(draft, start, point);
+      draft.segments.push({
+        type: 'ARC',
+        center: arcGeometry.center,
+        clockwise: arcGeometry.clockwise,
+        startWidth: draft.startWidth,
+        endWidth: draft.endWidth,
+      });
+      draft.vertices.push({ ...point });
+      this.state.statusText = 'Arco tangente añadido - indique siguiente extremo · L vuelve a linea';
+      return true;
+    }
+    if (distance(start, point) <= SNAP_THRESHOLD) {
+      this.state.statusText = 'Punto repetido';
+      return false;
+    }
+    draft.segments.push({
+      type: 'LINE',
+      center: null,
+      startWidth: draft.startWidth,
+      endWidth: draft.endWidth,
+    });
+    draft.vertices.push({ ...point });
+    this.state.statusText = 'Tramo añadido - indique siguiente punto · A arco · W anchura · C cerrar';
+    return true;
+  }
+
+  finishPolyline(close = false) {
+    const draft = this.state.polylineDraft;
+    if (!draft || draft.vertices.length < 2 || !draft.segments.length) {
+      this.state.statusText = 'La polilinea necesita al menos dos puntos';
+      return false;
+    }
+    if (close) {
+      const first = draft.vertices[0];
+      const last = draft.vertices[draft.vertices.length - 1];
+      if (distance(first, last) <= SNAP_THRESHOLD) {
+        draft.vertices.pop();
+      }
+      else {
+        draft.segments.push({
+          type: 'LINE',
+          center: null,
+          startWidth: draft.startWidth,
+          endWidth: draft.endWidth,
+        });
+      }
+    }
+    const style = getLineStyle(activeLineStyleId());
+    const entity = new PolylineEntity(draft.vertices, draft.segments, {
+      closed: close,
+      layer: activeLayerName(),
+      lineStyle: style.id,
+      lineType: activeLineTypeId(),
+      lineColor: activeLineColorId(),
+    });
+    this.doc.addEntity(entity);
+    this.state.polylineDraft = null;
+    this.state.distanceInput = '';
+    this.setTool('select');
+    this.state.statusText = `Polilinea ${close ? 'cerrada' : 'abierta'} creada · ${entity.segments.length} tramos`;
+    return true;
+  }
+
+  handlePolylineCommandKey(event) {
+    if (this.state.tool !== 'polyline' || !this.state.polylineDraft ||
+        event.metaKey || event.ctrlKey || event.altKey) {
+      return false;
+    }
+    const key = event.key.toLowerCase();
+    const draft = this.state.polylineDraft;
+    if (key === 'a') {
+      event.preventDefault();
+      draft.mode = 'arc-end';
+      this.state.distanceInput = '';
+      this.state.statusText = 'Modo arco tangente - indique el segundo punto';
+      return true;
+    }
+    if (key === 'l') {
+      event.preventDefault();
+      draft.mode = 'line';
+      this.state.distanceInput = '';
+      this.state.statusText = 'Modo linea - indique siguiente punto';
+      return true;
+    }
+    if (key === 'c') {
+      event.preventDefault();
+      this.finishPolyline(true);
+      return true;
+    }
+    if (key === 'w') {
+      event.preventDefault();
+      openPolylineWidthDialog();
+      return true;
+    }
+    return false;
   }
 
   createRectangleTo(point) {
@@ -5720,6 +7350,7 @@ class CadController {
       this.state.arcDraft.points.length === 1;
     const radiusDraft = circleCenterDraft || arcRadiusDraft;
     const pointDraft = Boolean(
+      this.state.polylineDraft?.vertices.length ||
       this.state.rectangleDraft?.firstPoint ||
       this.state.circleDraft?.points.length ||
       this.state.arcDraft?.points.length ||
@@ -5805,6 +7436,7 @@ class CadController {
         this.state.moveDraft?.basePoint ||
         activeGripPoint ||
         this.state.pendingLineStart ||
+        activeDraftOrigin(this.state) ||
         this.state.rectangleDraft?.firstPoint ||
         this.state.circleDraft?.points[0] ||
         this.state.arcDraft?.points[0] ||
@@ -5896,6 +7528,21 @@ class CadController {
       if (coordinateTarget && this.state.arcDraft?.points.length) {
         this.handleArcPoint(coordinateTarget);
         this.state.distanceInput = '';
+        return true;
+      }
+
+      if (this.state.polylineDraft?.vertices.length) {
+        const origin = activeDraftOrigin(this.state);
+        const directionPoint = resolveCursorPoint(this.state.mouseWorld, this.state);
+        const targetPoint = coordinateTarget || (inputDistance !== null && directionPoint
+          ? pointFromDistance(origin, directionPoint, inputDistance)
+          : null);
+        if (targetPoint && this.addPolylinePoint(targetPoint)) {
+          this.state.distanceInput = '';
+        }
+        else if (!targetPoint) {
+          this.state.statusText = 'Distancia o coordenadas no validas';
+        }
         return true;
       }
 
@@ -6053,8 +7700,12 @@ class CadController {
             : null,
         };
         this.state.statusText = grip.entity.type === 'HATCH'
-          ? `Vertice ${grip.index + 1} del sombreado seleccionado`
-          : `Punto ${grip.key === 'start' ? 'inicial' : 'final'} seleccionado`;
+          ? `Pinzamiento del sombreado seleccionado`
+          : grip.entity.type === 'POLYLINE'
+            ? 'Pinzamiento de polilinea seleccionado'
+          : isCircularEntity(grip.entity)
+            ? `Pinzamiento ${formatSnapType(grip.key === 'midpoint' ? 'midpoint' : grip.key)} seleccionado`
+            : `Punto ${grip.key === 'start' ? 'inicial' : 'final'} seleccionado`;
         this.updateUiStatus();
         this.renderer.draw();
         return;
@@ -6092,7 +7743,9 @@ class CadController {
           return;
         }
         const selectedEntities = [...this.doc.selectedEntities];
-        const entityLabel = entity.groupId
+        const entityLabel = entity.type === 'POLYLINE'
+          ? 'Polilinea'
+          : entity.groupId
           ? 'Polilinea'
           : entity.type === 'CIRCLE'
           ? 'Circulo'
@@ -6441,6 +8094,15 @@ class CadController {
       return;
     }
 
+    if (this.state.tool === 'polyline') {
+      const point = this.resolveInputPoint(worldPoint);
+      this.addPolylinePoint(point);
+      this.state.distanceInput = '';
+      this.updateUiStatus();
+      this.renderer.draw();
+      return;
+    }
+
     if (this.state.tool !== 'line') {
       return;
     }
@@ -6658,7 +8320,8 @@ class CadController {
   }
 
   onKeyDown(event) {
-    if (!drawingProfileDialog.hidden || !textDialog.hidden || !hatchDialog.hidden || !aboutDialog.hidden) {
+    if (!drawingProfileDialog.hidden || !textDialog.hidden || !hatchDialog.hidden ||
+        !polylineWidthDialog.hidden || !aboutDialog.hidden) {
       return;
     }
     if (event.target instanceof HTMLInputElement ||
@@ -6687,6 +8350,11 @@ class CadController {
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'y') {
       event.preventDefault();
       redoDrawing();
+      return;
+    }
+    if (this.handlePolylineCommandKey(event)) {
+      this.updateUiStatus();
+      this.renderer.draw();
       return;
     }
     if (this.handleShortcutSequence(event)) {
@@ -6738,9 +8406,21 @@ class CadController {
     }
     if (event.key.toLowerCase() === 'p' && !event.metaKey && !event.ctrlKey && !event.altKey) {
       event.preventDefault();
-      this.recallPreviousSelection();
-      this.updateUiStatus();
-      this.renderer.draw();
+      const recallsSelection = this.state.tool !== 'select' ||
+        this.state.copyDraft?.selecting ||
+        this.state.moveDraft?.selecting ||
+        this.state.rotateDraft?.selecting ||
+        this.state.eraseDraft?.selecting ||
+        this.state.extendDraft?.phase === 'boundaries' ||
+        this.state.selectionSetDraft?.selecting;
+      if (recallsSelection) {
+        this.recallPreviousSelection();
+        this.updateUiStatus();
+        this.renderer.draw();
+      }
+      else {
+        runCommand('polyline');
+      }
       return;
     }
     if (event.key.toLowerCase() === 'l' && !event.metaKey && !event.ctrlKey && !event.altKey) {
@@ -6804,6 +8484,7 @@ class CadController {
     const visible = Boolean(
       (
         this.state.pendingLineStart ||
+        this.state.polylineDraft ||
         this.state.rectangleDraft ||
         this.state.selectedGrip ||
         this.state.circleDraft ||
@@ -6853,6 +8534,9 @@ class CadController {
     let toolLabel = 'Seleccion';
     if (this.state.tool === 'line') {
       toolLabel = 'Linea 2P';
+    }
+    if (this.state.tool === 'polyline') {
+      toolLabel = 'Polilinea';
     }
     if (this.state.tool === 'rectangle') {
       toolLabel = 'Rectangulo';
@@ -6905,6 +8589,7 @@ class CadController {
       this.state.moveDraft?.basePoint ||
       activeGripPoint ||
       this.state.pendingLineStart ||
+      activeDraftOrigin(this.state) ||
       this.state.rectangleDraft?.firstPoint ||
       this.state.circleDraft?.points[0] ||
       this.state.arcDraft?.points[0] ||
@@ -6950,6 +8635,8 @@ class CadController {
       : null;
     const previewLength = this.state.pendingLineStart && previewEnd
       ? distance(this.state.pendingLineStart, previewEnd)
+      : this.state.polylineDraft?.vertices.length && cursor
+        ? distance(activeDraftOrigin(this.state), cursor)
       : rectanglePreviewTarget && this.state.rectangleDraft?.firstPoint
         ? distance(this.state.rectangleDraft.firstPoint, rectanglePreviewTarget)
       : this.state.circleDraft?.mode === 'center-radius' && this.state.circleDraft.points.length === 1 && previewEnd
@@ -6982,6 +8669,17 @@ class CadController {
     else if (this.state.pendingLineStart && previewEnd) {
       const lineLength = formatNumber(previewLength);
       this.state.statusText = `Segundo punto pendiente - longitud ${lineLength} ${UNITS_LABEL}`;
+    }
+    else if (this.state.polylineDraft?.vertices.length && cursor) {
+      const draft = this.state.polylineDraft;
+      const modeLabel = draft.mode === 'line'
+        ? 'Linea'
+        : 'Arco tangente';
+      const start = draft.vertices[draft.vertices.length - 1];
+      const pendingMeasure = draft.mode === 'arc-end'
+        ? polylineTangentArcToPoint(draft, start, cursor).radius
+        : previewLength;
+      this.state.statusText = `${modeLabel} pendiente · ${formatNumber(pendingMeasure)} ${UNITS_LABEL} · A/L/C/W`;
     }
     else if (this.state.rotateDraft?.basePoint) {
       const previewAngle = this.renderer.rotatePreviewAngle();
@@ -7056,6 +8754,7 @@ function loadNavigationDevice() {
 const state = {
   tool: 'select',
   pendingLineStart: null,
+  polylineDraft: null,
   rectangleDraft: null,
   textDraft: null,
   hatchDraft: null,
@@ -7271,6 +8970,54 @@ function confirmTextDialog() {
   return true;
 }
 
+function openPolylineWidthDialog() {
+  const draft = state.polylineDraft;
+  if (!draft) {
+    return false;
+  }
+  polylineStartWidthInput.value = String(draft.startWidth || 0);
+  polylineEndWidthInput.value = String(draft.endWidth || 0);
+  polylineWidthError.textContent = '';
+  polylineWidthDialog.hidden = false;
+  requestAnimationFrame(() => {
+    polylineStartWidthInput.focus();
+    polylineStartWidthInput.select();
+  });
+  return true;
+}
+
+function closePolylineWidthDialog() {
+  polylineWidthDialog.hidden = true;
+  polylineWidthError.textContent = '';
+  state.statusText = 'Anchura sin cambios - continue la polilinea';
+  controller.updateUiStatus();
+  renderer.draw();
+  requestAnimationFrame(() => canvas.focus({ preventScroll: true }));
+}
+
+function confirmPolylineWidthDialog() {
+  const startWidth = Number(String(polylineStartWidthInput.value).replace(',', '.'));
+  const endWidth = Number(String(polylineEndWidthInput.value).replace(',', '.'));
+  if (!Number.isFinite(startWidth) || startWidth < 0 ||
+      !Number.isFinite(endWidth) || endWidth < 0) {
+    polylineWidthError.textContent = 'Indique anchuras iguales o mayores que cero.';
+    return false;
+  }
+  if (!state.polylineDraft) {
+    polylineWidthDialog.hidden = true;
+    return false;
+  }
+  state.polylineDraft.startWidth = startWidth;
+  state.polylineDraft.endWidth = endWidth;
+  polylineWidthDialog.hidden = true;
+  polylineWidthError.textContent = '';
+  state.statusText = `Anchura del siguiente tramo: ${formatNumber(startWidth)} → ${formatNumber(endWidth)} ${UNITS_LABEL}`;
+  controller.updateUiStatus();
+  renderer.draw();
+  requestAnimationFrame(() => canvas.focus({ preventScroll: true }));
+  return true;
+}
+
 function openHatchDialog(entity = null) {
   hatchDialogEntity = entity?.type === 'HATCH' ? entity : null;
   hatchDialogTitle.textContent = hatchDialogEntity ? 'Editar sombreado' : 'Crear sombreado';
@@ -7405,6 +9152,7 @@ function newDrawing() {
   state.activeLineType = DEFAULT_LAYER.lineType;
   state.activeLineColor = DEFAULT_LAYER.lineColor;
   state.pendingLineStart = null;
+  state.polylineDraft = null;
   state.rectangleDraft = null;
   state.textDraft = null;
   state.hatchDraft = null;
@@ -7464,6 +9212,7 @@ function closeAboutDialog() {
 
 function resetInteractionState() {
   state.pendingLineStart = null;
+  state.polylineDraft = null;
   state.rectangleDraft = null;
   state.textDraft = null;
   state.hatchDraft = null;
@@ -7864,6 +9613,7 @@ function closeToolGroups() {
 function commandLabel(command) {
   const labels = {
     line: 'Linea',
+    polyline: 'Polilinea',
     rectangle: 'Rectangulo',
     text: 'Texto',
     hatch: 'Sombreado',
@@ -7892,6 +9642,7 @@ function runCommand(command) {
   if (command === 'select') controller.setTool('select');
   if (command === 'select-set') controller.startSelectionSet();
   if (command === 'line') controller.setTool('line');
+  if (command === 'polyline') controller.setTool('polyline');
   if (command === 'rectangle') controller.setTool('rectangle');
   if (command === 'text') controller.startText();
   if (command === 'hatch') controller.startHatch();
@@ -7940,6 +9691,7 @@ statusOrthoButton.addEventListener('click', () => runCommand('toggle-ortho'));
 statusGridButton.addEventListener('click', () => runCommand('toggle-grid'));
 selectToolButton.addEventListener('click', () => runCommand('select'));
 lineToolButton.addEventListener('click', () => runCommand('line'));
+polylineToolButton.addEventListener('click', () => runCommand('polyline'));
 rectangleToolButton.addEventListener('click', () => runCommand('rectangle'));
 textToolButton.addEventListener('click', () => runCommand('text'));
 hatchToolButton.addEventListener('click', () => runCommand('hatch'));
@@ -8077,6 +9829,7 @@ importDxfInput.addEventListener('change', async (event) => {
   syncLayersFromEntities(entities);
   doc.setEntities(entities);
   state.pendingLineStart = null;
+  state.polylineDraft = null;
   state.rectangleDraft = null;
   state.textDraft = null;
   state.hatchDraft = null;
@@ -8136,6 +9889,26 @@ textDialog.addEventListener('pointerdown', (event) => {
     if (event.key === 'Escape') {
       event.preventDefault();
       closeTextDialog(true);
+    }
+  });
+});
+polylineWidthConfirmButton.addEventListener('click', confirmPolylineWidthDialog);
+polylineWidthCancelButton.addEventListener('click', closePolylineWidthDialog);
+polylineWidthCloseButton.addEventListener('click', closePolylineWidthDialog);
+polylineWidthDialog.addEventListener('pointerdown', (event) => {
+  if (event.target === polylineWidthDialog) {
+    closePolylineWidthDialog();
+  }
+});
+[polylineStartWidthInput, polylineEndWidthInput].forEach((input) => {
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      confirmPolylineWidthDialog();
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closePolylineWidthDialog();
     }
   });
 });

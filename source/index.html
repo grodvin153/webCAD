@@ -38,6 +38,7 @@
           <button class="menu-title" type="button">Dibujar</button>
           <div class="submenu" role="menu">
             <button class="submenu-item" type="button" data-command="line">Linea</button>
+            <button class="submenu-item" type="button" data-command="polyline">Polilinea (P)</button>
             <button class="submenu-item" type="button" data-command="rectangle">Rectangulo</button>
             <button class="submenu-item" type="button" data-command="text">Texto</button>
             <button class="submenu-item" type="button" data-command="hatch">Sombreado</button>
@@ -311,6 +312,22 @@
           <rect x="11" y="13" width="26" height="22" rx="1"></rect>
           <circle cx="11" cy="13" r="2.5"></circle>
           <circle cx="37" cy="35" r="2.5"></circle>
+        </svg>
+      </button>
+      <button
+        id="tool-polyline"
+        class="tool-button"
+        type="button"
+        data-tool="polyline"
+        title="Polilinea (P)"
+        aria-label="Polilinea"
+      >
+        <svg viewBox="0 0 48 48" aria-hidden="true">
+          <path d="M8 35 18 14 29 31 40 10"></path>
+          <circle cx="8" cy="35" r="2.5"></circle>
+          <circle cx="18" cy="14" r="2.5"></circle>
+          <circle cx="29" cy="31" r="2.5"></circle>
+          <circle cx="40" cy="10" r="2.5"></circle>
         </svg>
       </button>
       <button
@@ -655,12 +672,38 @@
     </section>
   </div>
 
+  <div id="polyline-width-dialog" class="cad-dialog-backdrop" hidden>
+    <section class="cad-dialog" role="dialog" aria-modal="true" aria-labelledby="polyline-width-title">
+      <header>
+        <div>
+          <span class="cad-dialog-kicker">POLILINEA · W</span>
+          <h2 id="polyline-width-title">Anchura del tramo</h2>
+        </div>
+        <button id="polyline-width-close" class="cad-dialog-close" type="button" aria-label="Cerrar">×</button>
+      </header>
+      <label class="cad-dialog-field">
+        <span>Anchura inicial</span>
+        <input id="polyline-start-width" type="number" min="0" step="0.1" value="0">
+      </label>
+      <label class="cad-dialog-field">
+        <span>Anchura final</span>
+        <input id="polyline-end-width" type="number" min="0" step="0.1" value="0">
+      </label>
+      <p class="cad-dialog-note">Valores en las unidades activas del dibujo. Cero utiliza el grosor normal de pantalla.</p>
+      <div id="polyline-width-error" class="cad-dialog-error" aria-live="polite"></div>
+      <footer>
+        <button id="polyline-width-cancel" type="button">Cancelar</button>
+        <button id="polyline-width-confirm" class="is-primary" type="button">Aplicar</button>
+      </footer>
+    </section>
+  </div>
+
   <div id="about-dialog" class="cad-dialog-backdrop" hidden>
     <section class="cad-dialog about-dialog" role="dialog" aria-modal="true" aria-labelledby="about-dialog-title">
       <header>
         <div>
           <span class="cad-dialog-kicker">AUTORIA Y VERSION</span>
-          <h2 id="about-dialog-title">webCAD 0.2.0</h2>
+          <h2 id="about-dialog-title">webCAD 0.3.0</h2>
         </div>
         <button id="about-dialog-close" class="cad-dialog-close" type="button" aria-label="Cerrar">×</button>
       </header>
@@ -670,7 +713,7 @@
         <div>
           <strong>Gonzalo Rodriguez</strong>
           <span>Autor y desarrollador de webCAD</span>
-          <small>Editor CAD 2D para navegador · Versión estable 0.2.0</small>
+          <small>Editor CAD 2D para navegador · Versión estable 0.3.0</small>
         </div>
       </div>
 
@@ -689,19 +732,19 @@
         <section class="about-feature-card">
           <h3>Funciones disponibles</h3>
           <ul>
-            <li>Líneas continuas, rectángulos, círculos, arcos, texto y sombreado sólido.</li>
+            <li>Líneas, polilíneas con arcos y anchura variable, rectángulos, círculos, texto y sombreado sólido.</li>
             <li>Selección múltiple, pinzamientos, copiar, desplazar, girar, borrar, recortar y alargar.</li>
             <li>Snaps de extremo, medio, centro, intersección y perpendicular; rejilla y modo ortogonal.</li>
             <li>Capas, colores, tipos y grosores de línea, historial y entrada por coordenadas.</li>
           </ul>
         </section>
         <section class="about-feature-card is-release">
-          <h3>Novedades de 0.2.0</h3>
+          <h3>Novedades de 0.3.0</h3>
           <ul>
-            <li>Polilíneas agrupadas y recorte en bloque de rectángulos y sombreados.</li>
-            <li>Perfiles de dibujo para ingeniería y arquitectura con escalas independientes.</li>
-            <li>Renderizado optimizado para dibujos grandes y respuesta de teclado más rápida.</li>
-            <li>Navegación independiente y persistente para ratón y trackpad.</li>
+            <li>Polilíneas nativas optimizadas con líneas, arcos y anchura variable.</li>
+            <li>Arcos tangentes de dos puntos estilo Fusion, con ghost dinámico y continuidad exterior.</li>
+            <li>Snaps completos sobre el dibujo y sobre la propia polilínea mientras se construye.</li>
+            <li>Compatibilidad DXF LWPOLYLINE, pinzamientos, recorte, alargar, copiar, mover y girar.</li>
           </ul>
         </section>
       </div>
