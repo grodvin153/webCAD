@@ -96,6 +96,13 @@ const drawingProfileCloseButton = document.getElementById('drawing-profile-close
 const drawingProfileCancelButton = document.getElementById('drawing-profile-cancel');
 const drawingProfileConfirmButton = document.getElementById('drawing-profile-confirm');
 const drawingProfileInputs = document.querySelectorAll('input[name="drawing-profile"]');
+const settingsDialog = document.getElementById('settings-dialog');
+const settingsDialogCloseButton = document.getElementById('settings-dialog-close');
+const settingsDialogCancelButton = document.getElementById('settings-dialog-cancel');
+const settingsDialogConfirmButton = document.getElementById('settings-dialog-confirm');
+const settingsDimensionStyleInput = document.getElementById('settings-dimension-style');
+const settingsLinearPrecisionInput = document.getElementById('settings-linear-precision');
+const settingsAngularPrecisionInput = document.getElementById('settings-angular-precision');
 const textDialog = document.getElementById('text-dialog');
 const textDialogTitle = document.getElementById('text-dialog-title');
 const textDialogCloseButton = document.getElementById('text-dialog-close');
@@ -2619,16 +2626,23 @@ function dimensionExtensionLine(reference, dimensionPoint, metrics) {
 }
 
 function dimensionTextValue(entity) {
+  const precision = entity.kind === 'angular'
+    ? state.dimensionPrecision[state.drawingProfile].angular
+    : state.dimensionPrecision[state.drawingProfile].linear;
+  const fixedValue = entity.measurement().toFixed(precision);
+  const value = fixedValue.includes('.')
+    ? fixedValue.replace(/0+$/, '').replace(/\.$/, '')
+    : fixedValue;
   if (entity.kind === 'radius') {
-    return `R${formatNumber(entity.measurement())}`;
+    return `R${value}`;
   }
   if (entity.kind === 'diameter') {
-    return `Ø${formatNumber(entity.measurement())}`;
+    return `Ø${value}`;
   }
   if (entity.kind === 'angular') {
-    return `${formatNumber(entity.measurement())}°`;
+    return `${value}°`;
   }
-  return formatNumber(entity.measurement());
+  return value;
 }
 
 function naturalDimensionTextNormal(angle) {
@@ -2790,9 +2804,7 @@ function dimensionAngularGeometry(entity, metrics) {
   const tangentStart = { x: -Math.sin(startAngle), y: Math.cos(startAngle) };
   const tangentEnd = { x: Math.sin(endAngle), y: -Math.cos(endAngle) };
   const externalArrows = radius * sweep < metrics.arrowSize * 2.5;
-  const arrowArcExtension = externalArrows
-    ? metrics.arrowSize * 1.35 / radius
-    : 0;
+  const arrowArcExtension = metrics.arrowSize * (externalArrows ? 1.35 : 0.7) / radius;
   let textAngle = Math.atan2(
     Math.sin(midAngle + Math.PI * 0.5),
     Math.cos(midAngle + Math.PI * 0.5),
@@ -2801,10 +2813,7 @@ function dimensionAngularGeometry(entity, metrics) {
     textAngle += Math.PI;
   }
   return {
-    lines: [
-      { start: vertex, end: { x: vertex.x + Math.cos(startAngle) * (radius + metrics.extensionOvershoot), y: vertex.y + Math.sin(startAngle) * (radius + metrics.extensionOvershoot) } },
-      { start: vertex, end: { x: vertex.x + Math.cos(endAngle) * (radius + metrics.extensionOvershoot), y: vertex.y + Math.sin(endAngle) * (radius + metrics.extensionOvershoot) } },
-    ],
+    lines: [],
     arcs: [{
       center: vertex,
       radius,
@@ -6350,6 +6359,7 @@ function serializeDocumentToDxf(doc) {
     '0', 'ENDTAB',
     '0', 'TABLE', '2', 'DIMSTYLE', '70', String(Object.keys(DIMENSION_STYLES).length),
   );
+  const dimensionPrecision = state.dimensionPrecision[state.drawingProfile];
   Object.values(DIMENSION_STYLES).forEach((dimensionStyle) => {
     const metrics = dimensionStyleMetrics(dimensionStyle.id);
     lines.push(
@@ -6361,7 +6371,8 @@ function serializeDocumentToDxf(doc) {
       '140', String(metrics.textHeight),
       '147', String(metrics.textGap),
       '176', '256', '177', '256', '178', '256',
-      '271', '2', '275', '0',
+      '179', String(dimensionPrecision.angular),
+      '271', String(dimensionPrecision.linear), '275', '0',
     );
   });
   lines.push('0', 'ENDTAB', '0', 'ENDSEC');
@@ -12570,7 +12581,7 @@ class CadController {
   }
 
   onKeyDown(event) {
-    if (!drawingProfileDialog.hidden || !textDialog.hidden || !hatchDialog.hidden ||
+    if (!drawingProfileDialog.hidden || !settingsDialog.hidden || !textDialog.hidden || !hatchDialog.hidden ||
         !polylineWidthDialog.hidden || !blockCreateDialog.hidden ||
         !blockInsertDialog.hidden || !aboutDialog.hidden) {
       return;
@@ -13130,6 +13141,30 @@ function loadLineStylePreference() {
   }
 }
 
+function loadIntegerPreference(key, fallback, min, max) {
+  try {
+    const storedValue = localStorage.getItem(key);
+    if (storedValue === null) {
+      return fallback;
+    }
+    const value = Number(storedValue);
+    return Number.isInteger(value) ? clamp(value, min, max) : fallback;
+  }
+  catch {
+    return fallback;
+  }
+}
+
+function loadDimensionStylePreference() {
+  try {
+    const styleId = localStorage.getItem('webcad-dimension-style');
+    return DIMENSION_STYLES[styleId] ? styleId : 'normal';
+  }
+  catch {
+    return 'normal';
+  }
+}
+
 function storePreference(key, value) {
   try {
     localStorage.setItem(key, String(value));
@@ -13162,7 +13197,17 @@ const state = {
   blockInsertDraft: null,
   blockEditDraft: null,
   dimensionDraft: null,
-  dimensionStyle: 'normal',
+  dimensionStyle: loadDimensionStylePreference(),
+  dimensionPrecision: {
+    engineering: {
+      linear: loadIntegerPreference('webcad-dimension-linear-precision-engineering', 2, 0, 4),
+      angular: loadIntegerPreference('webcad-dimension-angular-precision-engineering', 2, 0, 4),
+    },
+    architecture: {
+      linear: loadIntegerPreference('webcad-dimension-linear-precision-architecture', 2, 0, 4),
+      angular: loadIntegerPreference('webcad-dimension-angular-precision-architecture', 2, 0, 4),
+    },
+  },
   lastDimensionOffsets: {
     engineering: null,
     architecture: null,
@@ -13364,6 +13409,47 @@ function confirmDrawingProfileDialog() {
   }
   drawingProfileDialog.hidden = true;
   applyDrawingProfile(selectedProfile);
+  requestAnimationFrame(() => canvas.focus({ preventScroll: true }));
+  return true;
+}
+
+function openSettingsDialog() {
+  const precision = state.dimensionPrecision[state.drawingProfile];
+  settingsDimensionStyleInput.value = state.dimensionStyle;
+  settingsLinearPrecisionInput.value = String(precision.linear);
+  settingsAngularPrecisionInput.value = String(precision.angular);
+  settingsDialog.hidden = false;
+  setLayerPickerOpen(false);
+  setLineStylePickerOpen(false);
+  setLineTypePickerOpen(false);
+  setLineColorPickerOpen(false);
+  requestAnimationFrame(() => settingsDimensionStyleInput.focus());
+}
+
+function closeSettingsDialog() {
+  settingsDialog.hidden = true;
+  requestAnimationFrame(() => canvas.focus({ preventScroll: true }));
+}
+
+function confirmSettingsDialog() {
+  const styleId = DIMENSION_STYLES[settingsDimensionStyleInput.value]
+    ? settingsDimensionStyleInput.value
+    : 'normal';
+  const linear = clamp(Number(settingsLinearPrecisionInput.value), 0, 4);
+  const angular = clamp(Number(settingsAngularPrecisionInput.value), 0, 4);
+  if (!Number.isInteger(linear) || !Number.isInteger(angular)) {
+    return false;
+  }
+  state.dimensionStyle = styleId;
+  state.dimensionPrecision[state.drawingProfile] = { linear, angular };
+  dimensionStyleSelect.value = styleId;
+  storePreference('webcad-dimension-style', styleId);
+  storePreference(`webcad-dimension-linear-precision-${state.drawingProfile}`, linear);
+  storePreference(`webcad-dimension-angular-precision-${state.drawingProfile}`, angular);
+  settingsDialog.hidden = true;
+  state.statusText = `Cotas: ${DIMENSION_STYLES[styleId].label} · precision ${linear} / ${angular}`;
+  controller.updateUiStatus();
+  renderer.draw();
   requestAnimationFrame(() => canvas.focus({ preventScroll: true }));
   return true;
 }
@@ -14482,6 +14568,7 @@ function runCommand(command) {
   if (command === 'navigation-trackpad') setNavigationDevice('trackpad');
   if (command === 'new') newDrawing();
   if (command === 'drawing-profile') openDrawingProfileDialog();
+  if (command === 'settings') openSettingsDialog();
   if (command === 'export-dxf') exportDxf();
   if (command === 'import-dxf') importDxf();
   if (command === 'about') showAbout();
@@ -14496,6 +14583,7 @@ menuCommandButtons.forEach((button) => {
 
 dimensionStyleSelect.addEventListener('change', () => {
   state.dimensionStyle = DIMENSION_STYLES[dimensionStyleSelect.value]?.id || 'normal';
+  storePreference('webcad-dimension-style', state.dimensionStyle);
   state.statusText = `Estilo de cota: ${DIMENSION_STYLES[state.dimensionStyle].label}`;
   controller.updateUiStatus();
   renderer.draw();
@@ -14805,6 +14893,27 @@ drawingProfileDialog.addEventListener('keydown', (event) => {
   }
 });
 
+settingsDialogConfirmButton.addEventListener('click', confirmSettingsDialog);
+settingsDialogCancelButton.addEventListener('click', closeSettingsDialog);
+settingsDialogCloseButton.addEventListener('click', closeSettingsDialog);
+settingsDialog.addEventListener('pointerdown', (event) => {
+  if (event.target === settingsDialog) {
+    closeSettingsDialog();
+  }
+});
+settingsDialog.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    event.stopPropagation();
+    confirmSettingsDialog();
+  }
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    event.stopPropagation();
+    closeSettingsDialog();
+  }
+});
+
 textDialogConfirmButton.addEventListener('click', confirmTextDialog);
 textDialogCancelButton.addEventListener('click', () => closeTextDialog(true));
 textDialogCloseButton.addEventListener('click', () => closeTextDialog(true));
@@ -14926,4 +15035,5 @@ syncLineStylePicker();
 syncLineTypePicker();
 syncLineColorPicker();
 syncNavigationDeviceButtons();
+dimensionStyleSelect.value = state.dimensionStyle;
 controller.setTool('select');

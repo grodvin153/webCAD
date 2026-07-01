@@ -7,7 +7,7 @@
   <meta name="author" content="Gonzalo Rodriguez">
   <meta name="copyright" content="Copyright (C) 2026 Gonzalo Rodriguez">
   <title>webCAD</title>
-  <script type="module" crossorigin src="./assets/main-CZ8nWuc_.js"></script>
+  <script type="module" crossorigin src="./assets/main-BRr_onyy.js"></script>
   <link rel="stylesheet" crossorigin href="./assets/main-BJMGiMZp.css">
 </head>
 <body>
@@ -20,6 +20,7 @@
           <div class="submenu" role="menu">
             <button class="submenu-item" type="button" data-command="new">Nuevo dibujo</button>
             <button class="submenu-item" type="button" data-command="drawing-profile">Tipo de dibujo...</button>
+            <button class="submenu-item" type="button" data-command="settings">Configuracion...</button>
             <button class="submenu-item" type="button" data-command="import-dxf">Importar DXF</button>
             <button class="submenu-item" type="button" data-command="export-dxf">Exportar DXF</button>
           </div>
@@ -782,6 +783,53 @@
       <footer>
         <button id="drawing-profile-cancel" type="button">Cancelar</button>
         <button id="drawing-profile-confirm" class="is-primary" type="button">Aplicar</button>
+      </footer>
+    </section>
+  </div>
+
+  <div id="settings-dialog" class="cad-dialog-backdrop" hidden>
+    <section class="cad-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-dialog-title">
+      <header>
+        <div>
+          <span class="cad-dialog-kicker">PREFERENCIAS DEL DIBUJO</span>
+          <h2 id="settings-dialog-title">Configuracion</h2>
+        </div>
+        <button id="settings-dialog-close" class="cad-dialog-close" type="button" aria-label="Cerrar">×</button>
+      </header>
+      <label class="cad-dialog-field">
+        <span>Estilo para nuevas cotas</span>
+        <select id="settings-dimension-style">
+          <option value="normal">Normal</option>
+          <option value="large">Grande</option>
+          <option value="xlarge">Muy grande</option>
+          <option value="small">Pequeño</option>
+          <option value="tiny">Muy pequeño</option>
+        </select>
+      </label>
+      <label class="cad-dialog-field">
+        <span>Precision lineal · decimales maximos</span>
+        <select id="settings-linear-precision">
+          <option value="0">0</option>
+          <option value="1">0,0</option>
+          <option value="2">0,00</option>
+          <option value="3">0,000</option>
+          <option value="4">0,0000</option>
+        </select>
+      </label>
+      <label class="cad-dialog-field">
+        <span>Precision angular · decimales maximos</span>
+        <select id="settings-angular-precision">
+          <option value="0">0°</option>
+          <option value="1">0,0°</option>
+          <option value="2">0,00°</option>
+          <option value="3">0,000°</option>
+          <option value="4">0,0000°</option>
+        </select>
+      </label>
+      <p class="cad-dialog-note">La precision se aplica a los textos de cota del dibujo. No modifica su geometria.</p>
+      <footer>
+        <button id="settings-dialog-cancel" type="button">Cancelar</button>
+        <button id="settings-dialog-confirm" class="is-primary" type="button">Aplicar</button>
       </footer>
     </section>
   </div>
