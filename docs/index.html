@@ -7,8 +7,8 @@
   <meta name="author" content="Gonzalo Rodriguez">
   <meta name="copyright" content="Copyright (C) 2026 Gonzalo Rodriguez">
   <title>webCAD</title>
-  <script type="module" crossorigin src="./assets/main-CFwHaGMd.js"></script>
-  <link rel="stylesheet" crossorigin href="./assets/main-DNr-DGXI.css">
+  <script type="module" crossorigin src="./assets/main-R9YDbthT.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/main-DmOc8sPv.css">
 </head>
 <body>
   <header class="menu-bar">
@@ -58,7 +58,27 @@
             <button class="submenu-item" type="button" data-command="rotate">Girar</button>
             <button class="submenu-item" type="button" data-command="trim">Recortar</button>
             <button class="submenu-item" type="button" data-command="extend">Alargar</button>
+            <button class="submenu-item" type="button" data-command="fillet">Empalme (F)</button>
             <button class="submenu-item" type="button" data-command="erase">Borrar</button>
+            <button class="submenu-item" type="button" data-command="explode">Descomponer (X)</button>
+          </div>
+        </div>
+        <div class="menu-item">
+          <button class="menu-title" type="button">Bloques</button>
+          <div class="submenu" role="menu">
+            <button class="submenu-item" type="button" data-command="block-create">Crear bloque...</button>
+            <button class="submenu-item" type="button" data-command="block-insert">Insertar bloque...</button>
+          </div>
+        </div>
+        <div class="menu-item">
+          <button class="menu-title" type="button">Acotar</button>
+          <div class="submenu" role="menu">
+            <button class="submenu-item" type="button" data-command="dimension-horizontal">Horizontal</button>
+            <button class="submenu-item" type="button" data-command="dimension-vertical">Vertical</button>
+            <button class="submenu-item" type="button" data-command="dimension-aligned">Alineada</button>
+            <button class="submenu-item" type="button" data-command="dimension-angular">Angular</button>
+            <button class="submenu-item" type="button" data-command="dimension-radius">Radio</button>
+            <button class="submenu-item" type="button" data-command="dimension-diameter">Diámetro</button>
           </div>
         </div>
         <div class="menu-item">
@@ -88,6 +108,7 @@
             aria-label="Capa activa"
             aria-expanded="false"
           >
+            <span id="layer-active-swatch" class="layer-toggle-swatch" aria-hidden="true"></span>
             <span id="layer-label">Normal</span>
           </button>
           <div class="layer-options" role="menu" aria-label="Capas">
@@ -112,16 +133,27 @@
               </select>
             </label>
             <label>Color
-              <select id="layer-color-input">
-                <option value="aci7" selected>Negro / blanco</option>
-                <option value="red">Rojo</option>
-                <option value="yellow">Amarillo</option>
-                <option value="green">Verde</option>
-                <option value="cyan">Cian</option>
-                <option value="blue">Azul</option>
-                <option value="magenta">Magenta</option>
-              </select>
+              <span class="layer-color-select-row">
+                <span id="layer-color-preview" class="layer-color-preview" aria-hidden="true"></span>
+                <select id="layer-color-input">
+                  <option value="aci7" selected>Negro / blanco</option>
+                  <option value="red">Rojo</option>
+                  <option value="yellow">Amarillo</option>
+                  <option value="green">Verde</option>
+                  <option value="cyan">Cian</option>
+                  <option value="blue">Azul</option>
+                  <option value="magenta">Magenta</option>
+                  <option value="other">Otro color…</option>
+                </select>
+              </span>
             </label>
+            <div id="layer-color-palette" class="layer-color-palette" hidden>
+              <div class="layer-color-palette-heading">
+                <span>256 colores ACI</span>
+                <strong id="layer-color-palette-value">ACI 7</strong>
+              </div>
+              <div id="layer-color-grid" class="layer-color-grid" role="grid" aria-label="Paleta de 256 colores ACI"></div>
+            </div>
             <div class="layer-create-actions">
               <button id="layer-create-cancel" type="button">Cancelar</button>
               <button id="layer-create-confirm" type="button">Crear</button>
@@ -191,6 +223,10 @@
           </div>
         </div>
       </div>
+      <label id="fillet-radius-control" class="fillet-radius-control" title="Radio de empalme" hidden>
+        <span>Empalme R</span>
+        <input id="fillet-radius-input" type="number" min="0.001" step="1" value="10" inputmode="decimal" aria-label="Radio de empalme">
+      </label>
       <div class="navigation-device-control" role="group" aria-label="Periferico de navegacion">
         <button
           id="navigation-mouse"
@@ -423,6 +459,68 @@
           <button class="tool-flyout-item" type="button" data-command="arc-center-start-end">Centro-inicio-final</button>
         </div>
       </div>
+      <div class="tool-group" data-tool-group="block">
+        <button
+          id="tool-block"
+          class="tool-button tool-button-main"
+          type="button"
+          data-tool="block-insert"
+          title="Insertar bloque"
+          aria-label="Bloques"
+        >
+          <svg viewBox="0 0 48 48" aria-hidden="true">
+            <rect x="9" y="10" width="17" height="17" rx="2"></rect>
+            <rect x="22" y="21" width="17" height="17" rx="2"></rect>
+            <path d="M17.5 27v6.5H22M26 18.5h6.5V21"></path>
+          </svg>
+        </button>
+        <button
+          id="tool-block-menu"
+          class="tool-menu-button"
+          type="button"
+          title="Herramientas de bloque"
+          aria-label="Mas herramientas de bloque"
+          aria-expanded="false"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 9 5 5 5-5"></path></svg>
+        </button>
+        <div class="tool-flyout" role="menu" aria-label="Herramientas de bloque">
+          <button class="tool-flyout-item" type="button" data-command="block-create">Crear bloque</button>
+          <button class="tool-flyout-item" type="button" data-command="block-insert">Insertar bloque</button>
+        </div>
+      </div>
+      </section>
+
+      <section class="tool-section tool-section-dimensions" aria-labelledby="tools-dimension-title">
+        <h2 id="tools-dimension-title" class="tool-section-title">Cotas</h2>
+        <label class="dimension-style-control" title="Tamaño del estilo de cota">
+          <span>Estilo</span>
+          <select id="dimension-style-select" aria-label="Estilo de cota">
+            <option value="normal" selected>Normal</option>
+            <option value="large">Grande</option>
+            <option value="xlarge">Muy grande</option>
+            <option value="small">Pequeño</option>
+            <option value="tiny">Muy pequeño</option>
+          </select>
+        </label>
+        <button class="tool-button dimension-tool-button" type="button" data-command="dimension-horizontal" title="Cota horizontal" aria-label="Cota horizontal">
+          <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M9 13v25M39 13v25M9 24h30M9 24l6-4v8zM39 24l-6-4v8z"></path></svg>
+        </button>
+        <button class="tool-button dimension-tool-button" type="button" data-command="dimension-vertical" title="Cota vertical" aria-label="Cota vertical">
+          <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M10 9h28M10 39h28M24 9v30M24 9l-4 6h8zM24 39l-4-6h8z"></path></svg>
+        </button>
+        <button class="tool-button dimension-tool-button" type="button" data-command="dimension-aligned" title="Cota alineada" aria-label="Cota alineada">
+          <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M10 36 36 10M7 29l12 12M29 7l12 12M12 34l3-7 5 5zM34 12l-3 7-5-5z"></path></svg>
+        </button>
+        <button class="tool-button dimension-tool-button" type="button" data-command="dimension-angular" title="Cota angular" aria-label="Cota angular">
+          <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M10 38 24 10 39 38M15 30a17 17 0 0 1 18 0"></path></svg>
+        </button>
+        <button class="tool-button dimension-tool-button" type="button" data-command="dimension-radius" title="Cota de radio" aria-label="Cota de radio">
+          <svg viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="24" r="14"></circle><path d="M24 24 36 15M36 15l-7 1 4 5z"></path><text x="7" y="14">R</text></svg>
+        </button>
+        <button class="tool-button dimension-tool-button" type="button" data-command="dimension-diameter" title="Cota de diámetro" aria-label="Cota de diámetro">
+          <svg viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="24" r="14"></circle><path d="m13 33 22-18M13 33l7-1-4-5zM35 15l-7 1 4 5z"></path></svg>
+        </button>
       </section>
 
       <section class="tool-section" aria-labelledby="tools-modify-title">
@@ -457,6 +555,23 @@
           <path d="M38 12v28"></path>
           <path d="M24 35 35 24"></path>
           <path d="M29 24h6v6"></path>
+        </svg>
+      </button>
+      <button
+        id="tool-fillet"
+        class="tool-button"
+        type="button"
+        data-tool="fillet"
+        title="Empalme con radio (F)"
+        aria-label="Empalme con radio"
+      >
+        <svg viewBox="0 0 48 48" aria-hidden="true">
+          <path d="M9 38h12"></path>
+          <path d="M38 9v12"></path>
+          <path d="M21 38a17 17 0 0 0 17-17"></path>
+          <path d="M24 32 35 21"></path>
+          <circle cx="24" cy="32" r="2.5"></circle>
+          <circle cx="35" cy="21" r="2.5"></circle>
         </svg>
       </button>
       <button
@@ -522,11 +637,35 @@
           <path d="M32 16 16 32"></path>
         </svg>
       </button>
+      <button
+        id="tool-explode"
+        class="tool-button"
+        type="button"
+        data-tool="explode"
+        title="Descomponer bloque o polilinea (X)"
+        aria-label="Descomponer"
+      >
+        <svg viewBox="0 0 48 48" aria-hidden="true">
+          <rect x="10" y="10" width="11" height="11" rx="1"></rect>
+          <rect x="27" y="27" width="11" height="11" rx="1"></rect>
+          <path d="m24 8 2 7 5-5M8 24l7 2-5 5M40 24l-7 2 5 5M24 40l2-7 5 5"></path>
+        </svg>
+      </button>
       </section>
     </aside>
 
     <section class="canvas-panel" aria-label="Area de dibujo">
       <div class="canvas-wrap">
+        <div id="block-editor-bar" class="block-editor-bar" hidden>
+          <div>
+            <span class="block-editor-kicker">EDITOR DE BLOQUES</span>
+            <strong id="block-editor-name">Bloque</strong>
+          </div>
+          <div class="block-editor-actions">
+            <button id="block-editor-discard" type="button">Descartar</button>
+            <button id="block-editor-save" class="is-primary" type="button">Guardar y cerrar</button>
+          </div>
+        </div>
         <canvas id="cad-canvas" class="cad-canvas" tabindex="0"></canvas>
         <div id="cursor-input" class="cursor-input" aria-hidden="true"></div>
       </div>
@@ -560,6 +699,16 @@
             <path d="M16 8v16"></path>
             <path d="M24 8v16"></path>
           </svg>
+        </button>
+        <button
+          id="status-lineweight"
+          class="status-toggle status-toggle-text is-active"
+          type="button"
+          title="Grosores de línea visibles"
+          aria-label="Visibilidad de grosores de línea"
+          aria-pressed="true"
+        >
+          <span aria-hidden="true">LWT</span>
         </button>
         <span id="status-tool">Herramienta: Linea 2P</span>
         <span id="status-cursor">Cursor: -</span>
@@ -660,11 +809,7 @@
           <option value="magenta">Magenta</option>
         </select>
       </label>
-      <fieldset id="hatch-mode-choice" class="cad-dialog-choice">
-        <legend>Elija el método para continuar</legend>
-        <label><input type="radio" name="hatch-mode" value="point" checked><span>Punto interior</span></label>
-        <label><input type="radio" name="hatch-mode" value="polyline"><span>Polilínea cerrada</span></label>
-      </fieldset>
+      <p class="cad-dialog-note">Tras continuar, indique un punto interior del recinto cerrado.</p>
       <div id="hatch-dialog-error" class="cad-dialog-error" aria-live="polite"></div>
       <footer>
         <button id="hatch-dialog-cancel" type="button">Cancelar</button>
@@ -699,12 +844,64 @@
     </section>
   </div>
 
+  <div id="block-create-dialog" class="cad-dialog-backdrop" hidden>
+    <section class="cad-dialog" role="dialog" aria-modal="true" aria-labelledby="block-create-title">
+      <header>
+        <div>
+          <span class="cad-dialog-kicker">BLOCK</span>
+          <h2 id="block-create-title">Crear bloque</h2>
+        </div>
+        <button id="block-create-close" class="cad-dialog-close" type="button" aria-label="Cerrar">×</button>
+      </header>
+      <label class="cad-dialog-field">
+        <span>Nombre del bloque</span>
+        <input id="block-name-input" type="text" maxlength="64" autocomplete="off" placeholder="Ej. Puerta 90">
+      </label>
+      <p class="cad-dialog-note">Después se pedirá el punto base en el dibujo. Las entidades seleccionadas se sustituirán por una referencia de bloque.</p>
+      <div id="block-create-error" class="cad-dialog-error" aria-live="polite"></div>
+      <footer>
+        <button id="block-create-cancel" type="button">Cancelar</button>
+        <button id="block-create-confirm" class="is-primary" type="button">Continuar</button>
+      </footer>
+    </section>
+  </div>
+
+  <div id="block-insert-dialog" class="cad-dialog-backdrop" hidden>
+    <section class="cad-dialog" role="dialog" aria-modal="true" aria-labelledby="block-insert-title">
+      <header>
+        <div>
+          <span class="cad-dialog-kicker">INSERT</span>
+          <h2 id="block-insert-title">Insertar bloque</h2>
+        </div>
+        <button id="block-insert-close" class="cad-dialog-close" type="button" aria-label="Cerrar">×</button>
+      </header>
+      <label class="cad-dialog-field">
+        <span>Bloque</span>
+        <select id="block-insert-name"></select>
+      </label>
+      <label class="cad-dialog-field">
+        <span>Escala uniforme</span>
+        <input id="block-insert-scale" type="number" min="0.001" step="0.1" value="1">
+      </label>
+      <label class="cad-dialog-field">
+        <span>Giro (grados)</span>
+        <input id="block-insert-rotation" type="number" step="1" value="0">
+      </label>
+      <p class="cad-dialog-note">Tras aceptar, indique el punto de inserción con el cursor, snaps o coordenadas.</p>
+      <div id="block-insert-error" class="cad-dialog-error" aria-live="polite"></div>
+      <footer>
+        <button id="block-insert-cancel" type="button">Cancelar</button>
+        <button id="block-insert-confirm" class="is-primary" type="button">Insertar</button>
+      </footer>
+    </section>
+  </div>
+
   <div id="about-dialog" class="cad-dialog-backdrop" hidden>
     <section class="cad-dialog about-dialog" role="dialog" aria-modal="true" aria-labelledby="about-dialog-title">
       <header>
         <div>
           <span class="cad-dialog-kicker">AUTORIA Y VERSION</span>
-          <h2 id="about-dialog-title">webCAD 0.3.0</h2>
+          <h2 id="about-dialog-title">webCAD 0.4.0</h2>
         </div>
         <button id="about-dialog-close" class="cad-dialog-close" type="button" aria-label="Cerrar">×</button>
       </header>
@@ -714,7 +911,7 @@
         <div>
           <strong>Gonzalo Rodriguez</strong>
           <span>Autor y desarrollador de webCAD</span>
-          <small>Editor CAD 2D para navegador · Versión estable 0.3.0</small>
+          <small>Editor CAD 2D para navegador · Versión estable 0.4.0</small>
         </div>
       </div>
 
@@ -734,18 +931,20 @@
           <h3>Funciones disponibles</h3>
           <ul>
             <li>Líneas, polilíneas con arcos y anchura variable, rectángulos, círculos, texto y sombreado sólido.</li>
-            <li>Selección múltiple, pinzamientos, copiar, desplazar, girar, borrar, recortar y alargar.</li>
+            <li>Selección múltiple, pinzamientos, copiar, desplazar, girar, borrar, recortar, alargar, empalmar y descomponer.</li>
             <li>Snaps de extremo, medio, centro, intersección y perpendicular; rejilla y modo ortogonal.</li>
             <li>Capas, colores, tipos y grosores de línea, historial y entrada por coordenadas.</li>
+            <li>Bloques reutilizables con edición interna por doble clic, punto base, escala, giro y compatibilidad DXF BLOCK/INSERT.</li>
           </ul>
         </section>
         <section class="about-feature-card is-release">
-          <h3>Novedades de 0.3.0</h3>
+          <h3>Novedades de 0.4.0</h3>
           <ul>
-            <li>Polilíneas nativas optimizadas con líneas, arcos y anchura variable.</li>
-            <li>Arcos tangentes de dos puntos estilo Fusion, con ghost dinámico y continuidad exterior.</li>
-            <li>Snaps completos sobre el dibujo y sobre la propia polilínea mientras se construye.</li>
-            <li>Compatibilidad DXF LWPOLYLINE, pinzamientos, recorte, alargar, copiar, mover y girar.</li>
+            <li>Nueva orden Empalme (F) con radio editable, recorte, prolongación y arco DXF tangente.</li>
+            <li>Cotas mejoradas: pinzamientos coherentes, textos angulares legibles y flechas proporcionadas.</li>
+            <li>Importación de sombreados DXF por contornos y huecos, con filtrado de patrones no compatibles.</li>
+            <li>Mayor rendimiento en planos grandes mediante nivel de detalle adaptativo y geometría agrupada.</li>
+            <li>Ejes X/Y con colores CAD y preferencias persistentes de rejilla y grosores.</li>
           </ul>
         </section>
       </div>

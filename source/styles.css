@@ -137,6 +137,41 @@ input {
   align-items: stretch;
 }
 
+.fillet-radius-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 9px;
+  border-left: 1px solid #dde4e8;
+  background: #fff8ee;
+  color: #8d3f1c;
+  white-space: nowrap;
+}
+
+.fillet-radius-control[hidden] {
+  display: none;
+}
+
+.fillet-radius-control span {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.fillet-radius-control input {
+  width: 68px;
+  height: 26px;
+  padding: 0 7px;
+  border: 1px solid #d6a47f;
+  border-radius: 5px;
+  background: #ffffff;
+  color: #263b46;
+}
+
+.fillet-radius-control input:focus {
+  border-color: var(--accent);
+  outline: 2px solid rgba(182, 77, 31, 0.18);
+}
+
 .line-style-control {
   display: inline-flex;
   align-items: center;
@@ -337,7 +372,20 @@ input {
 .line-color-current.is-aci7 { background: linear-gradient(135deg, #18262a 0 50%, #ffffff 50%); }
 
 .layer-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   min-width: 104px;
+}
+
+.layer-toggle-swatch {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+  border: 1px solid rgba(24, 38, 42, 0.35);
+  border-radius: 3px;
+  background: var(--layer-color, #18262a);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35);
 }
 
 .layer-options {
@@ -395,6 +443,11 @@ input {
   border-radius: 7px;
   background: #ffffff;
   box-shadow: 0 10px 24px rgba(23, 48, 66, 0.2);
+  transition: width 140ms ease;
+}
+
+.layer-picker.is-palette-open .layer-create-panel {
+  width: 286px;
 }
 
 .layer-picker.is-creating .layer-create-panel {
@@ -429,6 +482,82 @@ input {
   color: #263b46;
   font: inherit;
   font-size: 12px;
+}
+
+.layer-color-select-row {
+  position: relative;
+  display: block;
+}
+
+.layer-color-select-row select {
+  padding-left: 34px;
+}
+
+.layer-color-preview {
+  position: absolute;
+  z-index: 1;
+  left: 8px;
+  top: 50%;
+  width: 17px;
+  height: 17px;
+  border: 1px solid rgba(24, 38, 42, 0.35);
+  border-radius: 3px;
+  background: #18262a;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.4);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.layer-color-palette {
+  padding: 8px;
+  border: 1px solid #d8e1e6;
+  border-radius: 6px;
+  background: #f7fafb;
+}
+
+.layer-color-palette[hidden] {
+  display: none;
+}
+
+.layer-color-palette-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 7px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.layer-color-palette-heading strong {
+  color: #263b46;
+  font-size: 10px;
+}
+
+.layer-color-grid {
+  display: grid;
+  grid-template-columns: repeat(16, 1fr);
+  gap: 2px;
+}
+
+.layer-color-cell {
+  width: 100%;
+  aspect-ratio: 1;
+  min-width: 0;
+  padding: 0;
+  border: 1px solid rgba(24, 38, 42, 0.2);
+  border-radius: 2px;
+  background: var(--palette-color, #18262a);
+  cursor: pointer;
+}
+
+.layer-color-cell:hover,
+.layer-color-cell:focus-visible,
+.layer-color-cell.is-active {
+  z-index: 1;
+  border-color: #ffffff;
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+  transform: scale(1.28);
 }
 
 .layer-create-actions {
@@ -500,6 +629,10 @@ input {
   }
 
   .line-style-control > span {
+    display: none;
+  }
+
+  .fillet-radius-control span {
     display: none;
   }
 }
@@ -591,6 +724,37 @@ input {
 
 .tool-section-selection {
   padding-top: 0;
+}
+
+.dimension-style-control {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 1px 3px;
+  color: #71838c;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.dimension-style-control select {
+  min-width: 0;
+  height: 25px;
+  flex: 1;
+  padding: 0 5px;
+  border: 1px solid #cfdbe2;
+  border-radius: 5px;
+  background: #f7fafc;
+  color: #263b46;
+  font: 600 10px "Arial Narrow", "Liberation Sans Narrow", sans-serif;
+  text-transform: none;
+}
+
+.dimension-tool-button svg text {
+  fill: currentColor;
+  stroke: none;
+  font: 700 12px "Arial Narrow", sans-serif;
 }
 
 .tool-section-selection .tool-button {
@@ -724,6 +888,67 @@ input {
   overflow: hidden;
 }
 
+.block-editor-bar {
+  position: absolute;
+  z-index: 12;
+  top: 12px;
+  left: 50%;
+  display: flex;
+  min-width: min(520px, calc(100% - 28px));
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 9px 10px 9px 14px;
+  border: 1px solid rgba(182, 77, 31, 0.45);
+  border-radius: 8px;
+  background: rgba(255, 252, 244, 0.96);
+  box-shadow: 0 8px 28px rgba(24, 38, 42, 0.18);
+  transform: translateX(-50%);
+  backdrop-filter: blur(6px);
+}
+
+.block-editor-bar[hidden] {
+  display: none;
+}
+
+.block-editor-bar > div:first-child {
+  display: grid;
+  gap: 1px;
+}
+
+.block-editor-kicker {
+  color: var(--danger);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+}
+
+.block-editor-bar strong {
+  color: #18262a;
+  font: 600 16px "Arial Narrow", "Liberation Sans Narrow", sans-serif;
+}
+
+.block-editor-actions {
+  display: flex;
+  gap: 7px;
+}
+
+.block-editor-actions button {
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid #c8d5dc;
+  border-radius: 5px;
+  background: #f7fafc;
+  color: #334b58;
+  cursor: pointer;
+}
+
+.block-editor-actions button.is-primary {
+  border-color: var(--danger);
+  background: var(--danger);
+  color: #ffffff;
+}
+
 .cad-canvas {
   display: block;
   width: 100%;
@@ -747,10 +972,12 @@ input {
 .cad-canvas.is-trim-tool,
 .cad-canvas.is-extend-tool,
 .cad-canvas.is-erase-tool,
+.cad-canvas.is-explode-tool,
 .cad-canvas.is-copy-tool,
 .cad-canvas.is-move-tool,
 .cad-canvas.is-rotate-tool,
-.cad-canvas.is-selection-set-tool {
+.cad-canvas.is-selection-set-tool,
+.cad-canvas.is-dimension-select-tool {
   cursor:
     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Crect x='7' y='7' width='10' height='10' fill='rgba(208,90,31,0.18)' stroke='%23d05a1f' stroke-width='3'/%3E%3Crect x='8.5' y='8.5' width='7' height='7' fill='none' stroke='%23fff4df' stroke-width='1'/%3E%3C/svg%3E") 12 12,
     crosshair;
@@ -1175,6 +1402,13 @@ input {
   stroke-width: 2.4;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+
+.status-toggle-text {
+  font-family: "Arial Narrow", "Liberation Sans Narrow", sans-serif;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
 }
 
 .status-toggle:hover {

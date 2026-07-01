@@ -15,12 +15,18 @@ const circleToolButton = document.getElementById('tool-circle');
 const circleToolMenuButton = document.getElementById('tool-circle-menu');
 const arcToolButton = document.getElementById('tool-arc');
 const arcToolMenuButton = document.getElementById('tool-arc-menu');
+const blockToolButton = document.getElementById('tool-block');
+const blockToolMenuButton = document.getElementById('tool-block-menu');
 const trimToolButton = document.getElementById('tool-trim');
 const extendToolButton = document.getElementById('tool-extend');
+const filletToolButton = document.getElementById('tool-fillet');
 const copyToolButton = document.getElementById('tool-copy');
 const moveToolButton = document.getElementById('tool-move');
 const rotateToolButton = document.getElementById('tool-rotate');
 const eraseToolButton = document.getElementById('tool-erase');
+const explodeToolButton = document.getElementById('tool-explode');
+const dimensionStyleSelect = document.getElementById('dimension-style-select');
+const dimensionToolButtons = document.querySelectorAll('.dimension-tool-button[data-command]');
 const fitButton = document.getElementById('action-fit');
 const navigationMouseButton = document.getElementById('navigation-mouse');
 const navigationTrackpadButton = document.getElementById('navigation-trackpad');
@@ -53,14 +59,24 @@ const layerNameInput = document.getElementById('layer-name-input');
 const layerStyleInput = document.getElementById('layer-style-input');
 const layerTypeInput = document.getElementById('layer-type-input');
 const layerColorInput = document.getElementById('layer-color-input');
+const layerActiveSwatch = document.getElementById('layer-active-swatch');
+const layerColorPreview = document.getElementById('layer-color-preview');
+const layerColorPalette = document.getElementById('layer-color-palette');
+const layerColorPaletteValue = document.getElementById('layer-color-palette-value');
+const layerColorGrid = document.getElementById('layer-color-grid');
 const menuCommandButtons = document.querySelectorAll('[data-command]');
 const undoCommandButtons = document.querySelectorAll('[data-command="undo"]');
 const redoCommandButtons = document.querySelectorAll('[data-command="redo"]');
 const toolGroupElements = document.querySelectorAll('.tool-group');
 const toolFlyoutCommandButtons = document.querySelectorAll('.tool-flyout-item[data-command]');
 const cursorInput = document.getElementById('cursor-input');
+const blockEditorBar = document.getElementById('block-editor-bar');
+const blockEditorName = document.getElementById('block-editor-name');
+const blockEditorSaveButton = document.getElementById('block-editor-save');
+const blockEditorDiscardButton = document.getElementById('block-editor-discard');
 const statusOrthoButton = document.getElementById('status-ortho');
 const statusGridButton = document.getElementById('status-grid');
+const statusLineWeightButton = document.getElementById('status-lineweight');
 const statusTool = document.getElementById('status-tool');
 const statusCursor = document.getElementById('status-cursor');
 const statusEntities = document.getElementById('status-entities');
@@ -68,6 +84,8 @@ const statusLength = document.getElementById('status-length');
 const statusLayer = document.getElementById('status-layer');
 const statusMessage = document.getElementById('status-message');
 const statusDxf = document.getElementById('status-dxf');
+const filletRadiusControl = document.getElementById('fillet-radius-control');
+const filletRadiusInput = document.getElementById('fillet-radius-input');
 const drawingProfileDialog = document.getElementById('drawing-profile-dialog');
 const drawingProfileCloseButton = document.getElementById('drawing-profile-close');
 const drawingProfileCancelButton = document.getElementById('drawing-profile-cancel');
@@ -89,8 +107,6 @@ const hatchDialogConfirmButton = document.getElementById('hatch-dialog-confirm')
 const hatchPatternInput = document.getElementById('hatch-pattern-input');
 const hatchLayerInput = document.getElementById('hatch-layer-input');
 const hatchColorInput = document.getElementById('hatch-color-input');
-const hatchModeChoice = document.getElementById('hatch-mode-choice');
-const hatchModeInputs = document.querySelectorAll('input[name="hatch-mode"]');
 const hatchDialogError = document.getElementById('hatch-dialog-error');
 const polylineWidthDialog = document.getElementById('polyline-width-dialog');
 const polylineWidthCloseButton = document.getElementById('polyline-width-close');
@@ -99,6 +115,20 @@ const polylineWidthConfirmButton = document.getElementById('polyline-width-confi
 const polylineStartWidthInput = document.getElementById('polyline-start-width');
 const polylineEndWidthInput = document.getElementById('polyline-end-width');
 const polylineWidthError = document.getElementById('polyline-width-error');
+const blockCreateDialog = document.getElementById('block-create-dialog');
+const blockCreateCloseButton = document.getElementById('block-create-close');
+const blockCreateCancelButton = document.getElementById('block-create-cancel');
+const blockCreateConfirmButton = document.getElementById('block-create-confirm');
+const blockNameInput = document.getElementById('block-name-input');
+const blockCreateError = document.getElementById('block-create-error');
+const blockInsertDialog = document.getElementById('block-insert-dialog');
+const blockInsertCloseButton = document.getElementById('block-insert-close');
+const blockInsertCancelButton = document.getElementById('block-insert-cancel');
+const blockInsertConfirmButton = document.getElementById('block-insert-confirm');
+const blockInsertNameInput = document.getElementById('block-insert-name');
+const blockInsertScaleInput = document.getElementById('block-insert-scale');
+const blockInsertRotationInput = document.getElementById('block-insert-rotation');
+const blockInsertError = document.getElementById('block-insert-error');
 const aboutDialog = document.getElementById('about-dialog');
 const aboutDialogCloseButton = document.getElementById('about-dialog-close');
 const aboutDialogConfirmButton = document.getElementById('about-dialog-confirm');
@@ -122,12 +152,21 @@ const REPEATABLE_COMMANDS = new Set([
   'arc-center-radius',
   'arc-3p',
   'arc-center-start-end',
+  'dimension-horizontal',
+  'dimension-vertical',
+  'dimension-aligned',
+  'dimension-angular',
+  'dimension-radius',
+  'dimension-diameter',
+  'block-insert',
   'copy',
   'move',
   'rotate',
   'trim',
   'extend',
+  'fillet',
   'erase',
+  'explode',
 ]);
 const DRAWING_PROFILES = {
   engineering: {
@@ -144,6 +183,13 @@ const DRAWING_PROFILES = {
     lineTypeScale: 1,
     dxfLineTypeScale: 1,
     hatchOpacity: 0.32,
+    dimensionMetrics: {
+      textHeight: 3,
+      arrowSize: 3.75,
+      textGap: 0.625,
+      extensionOffset: 0.9375,
+      extensionOvershoot: 1.875,
+    },
   },
   architecture: {
     id: 'architecture',
@@ -159,6 +205,13 @@ const DRAWING_PROFILES = {
     lineTypeScale: 0.85,
     dxfLineTypeScale: 0.1,
     hatchOpacity: 0.27,
+    dimensionMetrics: {
+      textHeight: 0.25,
+      arrowSize: 0.3125,
+      textGap: 0.05,
+      extensionOffset: 0.075,
+      extensionOvershoot: 0.15,
+    },
   },
 };
 let GRID_BASE = DRAWING_PROFILES.engineering.gridBase;
@@ -172,7 +225,8 @@ const PREVIEW_COLOR = '#b64d1f';
 const SELECTED_COLOR = '#0f5d8c';
 const SNAP_COLOR = '#d05a1f';
 const SNAP_MARKER_SIZE = 16;
-const AXIS_COLOR = 'rgba(30, 90, 99, 0.28)';
+const X_AXIS_COLOR = 'rgba(205, 55, 55, 0.62)';
+const Y_AXIS_COLOR = 'rgba(34, 145, 82, 0.62)';
 const DEFAULT_LINE_STYLE = 'normal';
 const DEFAULT_LINE_TYPE = 'continuous';
 const DEFAULT_LINE_COLOR = 'default';
@@ -204,6 +258,21 @@ const LINE_STYLES = {
     dxfLineWeight: 80,
   },
 };
+const DIMENSION_STYLES = {
+  normal: { id: 'normal', label: 'Normal', scale: 1.5 },
+  large: { id: 'large', label: 'Grande', scale: 2 },
+  xlarge: { id: 'xlarge', label: 'Muy grande', scale: 2.5 },
+  small: { id: 'small', label: 'Pequeño', scale: 1 },
+  tiny: { id: 'tiny', label: 'Muy pequeño', scale: 0.75 },
+};
+const DIMENSION_TOOLS = new Set([
+  'dimension-horizontal',
+  'dimension-vertical',
+  'dimension-aligned',
+  'dimension-angular',
+  'dimension-radius',
+  'dimension-diameter',
+]);
 const LINE_TYPES = {
   continuous: {
     id: 'continuous',
@@ -234,6 +303,48 @@ const LINE_COLORS = {
   magenta: { id: 'magenta', label: 'Magenta', color: '#d946ef', aci: 6 },
   aci7: { id: 'aci7', label: 'Blanco / negro', color: LINE_COLOR, aci: 7 },
 };
+
+function rgbHex(red, green, blue) {
+  return `#${[red, green, blue]
+    .map((value) => Math.round(clamp(value, 0, 255)).toString(16).padStart(2, '0'))
+    .join('')}`;
+}
+
+function hsvHex(hue, saturation, value) {
+  const chroma = value * saturation;
+  const hueSector = ((hue % 360) + 360) % 360 / 60;
+  const intermediate = chroma * (1 - Math.abs(hueSector % 2 - 1));
+  const [red, green, blue] = hueSector < 1 ? [chroma, intermediate, 0]
+    : hueSector < 2 ? [intermediate, chroma, 0]
+      : hueSector < 3 ? [0, chroma, intermediate]
+        : hueSector < 4 ? [0, intermediate, chroma]
+          : hueSector < 5 ? [intermediate, 0, chroma]
+            : [chroma, 0, intermediate];
+  const offset = value - chroma;
+  return rgbHex((red + offset) * 255, (green + offset) * 255, (blue + offset) * 255);
+}
+
+function aciPaletteColor(index) {
+  if (index === 8) return '#808080';
+  if (index === 9) return '#c0c0c0';
+  if (index >= 250) {
+    return ['#333333', '#505050', '#696969', '#828282', '#bebebe', '#ffffff'][index - 250];
+  }
+  const group = Math.floor((index - 10) / 10);
+  const variant = (index - 10) % 10;
+  const values = [1, 1, 0.65, 0.65, 0.5, 0.5, 0.3, 0.3, 0.15, 0.15];
+  const saturations = [1, 0.5, 1, 0.5, 1, 0.5, 1, 0.5, 1, 0.5];
+  return hsvHex(group * 15, saturations[variant], values[variant]);
+}
+
+for (let aci = 8; aci <= 255; aci += 1) {
+  LINE_COLORS[`aci${aci}`] = {
+    id: `aci${aci}`,
+    label: `ACI ${aci}`,
+    color: aciPaletteColor(aci),
+    aci,
+  };
+}
 const DEFAULT_LAYER = {
   name: 'Normal',
   lineStyle: 'normal',
@@ -241,6 +352,7 @@ const DEFAULT_LAYER = {
   lineColor: 'default',
 };
 let nextEntityGroupId = 1;
+let layerCreationColor = 'aci7';
 
 function createEntityGroupId(prefix = 'group') {
   const id = `${prefix}-${nextEntityGroupId}`;
@@ -567,7 +679,7 @@ function addSnapCandidate(point, candidate, tolerance, currentBest) {
 
   if (!currentBest || snapDistance < currentBest.distance) {
     return {
-      type: candidate.type,
+      ...candidate,
       point: { x: candidate.point.x, y: candidate.point.y },
       distance: snapDistance,
     };
@@ -608,8 +720,10 @@ function objectSnapPoint(point, state, options = {}) {
   const tolerance = (state.snapPixelTolerance || 10) / state.viewScale;
   let bestSnap = null;
   const cursorBounds = expandBounds(createBounds(point.x, point.y, point.x, point.y), tolerance);
-  const snapEntities = state.doc
-    .queryBounds(cursorBounds)
+  const sourceSnapEntities = state.doc.queryBounds(cursorBounds);
+  const snapEntities = sourceSnapEntities
+    .filter((entity) => entity !== options.ignoreEntity)
+    .flatMap((entity) => entity.type === 'INSERT' ? primitiveEntityParts(entity) : [entity])
     .filter((entity) => entity.type === 'LINE' || entity.type === 'POLYLINE' || isCircularEntity(entity));
   const nearbySnapEntities = snapEntities.filter((entity) =>
     entity !== options.ignoreEntity && entityIsNearPoint(entity, point, tolerance),
@@ -621,6 +735,29 @@ function objectSnapPoint(point, state, options = {}) {
     ? primitiveEntityParts(draftPolyline)
       .filter((part) => boundsIntersectsBounds(part.bounds(), cursorBounds))
     : [];
+
+  for (const reference of sourceSnapEntities.filter((entity) =>
+    entity.type === 'INSERT' && entity !== options.ignoreEntity)) {
+    bestSnap = addSnapCandidate(
+      point,
+      { type: 'endpoint', key: 'insertionPoint', point: reference.insertionPoint },
+      tolerance,
+      bestSnap,
+    );
+  }
+
+  for (const entity of sourceSnapEntities.filter((candidate) =>
+    candidate.type === 'DIMENSION' && candidate !== options.ignoreEntity)) {
+    for (const candidate of dimensionReferencePoints(entity)) {
+      if (
+        options.axisLine &&
+        distancePointToInfiniteLine(candidate.point, options.axisLine.point, options.axisLine.direction) > tolerance
+      ) {
+        continue;
+      }
+      bestSnap = addSnapCandidate(point, { ...candidate, entity }, tolerance, bestSnap);
+    }
+  }
 
   for (const entity of lineEntities) {
     const ignoredKey = entity === options.ignoreEntity ? options.ignoreKey : null;
@@ -805,6 +942,9 @@ function activeDraftOrigin(state) {
   }
   if (state.polylineDraft?.vertices.length) {
     return state.polylineDraft.vertices[state.polylineDraft.vertices.length - 1];
+  }
+  if (state.dimensionDraft?.phase === 'placement') {
+    return dimensionPlacementOrigin(state.dimensionDraft);
   }
   if (state.circleDraft?.mode === 'center-radius' && state.circleDraft.points.length === 1) {
     return state.circleDraft.points[0];
@@ -1037,7 +1177,7 @@ function normalizeLineStyleId(value) {
   return LINE_STYLES[normalized] ? normalized : DEFAULT_LINE_STYLE;
 }
 
-function lineStyleFromDxf(record) {
+function lineStyleFromDxf(record, fallbackStyle = null) {
   const lineWeight = Number(record['370']);
   if (Number.isFinite(lineWeight) && lineWeight > 0) {
     if (lineWeight <= 37) {
@@ -1047,6 +1187,9 @@ function lineStyleFromDxf(record) {
       return 'gruesa';
     }
     return 'normal';
+  }
+  if (fallbackStyle) {
+    return normalizeLineStyleId(fallbackStyle);
   }
   return normalizeLineStyleId(record['8']);
 }
@@ -1062,7 +1205,6 @@ function activeLineStyleId() {
 function applyLineStyleToEntity(entity, styleId) {
   const style = getLineStyle(styleId);
   entity.lineStyle = style.id;
-  entity.layer = style.layer;
   entity.color = getLineColor(entity.lineColor).color || style.color;
 }
 
@@ -1099,8 +1241,12 @@ function applyLineTypeToEntity(entity, lineTypeId) {
   entity.lineType = getLineType(lineTypeId).id;
 }
 
-function lineTypeFromDxf(record) {
-  return normalizeLineTypeId(record['6']);
+function lineTypeFromDxf(record, fallbackType = null) {
+  const rawType = String(record['6'] || '').trim().toUpperCase();
+  if (!rawType || rawType === 'BYLAYER' || rawType === 'BYBLOCK') {
+    return normalizeLineTypeId(fallbackType || DEFAULT_LINE_TYPE);
+  }
+  return normalizeLineTypeId(rawType);
 }
 
 function normalizeLineColorId(value) {
@@ -1126,8 +1272,23 @@ function applyLineColorToEntity(entity, lineColorId) {
   entity.color = lineColor.color || getLineStyle(entity.lineStyle).color;
 }
 
-function lineColorFromDxf(record) {
-  return normalizeLineColorId(record['62']);
+function lineColorFromDxf(record, fallbackColor = null) {
+  const aci = Number(record['62']);
+  if (!Number.isFinite(aci) || aci === 0 || Math.abs(aci) === 256) {
+    return normalizeLineColorId(fallbackColor || DEFAULT_LINE_COLOR);
+  }
+  return normalizeLineColorId(aci);
+}
+
+function dxfEntityOptions(record, layerDefinitionMap) {
+  const requestedLayer = String(record['8'] || DEFAULT_LAYER.name).trim();
+  const layer = layerDefinitionMap.get(requestedLayer.toLowerCase()) || null;
+  return {
+    layer: layer?.name || requestedLayer,
+    lineStyle: lineStyleFromDxf(record, layer?.lineStyle),
+    lineType: lineTypeFromDxf(record, layer?.lineType),
+    lineColor: lineColorFromDxf(record, layer?.lineColor),
+  };
 }
 
 function activeLayerDefinition() {
@@ -1143,9 +1304,72 @@ function applyLayerToEntity(entity, layer) {
     return;
   }
   entity.layer = layer.name;
-  applyLineStyleToEntity(entity, layer.lineStyle);
-  applyLineTypeToEntity(entity, layer.lineType);
+  applyLineStyleToEntity(entity, entity.type === 'DIMENSION' ? 'auxiliar' : layer.lineStyle);
+  applyLineTypeToEntity(entity, entity.type === 'DIMENSION' ? 'continuous' : layer.lineType);
   applyLineColorToEntity(entity, layer.lineColor);
+}
+
+function dimensionPlacementGripPoint(entity) {
+  const geometry = dimensionGeometry(entity);
+  if (entity.kind === 'horizontal' || entity.kind === 'vertical' || entity.kind === 'aligned') {
+    const dimensionLine = geometry.lines[geometry.lines.length - 1];
+    return dimensionLine ? entityMidpoint(dimensionLine) : entity.placement;
+  }
+  if (entity.kind === 'angular' && geometry.arcs[0]) {
+    const arc = geometry.arcs[0];
+    const sweep = normalizeAngle(arc.endAngle - arc.startAngle);
+    const angle = arc.startAngle + sweep * 0.5;
+    return {
+      x: arc.center.x + Math.cos(angle) * arc.radius,
+      y: arc.center.y + Math.sin(angle) * arc.radius,
+    };
+  }
+  return entity.placement;
+}
+
+function dimensionBaseGripPoints(entity) {
+  if (!['horizontal', 'vertical', 'aligned'].includes(entity.kind) || entity.points.length < 2) {
+    return [];
+  }
+  const [first, second] = entity.points;
+  if (entity.kind === 'horizontal') {
+    return [
+      { x: first.x, y: entity.placement.y },
+      { x: second.x, y: entity.placement.y },
+    ];
+  }
+  if (entity.kind === 'vertical') {
+    return [
+      { x: entity.placement.x, y: first.y },
+      { x: entity.placement.x, y: second.y },
+    ];
+  }
+  const direction = normalizedVector(first, second);
+  if (!direction) {
+    return [{ ...entity.placement }, { ...entity.placement }];
+  }
+  const normal = { x: -direction.y, y: direction.x };
+  const offset = (entity.placement.x - first.x) * normal.x +
+    (entity.placement.y - first.y) * normal.y;
+  return [
+    { x: first.x + normal.x * offset, y: first.y + normal.y * offset },
+    { x: second.x + normal.x * offset, y: second.y + normal.y * offset },
+  ];
+}
+
+function dimensionReferencePoints(entity) {
+  const geometry = dimensionGeometry(entity);
+  const baseGrips = dimensionBaseGripPoints(entity).map((point, index) => ({
+    type: 'endpoint',
+    key: `base-${index}`,
+    point,
+  }));
+  return [
+    ...baseGrips,
+    ...entity.points.map((point, index) => ({ type: 'endpoint', key: `point-${index}`, point })),
+    { type: 'midpoint', key: 'placement', point: dimensionPlacementGripPoint(entity) },
+    { type: 'center', key: 'text', point: geometry.text.point },
+  ];
 }
 
 function gripPoint(selectedGrip) {
@@ -1162,6 +1386,13 @@ function gripPoint(selectedGrip) {
   if (selectedGrip.entity.type === 'POLYLINE') {
     return polylineReferencePoints(selectedGrip.entity)
       .find((candidate) => candidate.key === selectedGrip.key)?.point || null;
+  }
+  if (selectedGrip.entity.type === 'DIMENSION') {
+    return dimensionReferencePoints(selectedGrip.entity)
+      .find((candidate) => candidate.key === selectedGrip.key)?.point || null;
+  }
+  if (selectedGrip.entity.type === 'INSERT') {
+    return selectedGrip.entity.insertionPoint;
   }
   return selectedGrip.entity[selectedGrip.key] || null;
 }
@@ -1187,6 +1418,22 @@ function gripReferencePoint(selectedGrip) {
       return selectedGrip.entity.vertices[Number(arcMatch[1])] || gripPoint(selectedGrip);
     }
     return gripPoint(selectedGrip);
+  }
+  if (selectedGrip.entity.type === 'DIMENSION') {
+    const pointMatch = selectedGrip.key.match(/^point-(\d+)$/);
+    if (pointMatch) {
+      const index = Number(pointMatch[1]);
+      const referenceIndex = index === 0 ? Math.min(1, selectedGrip.entity.points.length - 1) : 0;
+      return selectedGrip.entity.points[referenceIndex] || gripPoint(selectedGrip);
+    }
+    if (selectedGrip.key === 'text') {
+      return dimensionPlacementGripPoint(selectedGrip.entity);
+    }
+    const baseMatch = selectedGrip.key.match(/^base-(\d+)$/);
+    if (baseMatch) {
+      return selectedGrip.entity.points[Number(baseMatch[1])] || selectedGrip.entity.points[0];
+    }
+    return selectedGrip.entity.points[0] || gripPoint(selectedGrip);
   }
   if (selectedGrip.entity.type !== 'LINE') {
     return gripPoint(selectedGrip);
@@ -1479,6 +1726,113 @@ function movePolylineGrip(entity, key, targetPoint) {
   return false;
 }
 
+function moveDimensionGrip(entity, key, targetPoint) {
+  if (key === 'text') {
+    if (entity.kind === 'radius' || entity.kind === 'diameter') {
+      const metrics = dimensionStyleMetrics(entity.dimensionStyle);
+      const textOffset = metrics.textGap + metrics.textHeight * 0.55;
+      let placement = { ...targetPoint };
+      for (let iteration = 0; iteration < 3; iteration += 1) {
+        const direction = normalizedVector(entity.points[0], placement) ||
+          normalizedVector(entity.points[0], entity.placement) ||
+          normalizedVector(entity.points[0], entity.points[1]) ||
+          { x: 1, y: 0 };
+        let textAngle = Math.atan2(direction.y, direction.x);
+        if (textAngle > Math.PI * 0.5 || textAngle < -Math.PI * 0.5) {
+          textAngle += Math.PI;
+        }
+        const normal = naturalDimensionTextNormal(textAngle);
+        placement = {
+          x: targetPoint.x - normal.x * textOffset,
+          y: targetPoint.y - normal.y * textOffset,
+        };
+      }
+      entity.placement = placement;
+      entity.textPosition = null;
+      return true;
+    }
+    entity.textPosition = { ...targetPoint };
+    return true;
+  }
+  if (key === 'placement') {
+    const currentPlacement = dimensionPlacementGripPoint(entity);
+    let nextPlacement = { ...targetPoint };
+    if (entity.kind === 'horizontal') {
+      nextPlacement = { x: entity.placement.x, y: targetPoint.y };
+    }
+    else if (entity.kind === 'vertical') {
+      nextPlacement = { x: targetPoint.x, y: entity.placement.y };
+    }
+    else if (entity.kind === 'aligned') {
+      const direction = normalizedVector(entity.points[0], entity.points[1]);
+      if (direction) {
+        const normal = { x: -direction.y, y: direction.x };
+        const offset = (targetPoint.x - entity.points[0].x) * normal.x +
+          (targetPoint.y - entity.points[0].y) * normal.y;
+        nextPlacement = {
+          x: entity.points[0].x + normal.x * offset,
+          y: entity.points[0].y + normal.y * offset,
+        };
+      }
+    }
+    else if (entity.kind === 'angular') {
+      const vertex = entity.points[0];
+      const currentDirection = normalizedVector(vertex, currentPlacement) || { x: 1, y: 0 };
+      const radius = distance(vertex, targetPoint);
+      nextPlacement = {
+        x: vertex.x + currentDirection.x * radius,
+        y: vertex.y + currentDirection.y * radius,
+      };
+    }
+    entity.placement = nextPlacement;
+    const nextGripPoint = dimensionPlacementGripPoint(entity);
+    if (entity.textPosition) {
+      entity.textPosition = offsetPoint(entity.textPosition, {
+        x: nextGripPoint.x - currentPlacement.x,
+        y: nextGripPoint.y - currentPlacement.y,
+      });
+    }
+    return true;
+  }
+  const baseMatch = key.match(/^base-(\d+)$/);
+  if (baseMatch) {
+    const index = Number(baseMatch[1]);
+    const currentBasePoint = dimensionBaseGripPoints(entity)[index];
+    if (!currentBasePoint || !entity.points[index]) {
+      return false;
+    }
+    if (entity.kind === 'horizontal') {
+      entity.points[index].x = targetPoint.x;
+    }
+    else if (entity.kind === 'vertical') {
+      entity.points[index].y = targetPoint.y;
+    }
+    else {
+      const direction = normalizedVector(entity.points[0], entity.points[1]);
+      if (!direction) {
+        return false;
+      }
+      const displacement = (targetPoint.x - currentBasePoint.x) * direction.x +
+        (targetPoint.y - currentBasePoint.y) * direction.y;
+      entity.points[index] = offsetPoint(entity.points[index], {
+        x: direction.x * displacement,
+        y: direction.y * displacement,
+      });
+    }
+    return true;
+  }
+  const pointMatch = key.match(/^point-(\d+)$/);
+  if (!pointMatch) {
+    return false;
+  }
+  const index = Number(pointMatch[1]);
+  if (!entity.points[index]) {
+    return false;
+  }
+  entity.points[index] = { ...targetPoint };
+  return true;
+}
+
 function projectPointToLine(point, linePoint, direction) {
   const lengthSquared = direction.x * direction.x + direction.y * direction.y;
   if (lengthSquared <= SNAP_THRESHOLD) {
@@ -1580,7 +1934,49 @@ function polylineDraftEntity(draft) {
 }
 
 function primitiveEntityParts(entity) {
+  if (entity?.type === 'INSERT') {
+    return entity.expandedEntities().flatMap((part) => primitiveEntityParts(part));
+  }
   return entity?.type === 'POLYLINE' ? polylineSegmentEntities(entity) : entity ? [entity] : [];
+}
+
+function dimensionLineFromEntity(entity, pickPoint) {
+  if (entity?.type === 'LINE') {
+    return entity;
+  }
+  if (entity?.type !== 'POLYLINE') {
+    return null;
+  }
+  return polylineSegmentEntities(entity)
+    .filter((segment) => segment.type === 'LINE')
+    .sort((first, second) =>
+      distancePointToSegment(pickPoint, first.start, first.end) -
+      distancePointToSegment(pickPoint, second.start, second.end))[0] || null;
+}
+
+function dimensionKindForLine(line) {
+  const deltaX = Math.abs(line.end.x - line.start.x);
+  const deltaY = Math.abs(line.end.y - line.start.y);
+  if (deltaX <= SNAP_THRESHOLD) {
+    return 'vertical';
+  }
+  if (deltaY <= SNAP_THRESHOLD) {
+    return 'horizontal';
+  }
+  return 'aligned';
+}
+
+function dimensionCircularFromEntity(entity, pickPoint) {
+  if (isCircularEntity(entity)) {
+    return entity;
+  }
+  if (entity?.type !== 'POLYLINE') {
+    return null;
+  }
+  const closestSegment = polylineSegmentEntities(entity)
+    .sort((first, second) =>
+      entityDistanceToPoint(first, pickPoint) - entityDistanceToPoint(second, pickPoint))[0];
+  return closestSegment?.type === 'ARC' ? closestSegment : null;
 }
 
 function polylineReferencePoints(entity) {
@@ -1841,7 +2237,14 @@ function entityDistanceToPoint(entity, point) {
     return Math.hypot(deltaX, deltaY);
   }
   if (entity.type === 'HATCH') {
-    return polygonDistanceToPoint(point, entity.boundary);
+    const loops = entity.loops || [entity.boundary];
+    const insideFilledArea = loops.reduce(
+      (inside, loop) => pointInPolygon(point, loop) ? !inside : inside,
+      false,
+    );
+    return insideFilledArea
+      ? 0
+      : loops.reduce((nearest, loop) => Math.min(nearest, polygonDistanceToPoint(point, loop)), Infinity);
   }
   if (entity.type === 'POLYLINE') {
     return entity.segments.reduce((nearest, segment, index) => {
@@ -1852,6 +2255,31 @@ function entityDistanceToPoint(entity, point) {
       const halfWidth = Math.max(segment.startWidth, segment.endWidth) * 0.5;
       return Math.min(nearest, Math.max(0, entityDistanceToPoint(geometry, point) - halfWidth));
     }, Infinity);
+  }
+  if (entity.type === 'DIMENSION') {
+    const geometry = dimensionGeometry(entity);
+    const lineDistance = geometry.lines.reduce(
+      (nearest, line) => Math.min(nearest, distancePointToSegment(point, line.start, line.end)),
+      Infinity,
+    );
+    const arcDistance = geometry.arcs.reduce((nearest, arc) => Math.min(
+      nearest,
+      distancePointToArc(point, {
+        type: 'ARC',
+        center: arc.center,
+        radius: arc.radius,
+        startAngle: arc.startAngle,
+        endAngle: arc.endAngle,
+        clockwise: !arc.counterclockwise,
+      }),
+    ), Infinity);
+    return Math.min(lineDistance, arcDistance, distance(point, geometry.text.point));
+  }
+  if (entity.type === 'INSERT') {
+    return entity.expandedEntities().reduce(
+      (nearest, part) => Math.min(nearest, entityDistanceToPoint(part, point)),
+      distance(entity.insertionPoint, point),
+    );
   }
   return Infinity;
 }
@@ -2093,7 +2521,16 @@ class HatchEntity {
     this.type = 'HATCH';
     const requestedGripIndices = options.gripIndices || boundary.gripIndices;
     const requestedCurveGroups = options.curveGroups || boundary.curveGroups;
-    this.boundary = boundary.map((point) => ({ x: point.x, y: point.y }));
+    const requestedLoops = Array.isArray(options.loops) && options.loops.length
+      ? options.loops
+      : [boundary];
+    this.loops = requestedLoops
+      .filter((loop) => Array.isArray(loop) && loop.length >= 3)
+      .map((loop) => loop.map((point) => ({ x: point.x, y: point.y })));
+    if (!this.loops.length) {
+      this.loops = [boundary.map((point) => ({ x: point.x, y: point.y }))];
+    }
+    this.boundary = this.loops[0];
     this.gripIndices = Array.isArray(requestedGripIndices)
       ? [...new Set(requestedGripIndices)]
         .filter((index) => Number.isInteger(index) && index >= 0 && index < this.boundary.length)
@@ -2113,18 +2550,628 @@ class HatchEntity {
   }
 
   bounds() {
+    const points = this.loops.flat();
     return createBounds(
-      Math.min(...this.boundary.map((point) => point.x)),
-      Math.min(...this.boundary.map((point) => point.y)),
-      Math.max(...this.boundary.map((point) => point.x)),
-      Math.max(...this.boundary.map((point) => point.y)),
+      Math.min(...points.map((point) => point.x)),
+      Math.min(...points.map((point) => point.y)),
+      Math.max(...points.map((point) => point.x)),
+      Math.max(...points.map((point) => point.y)),
     );
   }
 
   length() {
-    return this.boundary.reduce((total, point, index) =>
-      total + distance(point, this.boundary[(index + 1) % this.boundary.length]), 0);
+    return this.loops.reduce((total, loop) => total + loop.reduce((loopTotal, point, index) =>
+      loopTotal + distance(point, loop[(index + 1) % loop.length]), 0), 0);
   }
+}
+
+function dimensionStyleMetrics(styleId) {
+  const style = DIMENSION_STYLES[styleId] || DIMENSION_STYLES.normal;
+  const profileMetrics = activeDrawingProfile().dimensionMetrics;
+  const scale = style.scale / DIMENSION_STYLES.normal.scale;
+  return {
+    textHeight: profileMetrics.textHeight * scale,
+    arrowSize: profileMetrics.arrowSize * scale,
+    textGap: profileMetrics.textGap,
+    extensionOffset: profileMetrics.extensionOffset * scale,
+    extensionOvershoot: profileMetrics.extensionOvershoot * scale,
+  };
+}
+
+function dimensionArrow(tip, direction, size) {
+  const unit = normalizedVector({ x: 0, y: 0 }, direction) || { x: 1, y: 0 };
+  const normal = { x: -unit.y, y: unit.x };
+  const arrowLength = size * 0.78;
+  const base = { x: tip.x + unit.x * arrowLength, y: tip.y + unit.y * arrowLength };
+  const halfWidth = size * 0.18;
+  return [
+    { ...tip },
+    { x: base.x + normal.x * halfWidth, y: base.y + normal.y * halfWidth },
+    { x: base.x - normal.x * halfWidth, y: base.y - normal.y * halfWidth },
+  ];
+}
+
+function dimensionExtensionLine(reference, dimensionPoint, metrics) {
+  const unit = normalizedVector(reference, dimensionPoint);
+  if (!unit) {
+    return null;
+  }
+  return {
+    start: {
+      x: reference.x + unit.x * metrics.extensionOffset,
+      y: reference.y + unit.y * metrics.extensionOffset,
+    },
+    end: {
+      x: dimensionPoint.x + unit.x * metrics.extensionOvershoot,
+      y: dimensionPoint.y + unit.y * metrics.extensionOvershoot,
+    },
+  };
+}
+
+function dimensionTextValue(entity) {
+  if (entity.kind === 'radius') {
+    return `R${formatNumber(entity.measurement())}`;
+  }
+  if (entity.kind === 'diameter') {
+    return `Ø${formatNumber(entity.measurement())}`;
+  }
+  if (entity.kind === 'angular') {
+    return `${formatNumber(entity.measurement())}°`;
+  }
+  return formatNumber(entity.measurement());
+}
+
+function naturalDimensionTextNormal(angle) {
+  let normal = { x: -Math.sin(angle), y: Math.cos(angle) };
+  if (Math.abs(Math.cos(angle)) < 0.05) {
+    if (normal.x > 0) {
+      normal = { x: -normal.x, y: -normal.y };
+    }
+  }
+  else if (normal.y > 0) {
+    normal = { x: -normal.x, y: -normal.y };
+  }
+  return normal;
+}
+
+function dimensionLinearGeometry(entity, metrics) {
+  const first = entity.points[0];
+  const second = entity.points[1];
+  const placement = entity.placement;
+  let firstDimension;
+  let secondDimension;
+  let textAngle = 0;
+  if (entity.kind === 'horizontal') {
+    firstDimension = { x: first.x, y: placement.y };
+    secondDimension = { x: second.x, y: placement.y };
+  }
+  else if (entity.kind === 'vertical') {
+    firstDimension = { x: placement.x, y: first.y };
+    secondDimension = { x: placement.x, y: second.y };
+    textAngle = -Math.PI * 0.5;
+  }
+  else {
+    const direction = normalizedVector(first, second) || { x: 1, y: 0 };
+    const normal = { x: -direction.y, y: direction.x };
+    const offset = (placement.x - first.x) * normal.x + (placement.y - first.y) * normal.y;
+    firstDimension = { x: first.x + normal.x * offset, y: first.y + normal.y * offset };
+    secondDimension = { x: second.x + normal.x * offset, y: second.y + normal.y * offset };
+    textAngle = Math.atan2(direction.y, direction.x);
+    if (textAngle > Math.PI * 0.5 || textAngle < -Math.PI * 0.5) {
+      textAngle += Math.PI;
+    }
+  }
+  const textNormal = naturalDimensionTextNormal(textAngle);
+  const lineDirection = normalizedVector(firstDimension, secondDimension) || { x: 1, y: 0 };
+  const midpoint = entityMidpoint({ start: firstDimension, end: secondDimension });
+  const dimensionLength = distance(firstDimension, secondDimension);
+  const externalArrows = dimensionLength < metrics.arrowSize * 2.5;
+  const dimensionLine = externalArrows
+    ? {
+      start: {
+        x: firstDimension.x - lineDirection.x * metrics.arrowSize * 1.35,
+        y: firstDimension.y - lineDirection.y * metrics.arrowSize * 1.35,
+      },
+      end: {
+        x: secondDimension.x + lineDirection.x * metrics.arrowSize * 1.35,
+        y: secondDimension.y + lineDirection.y * metrics.arrowSize * 1.35,
+      },
+    }
+    : { start: firstDimension, end: secondDimension };
+  return {
+    lines: [
+      dimensionExtensionLine(first, firstDimension, metrics),
+      dimensionExtensionLine(second, secondDimension, metrics),
+      dimensionLine,
+    ].filter(Boolean),
+    arcs: [],
+    arrows: externalArrows
+      ? [
+        dimensionArrow(firstDimension, { x: -lineDirection.x, y: -lineDirection.y }, metrics.arrowSize),
+        dimensionArrow(secondDimension, lineDirection, metrics.arrowSize),
+      ]
+      : [
+        dimensionArrow(firstDimension, lineDirection, metrics.arrowSize),
+        dimensionArrow(secondDimension, { x: -lineDirection.x, y: -lineDirection.y }, metrics.arrowSize),
+      ],
+    text: {
+      point: {
+        x: midpoint.x + textNormal.x * (metrics.textGap + metrics.textHeight * 0.55),
+        y: midpoint.y + textNormal.y * (metrics.textGap + metrics.textHeight * 0.55),
+      },
+      angle: textAngle,
+      value: dimensionTextValue(entity),
+      height: metrics.textHeight,
+    },
+  };
+}
+
+function dimensionRadialGeometry(entity, metrics) {
+  const center = entity.points[0];
+  const radiusPoint = entity.points[1];
+  const radius = distance(center, radiusPoint);
+  const direction = normalizedVector(center, entity.placement) || normalizedVector(center, radiusPoint) || { x: 1, y: 0 };
+  let textAngle = Math.atan2(direction.y, direction.x);
+  if (textAngle > Math.PI * 0.5 || textAngle < -Math.PI * 0.5) {
+    textAngle += Math.PI;
+  }
+  const textNormal = naturalDimensionTextNormal(textAngle);
+  const positiveEdge = { x: center.x + direction.x * radius, y: center.y + direction.y * radius };
+  const negativeEdge = { x: center.x - direction.x * radius, y: center.y - direction.y * radius };
+  const arrowExtension = metrics.arrowSize * 1.35;
+  const extendedPositiveEdge = {
+    x: positiveEdge.x + direction.x * arrowExtension,
+    y: positiveEdge.y + direction.y * arrowExtension,
+  };
+  const extendedNegativeEdge = {
+    x: negativeEdge.x - direction.x * arrowExtension,
+    y: negativeEdge.y - direction.y * arrowExtension,
+  };
+  const textPoint = {
+    x: entity.placement.x + textNormal.x * (metrics.textGap + metrics.textHeight * 0.55),
+    y: entity.placement.y + textNormal.y * (metrics.textGap + metrics.textHeight * 0.55),
+  };
+  if (entity.kind === 'diameter') {
+    const placementDistance = (
+      (entity.placement.x - center.x) * direction.x +
+      (entity.placement.y - center.y) * direction.y
+    );
+    const extendToCenter = placementDistance < radius;
+    return {
+      lines: [extendToCenter
+        ? { start: extendedNegativeEdge, end: extendedPositiveEdge }
+        : { start: negativeEdge, end: entity.placement }],
+      arcs: [],
+      arrows: [
+        dimensionArrow(negativeEdge, direction, metrics.arrowSize),
+        dimensionArrow(positiveEdge, { x: -direction.x, y: -direction.y }, metrics.arrowSize),
+      ],
+      text: { point: textPoint, angle: textAngle, value: dimensionTextValue(entity), height: metrics.textHeight },
+    };
+  }
+  const placementDistance = (
+    (entity.placement.x - center.x) * direction.x +
+    (entity.placement.y - center.y) * direction.y
+  );
+  const radialLine = placementDistance < radius
+    ? { start: center, end: extendedPositiveEdge }
+    : { start: center, end: entity.placement };
+  return {
+    lines: [radialLine],
+    arcs: [],
+    arrows: [dimensionArrow(positiveEdge, direction, metrics.arrowSize)],
+    text: { point: textPoint, angle: textAngle, value: dimensionTextValue(entity), height: metrics.textHeight },
+  };
+}
+
+function dimensionAngularGeometry(entity, metrics) {
+  const [vertex, firstRay, secondRay] = entity.points;
+  let startAngle = angleOfPoint(vertex, firstRay);
+  let endAngle = angleOfPoint(vertex, secondRay);
+  let sweep = normalizeAngle(endAngle - startAngle);
+  if (sweep > Math.PI) {
+    [startAngle, endAngle] = [endAngle, startAngle];
+    sweep = TWO_PI - sweep;
+  }
+  const radius = Math.max(distance(vertex, entity.placement), metrics.arrowSize * 2);
+  const start = { x: vertex.x + Math.cos(startAngle) * radius, y: vertex.y + Math.sin(startAngle) * radius };
+  const end = { x: vertex.x + Math.cos(endAngle) * radius, y: vertex.y + Math.sin(endAngle) * radius };
+  const midAngle = startAngle + sweep * 0.5;
+  const tangentStart = { x: -Math.sin(startAngle), y: Math.cos(startAngle) };
+  const tangentEnd = { x: Math.sin(endAngle), y: -Math.cos(endAngle) };
+  const externalArrows = radius * sweep < metrics.arrowSize * 2.5;
+  const arrowArcExtension = externalArrows
+    ? metrics.arrowSize * 1.35 / radius
+    : 0;
+  let textAngle = Math.atan2(
+    Math.sin(midAngle + Math.PI * 0.5),
+    Math.cos(midAngle + Math.PI * 0.5),
+  );
+  if (textAngle > Math.PI * 0.5 || textAngle < -Math.PI * 0.5) {
+    textAngle += Math.PI;
+  }
+  return {
+    lines: [
+      { start: vertex, end: { x: vertex.x + Math.cos(startAngle) * (radius + metrics.extensionOvershoot), y: vertex.y + Math.sin(startAngle) * (radius + metrics.extensionOvershoot) } },
+      { start: vertex, end: { x: vertex.x + Math.cos(endAngle) * (radius + metrics.extensionOvershoot), y: vertex.y + Math.sin(endAngle) * (radius + metrics.extensionOvershoot) } },
+    ],
+    arcs: [{
+      center: vertex,
+      radius,
+      startAngle: startAngle - arrowArcExtension,
+      endAngle: endAngle + arrowArcExtension,
+      counterclockwise: false,
+    }],
+    arrows: externalArrows
+      ? [
+        dimensionArrow(start, { x: -tangentStart.x, y: -tangentStart.y }, metrics.arrowSize),
+        dimensionArrow(end, { x: -tangentEnd.x, y: -tangentEnd.y }, metrics.arrowSize),
+      ]
+      : [
+        dimensionArrow(start, tangentStart, metrics.arrowSize),
+        dimensionArrow(end, tangentEnd, metrics.arrowSize),
+      ],
+    text: {
+      point: {
+        x: vertex.x + Math.cos(midAngle) * (radius + metrics.textGap + metrics.textHeight * 0.6),
+        y: vertex.y + Math.sin(midAngle) * (radius + metrics.textGap + metrics.textHeight * 0.6),
+      },
+      angle: textAngle,
+      value: dimensionTextValue(entity),
+      height: metrics.textHeight,
+    },
+  };
+}
+
+function dimensionGeometry(entity) {
+  const metrics = dimensionStyleMetrics(entity.dimensionStyle);
+  let geometry;
+  if (entity.kind === 'angular') {
+    geometry = dimensionAngularGeometry(entity, metrics);
+  }
+  else if (entity.kind === 'radius' || entity.kind === 'diameter') {
+    geometry = dimensionRadialGeometry(entity, metrics);
+  }
+  else {
+    geometry = dimensionLinearGeometry(entity, metrics);
+  }
+  if (entity.textPosition && entity.kind !== 'radius' && entity.kind !== 'diameter') {
+    geometry.text.point = { ...entity.textPosition };
+  }
+  return geometry;
+}
+
+class DimensionEntity {
+  constructor(kind, points, placement, options = {}) {
+    this.type = 'DIMENSION';
+    this.kind = kind;
+    this.points = points.map((point) => ({ x: point.x, y: point.y }));
+    this.placement = { x: placement.x, y: placement.y };
+    this.textPosition = options.textPosition
+      ? { x: options.textPosition.x, y: options.textPosition.y }
+      : null;
+    this.dimensionStyle = DIMENSION_STYLES[options.dimensionStyle]?.id || 'normal';
+    this.groupId = null;
+    this.layer = options.layer || DEFAULT_LAYER.name;
+    applyLineStyleToEntity(this, 'auxiliar');
+    applyLineTypeToEntity(this, 'continuous');
+    applyLineColorToEntity(this, options.lineColor || DEFAULT_LINE_COLOR);
+  }
+
+  measurement() {
+    if (this.kind === 'horizontal') return Math.abs(this.points[1].x - this.points[0].x);
+    if (this.kind === 'vertical') return Math.abs(this.points[1].y - this.points[0].y);
+    if (this.kind === 'aligned') return distance(this.points[0], this.points[1]);
+    if (this.kind === 'radius') return distance(this.points[0], this.points[1]);
+    if (this.kind === 'diameter') return distance(this.points[0], this.points[1]) * 2;
+    const firstAngle = angleOfPoint(this.points[0], this.points[1]);
+    const secondAngle = angleOfPoint(this.points[0], this.points[2]);
+    const sweep = normalizeAngle(secondAngle - firstAngle);
+    return Math.min(sweep, TWO_PI - sweep) * 180 / Math.PI;
+  }
+
+  bounds() {
+    const geometry = dimensionGeometry(this);
+    const points = [
+      ...this.points,
+      this.placement,
+      ...geometry.lines.flatMap((line) => [line.start, line.end]),
+      ...geometry.arrows.flat(),
+      geometry.text.point,
+    ];
+    geometry.arcs.forEach((arc) => {
+      for (let index = 0; index <= 16; index += 1) {
+        const angle = arc.startAngle + normalizeAngle(arc.endAngle - arc.startAngle) * index / 16;
+        points.push({ x: arc.center.x + Math.cos(angle) * arc.radius, y: arc.center.y + Math.sin(angle) * arc.radius });
+      }
+    });
+    const padding = geometry.text.height;
+    return expandBounds(createBounds(
+      Math.min(...points.map((point) => point.x)),
+      Math.min(...points.map((point) => point.y)),
+      Math.max(...points.map((point) => point.x)),
+      Math.max(...points.map((point) => point.y)),
+    ), padding);
+  }
+
+  length() {
+    return this.measurement();
+  }
+}
+
+function dimensionPlacementOrigin(draft) {
+  return draft?.points?.[0] || null;
+}
+
+function dimensionPlacementDistance(draft, placement) {
+  if (!draft?.points?.length || !placement) {
+    return null;
+  }
+  const origin = draft.points[0];
+  if (draft.kind === 'horizontal') {
+    return Math.abs(placement.y - origin.y);
+  }
+  if (draft.kind === 'vertical') {
+    return Math.abs(placement.x - origin.x);
+  }
+  if (draft.kind === 'aligned' && draft.points[1]) {
+    return distancePointToInfiniteLine(placement, origin, {
+      x: draft.points[1].x - origin.x,
+      y: draft.points[1].y - origin.y,
+    });
+  }
+  if ((draft.kind === 'radius' || draft.kind === 'diameter') && draft.points[1]) {
+    return Math.max(0, distance(origin, placement) - distance(origin, draft.points[1]));
+  }
+  if (draft.kind === 'angular') {
+    return distance(origin, placement);
+  }
+  return null;
+}
+
+function dimensionPlacementPoint(draft, cursor, currentState) {
+  if (!draft || !cursor || draft.phase !== 'placement') {
+    return cursor;
+  }
+  const origin = dimensionPlacementOrigin(draft);
+  const coordinateTarget = pointFromRelativeCoordinates(origin, currentState.distanceInput);
+  if (coordinateTarget) {
+    draft.suggestionActive = false;
+    return coordinateTarget;
+  }
+  let inputDistance = parseDistanceInput(currentState.distanceInput);
+  draft.suggestionActive = false;
+  if (
+    inputDistance === null &&
+    !currentState.activeObjectSnap &&
+    Number.isFinite(draft.suggestedOffset) &&
+    draft.suggestedOffset > SNAP_THRESHOLD
+  ) {
+    const cursorDistance = dimensionPlacementDistance(draft, cursor);
+    const suggestionTolerance = (currentState.snapPixelTolerance || 10) / currentState.viewScale;
+    if (
+      Number.isFinite(cursorDistance) &&
+      Math.abs(cursorDistance - draft.suggestedOffset) <= suggestionTolerance
+    ) {
+      inputDistance = draft.suggestedOffset;
+      draft.suggestionActive = true;
+    }
+  }
+  if (inputDistance === null || !origin) {
+    return cursor;
+  }
+  if (draft.kind === 'horizontal') {
+    const side = Math.sign(cursor.y - origin.y) || 1;
+    return { x: cursor.x, y: origin.y + side * inputDistance };
+  }
+  if (draft.kind === 'vertical') {
+    const side = Math.sign(cursor.x - origin.x) || 1;
+    return { x: origin.x + side * inputDistance, y: cursor.y };
+  }
+  if (draft.kind === 'aligned' && draft.points[1]) {
+    const direction = normalizedVector(draft.points[0], draft.points[1]);
+    if (direction) {
+      const normal = { x: -direction.y, y: direction.x };
+      const side = Math.sign((cursor.x - origin.x) * normal.x + (cursor.y - origin.y) * normal.y) || 1;
+      return { x: origin.x + normal.x * inputDistance * side, y: origin.y + normal.y * inputDistance * side };
+    }
+  }
+  const direction = normalizedVector(origin, cursor) || { x: 1, y: 0 };
+  const radialOffset = draft.kind === 'radius' || draft.kind === 'diameter'
+    ? distance(draft.points[0], draft.points[1]) + inputDistance
+    : inputDistance;
+  return {
+    x: origin.x + direction.x * radialOffset,
+    y: origin.y + direction.y * radialOffset,
+  };
+}
+
+function dimensionDraftEntity(draft, placement) {
+  if (!draft || draft.phase !== 'placement' || !placement) {
+    return null;
+  }
+  return new DimensionEntity(draft.kind, draft.points, placement, {
+    layer: activeLayerName(),
+    lineColor: activeLineColorId(),
+    dimensionStyle: state.dimensionStyle,
+  });
+}
+
+class BlockReferenceEntity {
+  constructor(definition, insertionPoint, options = {}) {
+    this.type = 'INSERT';
+    this.blockName = definition?.name || String(options.blockName || '');
+    this.definition = definition || null;
+    this.insertionPoint = { x: insertionPoint.x, y: insertionPoint.y };
+    this.rotation = Number(options.rotation) || 0;
+    this.scaleX = Number.isFinite(Number(options.scaleX)) ? Number(options.scaleX) : 1;
+    this.scaleY = Number.isFinite(Number(options.scaleY)) ? Number(options.scaleY) : this.scaleX;
+    this.expandedCache = null;
+    this.expandedCacheKey = '';
+    this.expandedCacheDefinition = null;
+    this.expandedCacheRevision = -1;
+    this.groupId = null;
+    this.layer = options.layer || DEFAULT_LAYER.name;
+    applyLineStyleToEntity(this, options.lineStyle || DEFAULT_LINE_STYLE);
+    applyLineTypeToEntity(this, options.lineType || DEFAULT_LINE_TYPE);
+    applyLineColorToEntity(this, options.lineColor || DEFAULT_LINE_COLOR);
+  }
+
+  expandedEntities() {
+    const cacheKey = [
+      this.insertionPoint.x,
+      this.insertionPoint.y,
+      this.rotation,
+      this.scaleX,
+      this.scaleY,
+    ].join(':');
+    if (
+      this.expandedCache &&
+      this.expandedCacheKey === cacheKey &&
+      this.expandedCacheDefinition === this.definition &&
+      this.expandedCacheRevision === (this.definition?.revision || 0)
+    ) {
+      return this.expandedCache;
+    }
+    this.expandedCache = expandBlockReferenceEntities(this);
+    this.expandedCacheKey = cacheKey;
+    this.expandedCacheDefinition = this.definition;
+    this.expandedCacheRevision = this.definition?.revision || 0;
+    return this.expandedCache;
+  }
+
+  bounds() {
+    const expanded = this.expandedEntities();
+    if (!expanded.length) {
+      return createBounds(
+        this.insertionPoint.x,
+        this.insertionPoint.y,
+        this.insertionPoint.x,
+        this.insertionPoint.y,
+      );
+    }
+    return expanded.reduce((bounds, entity) => mergeBounds(bounds, entity.bounds()), null);
+  }
+
+  length() {
+    return this.expandedEntities().reduce((total, entity) => total + entity.length(), 0);
+  }
+}
+
+function cloneBlockDefinition(definition, definitionMap = null) {
+  const clone = {
+    name: definition.name,
+    revision: definition.revision || 0,
+    entities: [],
+  };
+  clone.entities = definition.entities
+    .map((entity) => cloneEntity(entity, {
+      definition: entity.type === 'INSERT'
+        ? definitionMap?.get(entity.blockName.toLowerCase()) || entity.definition
+        : undefined,
+    }))
+    .filter(Boolean);
+  return clone;
+}
+
+function scalePointFromOrigin(point, scaleX, scaleY) {
+  return { x: point.x * scaleX, y: point.y * scaleY };
+}
+
+function scaleEntityByFactors(entity, scaleX, scaleY) {
+  const uniformScale = (Math.abs(scaleX) + Math.abs(scaleY)) * 0.5;
+  if (entity.type === 'LINE') {
+    entity.start = scalePointFromOrigin(entity.start, scaleX, scaleY);
+    entity.end = scalePointFromOrigin(entity.end, scaleX, scaleY);
+    return true;
+  }
+  if (entity.type === 'DIMENSION') {
+    entity.points = entity.points.map((point) => scalePointFromOrigin(point, scaleX, scaleY));
+    entity.placement = scalePointFromOrigin(entity.placement, scaleX, scaleY);
+    if (entity.textPosition) {
+      entity.textPosition = scalePointFromOrigin(entity.textPosition, scaleX, scaleY);
+    }
+    return true;
+  }
+  if (entity.type === 'CIRCLE' || entity.type === 'ARC') {
+    entity.center = scalePointFromOrigin(entity.center, scaleX, scaleY);
+    entity.radius *= uniformScale;
+    return true;
+  }
+  if (entity.type === 'TEXT') {
+    entity.insertionPoint = scalePointFromOrigin(entity.insertionPoint, scaleX, scaleY);
+    entity.height *= uniformScale;
+    return true;
+  }
+  if (entity.type === 'HATCH') {
+    entity.loops = (entity.loops || [entity.boundary]).map((loop) =>
+      loop.map((point) => scalePointFromOrigin(point, scaleX, scaleY)));
+    entity.boundary = entity.loops[0];
+    return true;
+  }
+  if (entity.type === 'POLYLINE') {
+    entity.vertices = entity.vertices.map((point) => scalePointFromOrigin(point, scaleX, scaleY));
+    entity.segments.forEach((segment) => {
+      if (segment.center) {
+        segment.center = scalePointFromOrigin(segment.center, scaleX, scaleY);
+      }
+      segment.startWidth *= uniformScale;
+      segment.endWidth *= uniformScale;
+    });
+    return true;
+  }
+  if (entity.type === 'INSERT') {
+    entity.insertionPoint = scalePointFromOrigin(entity.insertionPoint, scaleX, scaleY);
+    entity.scaleX *= scaleX;
+    entity.scaleY *= scaleY;
+    return true;
+  }
+  return false;
+}
+
+function expandBlockReferenceEntities(reference, depth = 0, visited = new Set()) {
+  const definition = reference?.definition;
+  const definitionKey = String(reference?.blockName || '').toLowerCase();
+  if (!definition || depth > 8 || visited.has(definitionKey)) {
+    return [];
+  }
+  const nextVisited = new Set(visited);
+  nextVisited.add(definitionKey);
+  const expanded = [];
+  for (const source of definition.entities) {
+    const transformed = cloneEntity(source);
+    if (!transformed || !scaleEntityByFactors(transformed, reference.scaleX, reference.scaleY)) {
+      continue;
+    }
+    rotateEntityByAngle(transformed, { x: 0, y: 0 }, reference.rotation);
+    moveEntityByVector(transformed, reference.insertionPoint);
+    if (transformed.type === 'INSERT') {
+      expanded.push(...expandBlockReferenceEntities(transformed, depth + 1, nextVisited));
+    }
+    else {
+      expanded.push(transformed);
+    }
+  }
+  return expanded;
+}
+
+function transformedBlockContents(reference) {
+  if (!reference?.definition) {
+    return [];
+  }
+  return reference.definition.entities.map((source) => {
+    const transformed = cloneEntity(source);
+    if (!transformed || !scaleEntityByFactors(transformed, reference.scaleX, reference.scaleY)) {
+      return null;
+    }
+    rotateEntityByAngle(transformed, { x: 0, y: 0 }, reference.rotation);
+    moveEntityByVector(transformed, reference.insertionPoint);
+    return transformed;
+  }).filter(Boolean);
+}
+
+function entityCanExplode(entity) {
+  return entity?.type === 'INSERT' || entity?.type === 'POLYLINE' || Boolean(entity?.groupId);
 }
 
 function cloneEntityWithOffset(entity, vector, options = {}) {
@@ -2204,6 +3251,39 @@ function cloneEntityWithOffset(entity, vector, options = {}) {
         lineColor: entity.lineColor,
         gripIndices: entity.gripIndices,
         curveGroups: entity.curveGroups,
+        loops: (entity.loops || [entity.boundary]).map((loop) =>
+          loop.map((point) => offsetPoint(point, vector))),
+      },
+    );
+  }
+
+  if (entity.type === 'DIMENSION') {
+    return new DimensionEntity(
+      entity.kind,
+      entity.points.map((point) => offsetPoint(point, vector)),
+      offsetPoint(entity.placement, vector),
+      {
+        layer: entity.layer,
+        lineColor: entity.lineColor,
+        dimensionStyle: entity.dimensionStyle,
+        textPosition: entity.textPosition ? offsetPoint(entity.textPosition, vector) : null,
+      },
+    );
+  }
+
+  if (entity.type === 'INSERT') {
+    return new BlockReferenceEntity(
+      options.definition || entity.definition,
+      offsetPoint(entity.insertionPoint, vector),
+      {
+        blockName: entity.blockName,
+        layer: entity.layer,
+        lineStyle: entity.lineStyle,
+        lineType: entity.lineType,
+        lineColor: entity.lineColor,
+        rotation: entity.rotation,
+        scaleX: entity.scaleX,
+        scaleY: entity.scaleY,
       },
     );
   }
@@ -2211,8 +3291,8 @@ function cloneEntityWithOffset(entity, vector, options = {}) {
   return null;
 }
 
-function cloneEntity(entity) {
-  return cloneEntityWithOffset(entity, { x: 0, y: 0 });
+function cloneEntity(entity, options = {}) {
+  return cloneEntityWithOffset(entity, { x: 0, y: 0 }, options);
 }
 
 function cloneEntitiesWithOffset(entities, vector, options = {}) {
@@ -2248,7 +3328,9 @@ function moveEntityByVector(entity, vector) {
     return true;
   }
   if (entity.type === 'HATCH') {
-    entity.boundary = entity.boundary.map((point) => offsetPoint(point, vector));
+    entity.loops = (entity.loops || [entity.boundary]).map((loop) =>
+      loop.map((point) => offsetPoint(point, vector)));
+    entity.boundary = entity.loops[0];
     return true;
   }
   if (entity.type === 'POLYLINE') {
@@ -2258,6 +3340,18 @@ function moveEntityByVector(entity, vector) {
         segment.center = offsetPoint(segment.center, vector);
       }
     });
+    return true;
+  }
+  if (entity.type === 'DIMENSION') {
+    entity.points = entity.points.map((point) => offsetPoint(point, vector));
+    entity.placement = offsetPoint(entity.placement, vector);
+    if (entity.textPosition) {
+      entity.textPosition = offsetPoint(entity.textPosition, vector);
+    }
+    return true;
+  }
+  if (entity.type === 'INSERT') {
+    entity.insertionPoint = offsetPoint(entity.insertionPoint, vector);
     return true;
   }
 
@@ -2299,8 +3393,9 @@ function rotateEntityByAngle(entity, basePoint, angleDegrees) {
     return true;
   }
   if (entity.type === 'HATCH') {
-    entity.boundary = entity.boundary.map((point) =>
-      rotatePointAround(point, basePoint, angleDegrees));
+    entity.loops = (entity.loops || [entity.boundary]).map((loop) => loop.map((point) =>
+      rotatePointAround(point, basePoint, angleDegrees)));
+    entity.boundary = entity.loops[0];
     return true;
   }
   if (entity.type === 'POLYLINE') {
@@ -2310,6 +3405,22 @@ function rotateEntityByAngle(entity, basePoint, angleDegrees) {
         segment.center = rotatePointAround(segment.center, basePoint, angleDegrees);
       }
     });
+    return true;
+  }
+  if (entity.type === 'DIMENSION') {
+    entity.points = entity.points.map((point) => rotatePointAround(point, basePoint, angleDegrees));
+    entity.placement = rotatePointAround(entity.placement, basePoint, angleDegrees);
+    if (entity.textPosition) {
+      entity.textPosition = rotatePointAround(entity.textPosition, basePoint, angleDegrees);
+    }
+    if (entity.kind === 'horizontal' || entity.kind === 'vertical') {
+      entity.kind = 'aligned';
+    }
+    return true;
+  }
+  if (entity.type === 'INSERT') {
+    entity.insertionPoint = rotatePointAround(entity.insertionPoint, basePoint, angleDegrees);
+    entity.rotation += angleDegrees;
     return true;
   }
 
@@ -2327,6 +3438,10 @@ function rotationAngleFromPoint(basePoint, point, orthoEnabled = false) {
 class CadDocument {
   constructor() {
     this.entities = [];
+    this.rootEntities = null;
+    this.editingBlockName = null;
+    this.editHistoryFloor = null;
+    this.blockDefinitions = new Map();
     this.selectedEntity = null;
     this.selectedEntities = new Set();
     this.cachedBounds = null;
@@ -2341,16 +3456,113 @@ class CadDocument {
   }
 
   markDirty() {
+    if (this.editingBlockName) {
+      const definition = this.blockDefinitions.get(this.editingBlockName.toLowerCase());
+      if (definition) {
+        definition.entities = this.entities;
+        definition.revision = (definition.revision || 0) + 1;
+      }
+    }
     this.boundsDirty = true;
     this.spatialDirty = true;
   }
 
+  isEditingBlock() {
+    return Boolean(this.editingBlockName && this.rootEntities);
+  }
+
+  topLevelEntities() {
+    return this.isEditingBlock() ? this.rootEntities : this.entities;
+  }
+
+  beginBlockEdit(definition) {
+    if (!definition || this.isEditingBlock()) {
+      return false;
+    }
+    this.rootEntities = this.entities;
+    this.editingBlockName = definition.name;
+    this.editHistoryFloor = this.undoStack.length;
+    this.entities = definition.entities;
+    this.clearSelection();
+    this.boundsDirty = true;
+    this.spatialDirty = true;
+    return true;
+  }
+
+  endBlockEdit() {
+    if (!this.isEditingBlock()) {
+      return false;
+    }
+    const definition = this.blockDefinitions.get(this.editingBlockName.toLowerCase());
+    if (definition) {
+      definition.entities = this.entities;
+    }
+    this.entities = this.rootEntities;
+    this.rootEntities = null;
+    this.editingBlockName = null;
+    this.editHistoryFloor = null;
+    this.clearSelection();
+    this.markDirty();
+    return true;
+  }
+
   snapshot() {
-    return this.entities.map((entity) => cloneEntity(entity)).filter(Boolean);
+    const definitions = [...this.blockDefinitions.values()].map((definition) => ({
+      name: definition.name,
+      revision: definition.revision || 0,
+      entities: [],
+    }));
+    const definitionMap = new Map(definitions.map((definition) => [definition.name.toLowerCase(), definition]));
+    [...this.blockDefinitions.values()].forEach((definition) => {
+      const target = definitionMap.get(definition.name.toLowerCase());
+      target.entities = definition.entities.map((entity) => cloneEntity(entity, {
+        definition: entity.type === 'INSERT'
+          ? definitionMap.get(entity.blockName.toLowerCase()) || entity.definition
+          : undefined,
+      })).filter(Boolean);
+    });
+    return {
+      entities: this.topLevelEntities().map((entity) => cloneEntity(entity, {
+        definition: entity.type === 'INSERT'
+          ? definitionMap.get(entity.blockName.toLowerCase()) || entity.definition
+          : undefined,
+      })).filter(Boolean),
+      blockDefinitions: definitions,
+    };
   }
 
   restoreSnapshot(snapshot) {
-    this.entities = snapshot.map((entity) => cloneEntity(entity)).filter(Boolean);
+    const snapshotEntities = Array.isArray(snapshot) ? snapshot : snapshot.entities || [];
+    const snapshotDefinitions = Array.isArray(snapshot) ? [] : snapshot.blockDefinitions || [];
+    const activeBlockName = this.editingBlockName;
+    const definitionMap = new Map(snapshotDefinitions.map((definition) => [
+      definition.name.toLowerCase(),
+      { name: definition.name, revision: definition.revision || 0, entities: [] },
+    ]));
+    snapshotDefinitions.forEach((definition) => {
+      const target = definitionMap.get(definition.name.toLowerCase());
+      target.entities = definition.entities.map((entity) => cloneEntity(entity, {
+        definition: entity.type === 'INSERT'
+          ? definitionMap.get(entity.blockName.toLowerCase()) || entity.definition
+          : undefined,
+      })).filter(Boolean);
+    });
+    this.blockDefinitions = definitionMap;
+    const restoredRootEntities = snapshotEntities.map((entity) => cloneEntity(entity, {
+      definition: entity.type === 'INSERT'
+        ? definitionMap.get(entity.blockName.toLowerCase()) || entity.definition
+        : undefined,
+    })).filter(Boolean);
+    if (activeBlockName && definitionMap.has(activeBlockName.toLowerCase())) {
+      this.rootEntities = restoredRootEntities;
+      this.editingBlockName = activeBlockName;
+      this.entities = definitionMap.get(activeBlockName.toLowerCase()).entities;
+    }
+    else {
+      this.rootEntities = null;
+      this.editingBlockName = null;
+      this.entities = restoredRootEntities;
+    }
     this.clearSelection();
     this.markDirty();
   }
@@ -2364,7 +3576,7 @@ class CadDocument {
   }
 
   canUndo() {
-    return this.undoStack.length > 0;
+    return this.undoStack.length > (this.isEditingBlock() ? this.editHistoryFloor || 0 : 0);
   }
 
   canRedo() {
@@ -2399,6 +3611,10 @@ class CadDocument {
       this.recordHistory();
     }
     this.entities = [];
+    this.rootEntities = null;
+    this.editingBlockName = null;
+    this.editHistoryFloor = null;
+    this.blockDefinitions = new Map();
     this.clearSelection();
     this.markDirty();
   }
@@ -2488,6 +3704,13 @@ class CadDocument {
     if (options.recordHistory !== false) {
       this.recordHistory();
     }
+    this.blockDefinitions = new Map((entities.blockDefinitions || []).map((definition) => [
+      definition.name.toLowerCase(),
+      definition,
+    ]));
+    this.rootEntities = null;
+    this.editingBlockName = null;
+    this.editHistoryFloor = null;
     this.entities = [...entities];
     this.clearSelection();
     this.markDirty();
@@ -2638,6 +3861,137 @@ class CadDocument {
   isSelected(entity) {
     return this.selectedEntities.has(entity);
   }
+}
+
+function dotProduct(first, second) {
+  return first.x * second.x + first.y * second.y;
+}
+
+function filletRayDirection(line, intersection, pickPoint) {
+  const projectedPick = closestPointOnLineSegment(line, pickPoint);
+  let direction = normalizedVector(intersection, projectedPick);
+  if (direction) {
+    return direction;
+  }
+  const preferredEndpoint = distance(pickPoint, line.start) <= distance(pickPoint, line.end)
+    ? line.start
+    : line.end;
+  direction = normalizedVector(intersection, preferredEndpoint);
+  return direction || normalizedVector(line.start, line.end);
+}
+
+function lineFilletGeometry(firstLine, firstPick, secondLine, secondPick, radius) {
+  if (
+    firstLine?.type !== 'LINE' || secondLine?.type !== 'LINE' ||
+    firstLine === secondLine || !(radius > SNAP_THRESHOLD)
+  ) {
+    return { valid: false, reason: 'Seleccione dos lineas distintas' };
+  }
+  const firstDirection = normalizedVector(firstLine.start, firstLine.end);
+  const secondDirection = normalizedVector(secondLine.start, secondLine.end);
+  if (!firstDirection || !secondDirection) {
+    return { valid: false, reason: 'Una de las lineas no tiene longitud' };
+  }
+  const intersection = infiniteLineLineIntersection(
+    firstLine.start,
+    firstDirection,
+    secondLine.start,
+    secondDirection,
+  );
+  if (!intersection) {
+    return { valid: false, reason: 'Las lineas son paralelas' };
+  }
+
+  const firstRay = filletRayDirection(firstLine, intersection, firstPick);
+  const secondRay = filletRayDirection(secondLine, intersection, secondPick);
+  if (!firstRay || !secondRay) {
+    return { valid: false, reason: 'No se pudo determinar el lado del empalme' };
+  }
+  const angle = Math.acos(clamp(dotProduct(firstRay, secondRay), -1, 1));
+  const halfAngle = angle * 0.5;
+  if (halfAngle <= SNAP_THRESHOLD || Math.PI * 0.5 - halfAngle <= SNAP_THRESHOLD) {
+    return { valid: false, reason: 'Las lineas no forman un angulo valido' };
+  }
+
+  const tangentDistance = radius / Math.tan(halfAngle);
+  const centerDistance = radius / Math.sin(halfAngle);
+  const bisector = normalizedVector(
+    { x: 0, y: 0 },
+    { x: firstRay.x + secondRay.x, y: firstRay.y + secondRay.y },
+  );
+  if (!bisector || !Number.isFinite(tangentDistance) || !Number.isFinite(centerDistance)) {
+    return { valid: false, reason: 'No se pudo calcular el empalme' };
+  }
+
+  const firstScores = [
+    dotProduct({ x: firstLine.start.x - intersection.x, y: firstLine.start.y - intersection.y }, firstRay),
+    dotProduct({ x: firstLine.end.x - intersection.x, y: firstLine.end.y - intersection.y }, firstRay),
+  ];
+  const secondScores = [
+    dotProduct({ x: secondLine.start.x - intersection.x, y: secondLine.start.y - intersection.y }, secondRay),
+    dotProduct({ x: secondLine.end.x - intersection.x, y: secondLine.end.y - intersection.y }, secondRay),
+  ];
+  if (
+    tangentDistance >= Math.max(...firstScores) - SNAP_THRESHOLD ||
+    tangentDistance >= Math.max(...secondScores) - SNAP_THRESHOLD
+  ) {
+    return { valid: false, reason: 'El radio es demasiado grande para esas lineas' };
+  }
+
+  const firstTangent = {
+    x: intersection.x + firstRay.x * tangentDistance,
+    y: intersection.y + firstRay.y * tangentDistance,
+  };
+  const secondTangent = {
+    x: intersection.x + secondRay.x * tangentDistance,
+    y: intersection.y + secondRay.y * tangentDistance,
+  };
+  const center = {
+    x: intersection.x + bisector.x * centerDistance,
+    y: intersection.y + bisector.y * centerDistance,
+  };
+  const startAngle = angleOfPoint(center, firstTangent);
+  const endAngle = angleOfPoint(center, secondTangent);
+  const clockwise = normalizeAngle(endAngle - startAngle) <= Math.PI;
+  return {
+    valid: true,
+    center,
+    radius,
+    startAngle,
+    endAngle,
+    clockwise,
+    firstTangent,
+    secondTangent,
+    firstEndpoint: firstScores[0] <= firstScores[1] ? 'start' : 'end',
+    secondEndpoint: secondScores[0] <= secondScores[1] ? 'start' : 'end',
+  };
+}
+
+function applyLineFillet(doc, firstLine, firstPick, secondLine, secondPick, radius) {
+  const geometry = lineFilletGeometry(firstLine, firstPick, secondLine, secondPick, radius);
+  if (!geometry.valid) {
+    return geometry;
+  }
+  doc.recordHistory();
+  firstLine[geometry.firstEndpoint] = { ...geometry.firstTangent };
+  secondLine[geometry.secondEndpoint] = { ...geometry.secondTangent };
+  const arc = new ArcEntity(
+    geometry.center,
+    geometry.radius,
+    geometry.startAngle,
+    geometry.endAngle,
+    {
+      clockwise: geometry.clockwise,
+      layer: firstLine.layer,
+      lineStyle: firstLine.lineStyle,
+      lineType: firstLine.lineType,
+      lineColor: firstLine.lineColor,
+    },
+  );
+  doc.addEntity(arc, { recordHistory: false });
+  doc.clearSelection();
+  doc.markDirty();
+  return { ...geometry, arc };
 }
 
 function trimLineEntityAtPoint(doc, entity, pickPoint) {
@@ -2875,6 +4229,49 @@ function polylineFromSlices(source, slices) {
   );
 }
 
+function removePolylineSegmentAtIndex(doc, entity, segmentIndex) {
+  if (!doc || entity?.type !== 'POLYLINE' || !entity.segments[segmentIndex]) {
+    return { trimmed: false, keptCount: 0, grouped: true, polylineSegment: true };
+  }
+
+  const segmentSlices = (indices) => indices
+    .map((index) => polylineSegmentSlice(entity, index, 0, 1))
+    .filter(Boolean);
+  const replacements = [];
+  if (entity.closed) {
+    const remainingIndices = Array.from(
+      { length: entity.segments.length - 1 },
+      (_, offset) => (segmentIndex + 1 + offset) % entity.segments.length,
+    );
+    const openedPolyline = polylineFromSlices(entity, segmentSlices(remainingIndices));
+    if (openedPolyline) {
+      replacements.push(openedPolyline);
+    }
+  }
+  else {
+    const beforeIndices = Array.from({ length: segmentIndex }, (_, index) => index);
+    const afterIndices = Array.from(
+      { length: entity.segments.length - segmentIndex - 1 },
+      (_, offset) => segmentIndex + 1 + offset,
+    );
+    [beforeIndices, afterIndices].forEach((indices) => {
+      const remainder = polylineFromSlices(entity, segmentSlices(indices));
+      if (remainder) {
+        replacements.push(remainder);
+      }
+    });
+  }
+
+  const replaced = doc.replaceEntity(entity, replacements);
+  return {
+    trimmed: replaced,
+    keptCount: replacements.length,
+    grouped: true,
+    polylineSegment: true,
+    remainingSegments: Math.max(0, entity.segments.length - 1),
+  };
+}
+
 function polylinePath(entity) {
   if (entity?.type !== 'POLYLINE') {
     return null;
@@ -2931,6 +4328,7 @@ function trimPolylineEntityAtPoint(doc, entity, pickPoint) {
 
   const breakDistances = [];
   let pickDistance = 0;
+  let pickedSegmentIndex = 0;
   let nearestPickDistance = Infinity;
   for (const component of path.components) {
     let componentPickParameter = component.geometry.type === 'LINE'
@@ -2953,6 +4351,7 @@ function trimPolylineEntityAtPoint(doc, entity, pickPoint) {
     if (candidateDistance < nearestPickDistance) {
       nearestPickDistance = candidateDistance;
       pickDistance = component.offset + component.length * componentPickParameter;
+      pickedSegmentIndex = component.index;
     }
 
     for (const otherEntity of doc.queryBounds(component.geometry.bounds())) {
@@ -2976,7 +4375,7 @@ function trimPolylineEntityAtPoint(doc, entity, pickPoint) {
     .sort((first, second) => first - second)
     .filter((value, index, values) => index === 0 || value - values[index - 1] > SNAP_THRESHOLD);
   if ((path.closed && sortedBreaks.length < 2) || (!path.closed && !sortedBreaks.length)) {
-    return { trimmed: false, keptCount: 1, grouped: true };
+    return removePolylineSegmentAtIndex(doc, entity, pickedSegmentIndex);
   }
 
   let trimStart = null;
@@ -3010,7 +4409,7 @@ function trimPolylineEntityAtPoint(doc, entity, pickPoint) {
     }
   }
   if (trimStart === null || trimEnd === null) {
-    return { trimmed: false, keptCount: 1, grouped: true };
+    return removePolylineSegmentAtIndex(doc, entity, pickedSegmentIndex);
   }
 
   const replacements = [];
@@ -3114,7 +4513,11 @@ function lineGroupPointAt(component, traversalParameter) {
 
 function closedLineGroupPolygon(doc, entity) {
   if (entity?.type === 'POLYLINE') {
-    if (!entity.closed || entity.vertices.length < 3) {
+    const geometricallyClosed = entity.closed || (
+      entity.vertices.length >= 3 &&
+      distance(entity.vertices[0], entity.vertices[entity.vertices.length - 1]) <= SNAP_THRESHOLD
+    );
+    if (!geometricallyClosed || entity.vertices.length < 3) {
       return null;
     }
     const polygon = [];
@@ -3216,13 +4619,18 @@ function curveGroupsFromFaceEdges(faceEdges) {
 }
 
 function curveArrangementFaces(doc) {
-  const entities = doc.entities.filter((entity) =>
-    entity.type === 'LINE' || entity.type === 'ARC' || entity.type === 'CIRCLE');
+  const entities = doc.entities.flatMap((entity) => {
+    if (entity.type === 'POLYLINE') {
+      return polylineSegmentEntities(entity);
+    }
+    return entity.type === 'LINE' || entity.type === 'ARC' || entity.type === 'CIRCLE'
+      ? [entity]
+      : [];
+  });
   if (!entities.length || entities.length > 1200) {
     return [];
   }
 
-  const entityIndexes = new Map(entities.map((entity, index) => [entity, index]));
   const parameters = new Map(entities.map((entity) => [
     entity,
     entity.type === 'ARC'
@@ -3231,11 +4639,13 @@ function curveArrangementFaces(doc) {
         ? [0, 0.25, 0.5, 0.75, 1]
         : [0, 1],
   ]));
-  entities.forEach((entity) => {
-    for (const other of doc.queryBounds(entity.bounds())) {
-      if (!entityIndexes.has(other) || entityIndexes.get(other) <= entityIndexes.get(entity)) {
+  const entityBounds = entities.map((entity) => entity.bounds());
+  entities.forEach((entity, entityIndex) => {
+    for (let otherIndex = entityIndex + 1; otherIndex < entities.length; otherIndex += 1) {
+      if (!boundsIntersectsBounds(entityBounds[entityIndex], entityBounds[otherIndex])) {
         continue;
       }
+      const other = entities[otherIndex];
       for (const intersection of entityIntersectionPoints(entity, other)) {
         parameters.get(entity).push(entity.type === 'LINE'
           ? lineParameter(entity, intersection)
@@ -3247,22 +4657,36 @@ function curveArrangementFaces(doc) {
     }
   });
 
-  const nodes = new Map();
+  const nodeBuckets = new Map();
+  const graphNodes = [];
   const edgeKeys = new Set();
   let nextNodeId = 1;
   const nodeForPoint = (point, logicalGrip = false) => {
-    const key = `${Math.round(point.x / SNAP_THRESHOLD)}:${Math.round(point.y / SNAP_THRESHOLD)}`;
-    if (!nodes.has(key)) {
-      nodes.set(key, {
-        id: nextNodeId,
-        point: { ...point },
-        outgoing: [],
-        logicalGrip,
-      });
-      nextNodeId += 1;
+    const cellX = Math.floor(point.x / SNAP_THRESHOLD);
+    const cellY = Math.floor(point.y / SNAP_THRESHOLD);
+    for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
+      for (let offsetY = -1; offsetY <= 1; offsetY += 1) {
+        const nearby = nodeBuckets.get(`${cellX + offsetX}:${cellY + offsetY}`) || [];
+        const node = nearby.find((candidate) => distance(candidate.point, point) <= SNAP_THRESHOLD);
+        if (node) {
+          node.logicalGrip = node.logicalGrip || logicalGrip;
+          return node;
+        }
+      }
     }
-    const node = nodes.get(key);
-    node.logicalGrip = node.logicalGrip || logicalGrip;
+
+    const node = {
+      id: nextNodeId,
+      point: { ...point },
+      outgoing: [],
+      logicalGrip,
+    };
+    const key = `${cellX}:${cellY}`;
+    const bucket = nodeBuckets.get(key) || [];
+    bucket.push(node);
+    nodeBuckets.set(key, bucket);
+    graphNodes.push(node);
+    nextNodeId += 1;
     return node;
   };
 
@@ -3362,14 +4786,14 @@ function curveArrangementFaces(doc) {
     }
   }
 
-  nodes.forEach((node) => {
+  graphNodes.forEach((node) => {
     node.outgoing.sort((first, second) =>
       Math.atan2(first.to.point.y - node.point.y, first.to.point.x - node.point.x) -
       Math.atan2(second.to.point.y - node.point.y, second.to.point.x - node.point.x));
   });
 
   const faces = [];
-  const halfEdges = [...nodes.values()].flatMap((node) => node.outgoing);
+  const halfEdges = graphNodes.flatMap((node) => node.outgoing);
   halfEdges.forEach((startEdge) => {
     if (startEdge.visited) {
       return;
@@ -3418,8 +4842,8 @@ function curveArrangementFaces(doc) {
 function hatchBoundaryAtPoint(doc, point) {
   const candidates = [];
   const visitedGroups = new Set();
-  doc.entities.forEach((entity) => {
-    if (entity.type === 'POLYLINE' && entity.closed) {
+  doc.topLevelEntities().forEach((entity) => {
+    if (entity.type === 'POLYLINE') {
       const polygon = closedLineGroupPolygon(doc, entity);
       if (polygon && pointInPolygon(point, polygon)) {
         candidates.push(polygon);
@@ -4051,6 +5475,216 @@ function dxfDegreesToCanvasAngle(degrees) {
   return normalizeAngle(-Number(degrees || 0) * Math.PI / 180);
 }
 
+function appendEntityToDxf(lines, entity, options = {}) {
+  if (entity.type === 'LINE') {
+    lines.push(
+      '0', 'LINE', '8', entity.layer,
+      '6', getLineType(entity.lineType).dxfName,
+      '62', String(getLineColor(entity.lineColor).aci || 256),
+      '370', String(getLineStyle(entity.lineStyle).dxfLineWeight),
+      '10', String(entity.start.x), '20', String(-entity.start.y), '30', '0',
+      '11', String(entity.end.x), '21', String(-entity.end.y), '31', '0',
+    );
+  }
+  if (entity.type === 'POLYLINE') {
+    lines.push(
+      '0', 'LWPOLYLINE', '8', entity.layer,
+      '6', getLineType(entity.lineType).dxfName,
+      '62', String(getLineColor(entity.lineColor).aci || 256),
+      '370', String(getLineStyle(entity.lineStyle).dxfLineWeight),
+      '90', String(entity.vertices.length), '70', entity.closed ? '1' : '0',
+    );
+    entity.vertices.forEach((point, index) => {
+      const segment = entity.segments[index];
+      let bulge = 0;
+      if (segment?.type === 'ARC') {
+        const geometry = polylineSegmentEntity(entity, index);
+        if (geometry) {
+          const direction = geometry.clockwise === false ? 1 : -1;
+          bulge = direction * Math.tan(entityArcSweep(geometry) * 0.25);
+        }
+      }
+      lines.push(
+        '10', String(point.x), '20', String(-point.y),
+        '40', String(segment?.startWidth || 0),
+        '41', String(segment?.endWidth || 0),
+        '42', String(bulge),
+      );
+    });
+  }
+  if (entity.type === 'CIRCLE') {
+    lines.push(
+      '0', 'CIRCLE', '8', entity.layer,
+      '6', getLineType(entity.lineType).dxfName,
+      '62', String(getLineColor(entity.lineColor).aci || 256),
+      '370', String(getLineStyle(entity.lineStyle).dxfLineWeight),
+      '10', String(entity.center.x), '20', String(-entity.center.y), '30', '0',
+      '40', String(entity.radius),
+    );
+  }
+  if (entity.type === 'ARC') {
+    const dxfStartAngle = entity.clockwise === false ? entity.startAngle : entity.endAngle;
+    const dxfEndAngle = entity.clockwise === false ? entity.endAngle : entity.startAngle;
+    lines.push(
+      '0', 'ARC', '8', entity.layer,
+      '6', getLineType(entity.lineType).dxfName,
+      '62', String(getLineColor(entity.lineColor).aci || 256),
+      '370', String(getLineStyle(entity.lineStyle).dxfLineWeight),
+      '10', String(entity.center.x), '20', String(-entity.center.y), '30', '0',
+      '40', String(entity.radius),
+      '50', String(canvasAngleToDxfDegrees(dxfStartAngle)),
+      '51', String(canvasAngleToDxfDegrees(dxfEndAngle)),
+    );
+  }
+  if (entity.type === 'TEXT') {
+    lines.push(
+      '0', 'TEXT', '8', entity.layer, '7', 'ROMANS',
+      '62', String(getLineColor(entity.lineColor).aci || 256),
+      '10', String(entity.insertionPoint.x), '20', String(-entity.insertionPoint.y), '30', '0',
+      '40', String(entity.height), '1', entity.text.replace(/[\r\n]+/g, ' '),
+      '50', String(entity.angle),
+    );
+  }
+  if (entity.type === 'HATCH') {
+    const loops = entity.loops || [entity.boundary];
+    lines.push(
+      '0', 'HATCH', '8', entity.layer,
+      '62', String(getLineColor(entity.lineColor).aci || 256),
+      '10', '0', '20', '0', '30', '0', '210', '0', '220', '0', '230', '1',
+      '2', 'SOLID', '70', '1', '71', '0', '91', String(loops.length),
+    );
+    loops.forEach((loop, index) => {
+      lines.push('92', index === 0 ? '3' : '2', '72', '0', '73', '1', '93', String(loop.length));
+      loop.forEach((point) => {
+        lines.push('10', String(point.x), '20', String(-point.y));
+      });
+      lines.push('97', '0');
+    });
+    lines.push('75', '0', '76', '1', '98', '0');
+  }
+  if (entity.type === 'DIMENSION') {
+    const typeCode = {
+      horizontal: 0,
+      vertical: 0,
+      aligned: 1,
+      angular: 2,
+      diameter: 3,
+      radius: 4,
+    }[entity.kind] ?? 0;
+    const styleName = `WEBCAD_${entity.dimensionStyle.toUpperCase()}`;
+    const textPosition = dimensionGeometry(entity).text.point;
+    const definitionPoint = entity.kind === 'radius'
+      ? entity.points[0]
+      : entity.kind === 'diameter'
+        ? {
+          x: entity.points[0].x * 2 - entity.points[1].x,
+          y: entity.points[0].y * 2 - entity.points[1].y,
+        }
+        : entity.placement;
+    lines.push(
+      '0', 'DIMENSION',
+      '100', 'AcDbEntity',
+      '8', entity.layer,
+      '62', String(getLineColor(entity.lineColor).aci || 256),
+      '370', String(getLineStyle('auxiliar').dxfLineWeight),
+      '100', 'AcDbDimension',
+      ...(options.dimensionBlockName ? ['2', options.dimensionBlockName] : []),
+      '10', String(definitionPoint.x), '20', String(-definitionPoint.y), '30', '0',
+      '11', String(textPosition.x), '21', String(-textPosition.y), '31', '0',
+      '70', String(32 + typeCode),
+      '3', styleName,
+      '210', '0', '220', '0', '230', '1',
+    );
+    if (entity.kind === 'radius' || entity.kind === 'diameter') {
+      lines.push(
+        '100', entity.kind === 'radius' ? 'AcDbRadialDimension' : 'AcDbDiametricDimension',
+        '15', String(entity.points[1].x), '25', String(-entity.points[1].y), '35', '0',
+        '40', '0',
+      );
+      if (entity.kind === 'radius') {
+        lines.push('13', String(entity.points[0].x), '23', String(-entity.points[0].y), '33', '0');
+      }
+    }
+    else if (entity.kind === 'angular') {
+      const [vertex, firstRay, secondRay] = entity.points;
+      lines.push(
+        '100', 'AcDb2LineAngularDimension',
+        '13', String(vertex.x), '23', String(-vertex.y), '33', '0',
+        '14', String(firstRay.x), '24', String(-firstRay.y), '34', '0',
+        '15', String(vertex.x), '25', String(-vertex.y), '35', '0',
+        '16', String(secondRay.x), '26', String(-secondRay.y), '36', '0',
+      );
+    }
+    else {
+      lines.push(
+        '100', entity.kind === 'aligned' ? 'AcDbAlignedDimension' : 'AcDbRotatedDimension',
+        '13', String(entity.points[0].x), '23', String(-entity.points[0].y), '33', '0',
+        '14', String(entity.points[1].x), '24', String(-entity.points[1].y), '34', '0',
+      );
+      if (entity.kind !== 'aligned') {
+        lines.push('50', entity.kind === 'vertical' ? '90' : '0');
+      }
+    }
+  }
+  if (entity.type === 'INSERT') {
+    lines.push(
+      '0', 'INSERT', '8', entity.layer, '2', entity.blockName,
+      '6', getLineType(entity.lineType).dxfName,
+      '62', String(getLineColor(entity.lineColor).aci || 256),
+      '370', String(getLineStyle(entity.lineStyle).dxfLineWeight),
+      '10', String(entity.insertionPoint.x),
+      '20', String(-entity.insertionPoint.y),
+      '30', '0',
+      '41', String(entity.scaleX),
+      '42', String(entity.scaleY),
+      '43', '1',
+      '50', String(entity.rotation),
+    );
+  }
+}
+
+function appendDimensionGraphicsBlock(lines, entity, blockName) {
+  const geometry = dimensionGeometry(entity);
+  lines.push(
+    '0', 'BLOCK', '8', '0', '2', blockName, '70', '1',
+    '10', '0', '20', '0', '30', '0', '3', blockName, '1', '',
+  );
+  geometry.lines.forEach((line) => {
+    lines.push(
+      '0', 'LINE', '8', entity.layer,
+      '10', String(line.start.x), '20', String(-line.start.y), '30', '0',
+      '11', String(line.end.x), '21', String(-line.end.y), '31', '0',
+    );
+  });
+  geometry.arcs.forEach((arc) => {
+    lines.push(
+      '0', 'ARC', '8', entity.layer,
+      '10', String(arc.center.x), '20', String(-arc.center.y), '30', '0',
+      '40', String(arc.radius),
+      '50', String(canvasAngleToDxfDegrees(arc.endAngle)),
+      '51', String(canvasAngleToDxfDegrees(arc.startAngle)),
+    );
+  });
+  geometry.arrows.forEach((arrow) => {
+    lines.push(
+      '0', 'SOLID', '8', entity.layer,
+      '10', String(arrow[0].x), '20', String(-arrow[0].y), '30', '0',
+      '11', String(arrow[1].x), '21', String(-arrow[1].y), '31', '0',
+      '12', String(arrow[2].x), '22', String(-arrow[2].y), '32', '0',
+      '13', String(arrow[2].x), '23', String(-arrow[2].y), '33', '0',
+    );
+  });
+  lines.push(
+    '0', 'TEXT', '8', entity.layer, '7', 'ROMANS',
+    '10', String(geometry.text.point.x), '20', String(-geometry.text.point.y), '30', '0',
+    '40', String(geometry.text.height), '1', geometry.text.value,
+    '50', String(-geometry.text.angle * 180 / Math.PI),
+    '72', '1', '73', '2',
+    '11', String(geometry.text.point.x), '21', String(-geometry.text.point.y), '31', '0',
+    '0', 'ENDBLK', '8', '0',
+  );
+}
+
 function serializeDocumentToDxf(doc) {
   const profile = activeDrawingProfile();
   const dxfLineTypeScale = profile.dxfLineTypeScale;
@@ -4066,6 +5700,10 @@ function serializeDocumentToDxf(doc) {
     }
   });
   const layerDefinitions = [...layerMap.values()];
+  const topLevelDimensions = doc.topLevelEntities().filter((entity) => entity.type === 'DIMENSION');
+  const dimensionBlockNames = new Map(
+    topLevelDimensions.map((entity, index) => [entity, `*DWEB${index + 1}`]),
+  );
   const lines = [
     '0', 'SECTION',
     '2', 'HEADER',
@@ -4106,11 +5744,39 @@ function serializeDocumentToDxf(doc) {
     '0', 'STYLE', '2', 'ROMANS', '70', '0', '40', '0', '41', '1', '50', '0', '71', '0',
     '42', '2.5', '3', 'romans.shx', '4', '',
     '0', 'ENDTAB',
-    '0', 'ENDSEC',
-    '0', 'SECTION', '2', 'ENTITIES',
+    '0', 'TABLE', '2', 'DIMSTYLE', '70', String(Object.keys(DIMENSION_STYLES).length),
   );
+  Object.values(DIMENSION_STYLES).forEach((dimensionStyle) => {
+    const metrics = dimensionStyleMetrics(dimensionStyle.id);
+    lines.push(
+      '0', 'DIMSTYLE', '2', `WEBCAD_${dimensionStyle.id.toUpperCase()}`, '70', '0',
+      '40', '1',
+      '41', String(metrics.arrowSize),
+      '42', String(metrics.extensionOffset),
+      '44', String(metrics.extensionOvershoot),
+      '140', String(metrics.textHeight),
+      '147', String(metrics.textGap),
+      '176', '256', '177', '256', '178', '256',
+      '271', '2', '275', '0',
+    );
+  });
+  lines.push('0', 'ENDTAB', '0', 'ENDSEC');
 
-  for (const entity of doc.entities) {
+  lines.push('0', 'SECTION', '2', 'BLOCKS');
+  for (const definition of doc.blockDefinitions.values()) {
+    lines.push(
+      '0', 'BLOCK', '8', '0', '2', definition.name, '70', '0',
+      '10', '0', '20', '0', '30', '0', '3', definition.name, '1', '',
+    );
+    definition.entities.forEach((entity) => appendEntityToDxf(lines, entity));
+    lines.push('0', 'ENDBLK', '8', '0');
+  }
+  dimensionBlockNames.forEach((blockName, entity) => {
+    appendDimensionGraphicsBlock(lines, entity, blockName);
+  });
+  lines.push('0', 'ENDSEC', '0', 'SECTION', '2', 'ENTITIES');
+
+  for (const entity of doc.topLevelEntities()) {
     if (entity.type === 'LINE') {
       lines.push(
         '0', 'LINE',
@@ -4205,6 +5871,7 @@ function serializeDocumentToDxf(doc) {
     }
 
     if (entity.type === 'HATCH') {
+      const loops = entity.loops || [entity.boundary];
       lines.push(
         '0', 'HATCH',
         '8', entity.layer,
@@ -4214,21 +5881,295 @@ function serializeDocumentToDxf(doc) {
         '2', 'SOLID',
         '70', '1',
         '71', '0',
-        '91', '1',
-        '92', '2',
-        '72', '0',
-        '73', '1',
-        '93', String(entity.boundary.length),
+        '91', String(loops.length),
       );
-      entity.boundary.forEach((point) => {
-        lines.push('10', String(point.x), '20', String(-point.y));
+      loops.forEach((loop, index) => {
+        lines.push('92', index === 0 ? '3' : '2', '72', '0', '73', '1', '93', String(loop.length));
+        loop.forEach((point) => {
+          lines.push('10', String(point.x), '20', String(-point.y));
+        });
+        lines.push('97', '0');
       });
-      lines.push('97', '0', '75', '0', '76', '1', '98', '0');
+      lines.push('75', '0', '76', '1', '98', '0');
+    }
+    if (entity.type === 'INSERT') {
+      appendEntityToDxf(lines, entity);
+    }
+    if (entity.type === 'DIMENSION') {
+      appendEntityToDxf(lines, entity, { dimensionBlockName: dimensionBlockNames.get(entity) });
     }
   }
 
   lines.push('0', 'ENDSEC', '0', 'EOF');
   return lines.join('\n');
+}
+
+function polylineFromDxfVertices(vertices, record, closed, layerDefinitionMap) {
+  const normalizedVertices = vertices
+    .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y))
+    .map((point) => ({ ...point }));
+  if (
+    closed &&
+    normalizedVertices.length > 2 &&
+    distance(normalizedVertices[0], normalizedVertices[normalizedVertices.length - 1]) <= SNAP_THRESHOLD
+  ) {
+    normalizedVertices.pop();
+  }
+  const segmentCount = closed
+    ? normalizedVertices.length
+    : Math.max(0, normalizedVertices.length - 1);
+  if (normalizedVertices.length < 2 || !segmentCount) {
+    return null;
+  }
+  const segments = [];
+  for (let segmentIndex = 0; segmentIndex < segmentCount; segmentIndex += 1) {
+    const vertex = normalizedVertices[segmentIndex];
+    const nextVertex = normalizedVertices[(segmentIndex + 1) % normalizedVertices.length];
+    const center = arcCenterFromBulge(vertex, nextVertex, vertex.bulge || 0);
+    segments.push({
+      type: center ? 'ARC' : 'LINE',
+      center,
+      clockwise: (vertex.bulge || 0) >= 0,
+      startWidth: Math.max(0, vertex.startWidth || 0),
+      endWidth: Math.max(0, vertex.endWidth || 0),
+    });
+  }
+  return new PolylineEntity(
+    normalizedVertices,
+    segments,
+    { closed, ...dxfEntityOptions(record, layerDefinitionMap) },
+  );
+}
+
+function dxfSectionBounds(pairs, sectionName) {
+  for (let index = 0; index < pairs.length - 1; index += 1) {
+    if (
+      pairs[index][0] === '0' &&
+      pairs[index][1] === 'SECTION' &&
+      pairs[index + 1][0] === '2' &&
+      pairs[index + 1][1] === sectionName
+    ) {
+      const start = index + 2;
+      let end = start;
+      while (end < pairs.length && !(pairs[end][0] === '0' && pairs[end][1] === 'ENDSEC')) {
+        end += 1;
+      }
+      return { start, end };
+    }
+  }
+  return null;
+}
+
+function dxfBlockEntityText(entityPairs, layerDefinitions) {
+  const lines = ['0', 'SECTION', '2', 'TABLES', '0', 'TABLE', '2', 'LAYER', '70', String(layerDefinitions.length)];
+  layerDefinitions.forEach((layer) => {
+    lines.push(
+      '0', 'LAYER', '2', layer.name, '70', '0',
+      '62', String(getLineColor(layer.lineColor).aci || 7),
+      '6', getLineType(layer.lineType).dxfName,
+      '370', String(getLineStyle(layer.lineStyle).dxfLineWeight),
+    );
+  });
+  lines.push('0', 'ENDTAB', '0', 'ENDSEC', '0', 'SECTION', '2', 'ENTITIES');
+  entityPairs.forEach(([code, value]) => lines.push(code, value));
+  lines.push('0', 'ENDSEC', '0', 'EOF');
+  return lines.join('\n');
+}
+
+function appendDistinctPoint(points, point) {
+  if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) {
+    return;
+  }
+  if (!points.length || distance(points[points.length - 1], point) > SNAP_THRESHOLD) {
+    points.push(point);
+  }
+}
+
+function sampleHatchBulge(points, start, end, bulge) {
+  const center = arcCenterFromBulge(start, end, bulge);
+  if (!center) {
+    appendDistinctPoint(points, start);
+    appendDistinctPoint(points, end);
+    return;
+  }
+  const arc = {
+    type: 'ARC',
+    center,
+    radius: distance(center, start),
+    startAngle: angleOfPoint(center, start),
+    endAngle: angleOfPoint(center, end),
+    clockwise: bulge >= 0,
+  };
+  const sampleCount = clamp(Math.ceil(entityArcSweep(arc) / (Math.PI / 24)), 2, 96);
+  for (let index = 0; index <= sampleCount; index += 1) {
+    appendDistinctPoint(points, pointAtCircularParameter(arc, index / sampleCount));
+  }
+}
+
+function repeatedDxfPoints(edgePairs, xCode, yCode) {
+  const points = [];
+  let pendingX = null;
+  for (const [code, value] of edgePairs) {
+    if (code === xCode) {
+      pendingX = Number(value);
+    }
+    else if (code === yCode && pendingX !== null) {
+      appendDistinctPoint(points, { x: pendingX, y: -Number(value) });
+      pendingX = null;
+    }
+  }
+  return points;
+}
+
+function sampleDxfHatchEdge(edgeType, edgePairs) {
+  const value = (code, fallback = 0) => {
+    const pair = edgePairs.find(([pairCode]) => pairCode === code);
+    return Number(pair?.[1] ?? fallback);
+  };
+  if (edgeType === 1) {
+    return [
+      { x: value('10'), y: -value('20') },
+      { x: value('11'), y: -value('21') },
+    ];
+  }
+  if (edgeType === 2) {
+    const center = { x: value('10'), y: -value('20') };
+    const radius = value('40');
+    const arc = {
+      type: 'ARC',
+      center,
+      radius,
+      startAngle: dxfDegreesToCanvasAngle(value('50')),
+      endAngle: dxfDegreesToCanvasAngle(value('51')),
+      clockwise: value('73', 1) !== 1,
+    };
+    if (!(radius > SNAP_THRESHOLD)) {
+      return [];
+    }
+    const sampleCount = clamp(Math.ceil(entityArcSweep(arc) / (Math.PI / 24)), 2, 96);
+    return Array.from({ length: sampleCount + 1 }, (_, index) =>
+      pointAtCircularParameter(arc, index / sampleCount));
+  }
+  if (edgeType === 3) {
+    const center = { x: value('10'), y: -value('20') };
+    const major = { x: value('11'), y: -value('21') };
+    const ratio = Math.abs(value('40', 1));
+    const start = value('50') * Math.PI / 180;
+    const end = value('51') * Math.PI / 180;
+    const counterclockwise = value('73', 1) === 1;
+    const sweep = counterclockwise ? normalizeAngle(end - start) : normalizeAngle(start - end);
+    const sampleCount = clamp(Math.ceil(sweep / (Math.PI / 24)), 4, 128);
+    return Array.from({ length: sampleCount + 1 }, (_, index) => {
+      const parameter = start + (counterclockwise ? 1 : -1) * sweep * index / sampleCount;
+      const minor = { x: major.y * ratio, y: -major.x * ratio };
+      return {
+        x: center.x + major.x * Math.cos(parameter) + minor.x * Math.sin(parameter),
+        y: center.y + major.y * Math.cos(parameter) + minor.y * Math.sin(parameter),
+      };
+    });
+  }
+  if (edgeType === 4) {
+    const fitPoints = repeatedDxfPoints(edgePairs, '11', '21');
+    return fitPoints.length >= 2 ? fitPoints : repeatedDxfPoints(edgePairs, '10', '20');
+  }
+  return [];
+}
+
+function parseDxfHatchLoops(entityPairs) {
+  const pathCountIndex = entityPairs.findIndex(([code]) => code === '91');
+  if (pathCountIndex < 0) {
+    return [];
+  }
+  const pathCount = Number(entityPairs[pathCountIndex][1]);
+  if (!Number.isInteger(pathCount) || pathCount < 1 || pathCount > 4096) {
+    return [];
+  }
+  const loops = [];
+  let cursor = pathCountIndex + 1;
+  for (let pathIndex = 0; pathIndex < pathCount; pathIndex += 1) {
+    while (cursor < entityPairs.length && entityPairs[cursor][0] !== '92') {
+      cursor += 1;
+    }
+    if (cursor >= entityPairs.length) {
+      break;
+    }
+    const pathFlags = Number(entityPairs[cursor][1]);
+    cursor += 1;
+    const loop = [];
+    if ((pathFlags & 2) === 2) {
+      let closed = true;
+      let vertexCount = 0;
+      while (cursor < entityPairs.length && entityPairs[cursor][0] !== '93') {
+        if (entityPairs[cursor][0] === '73') {
+          closed = Number(entityPairs[cursor][1]) === 1;
+        }
+        cursor += 1;
+      }
+      if (cursor < entityPairs.length) {
+        vertexCount = Number(entityPairs[cursor][1]);
+        cursor += 1;
+      }
+      const vertices = [];
+      for (let vertexIndex = 0; vertexIndex < vertexCount; vertexIndex += 1) {
+        while (cursor < entityPairs.length && entityPairs[cursor][0] !== '10') {
+          cursor += 1;
+        }
+        if (cursor >= entityPairs.length) {
+          break;
+        }
+        const vertex = { x: Number(entityPairs[cursor][1]), y: 0, bulge: 0 };
+        cursor += 1;
+        while (cursor < entityPairs.length && !['10', '92', '97'].includes(entityPairs[cursor][0])) {
+          const [code, value] = entityPairs[cursor];
+          if (code === '20') {
+            vertex.y = -Number(value);
+          }
+          else if (code === '42') {
+            vertex.bulge = -Number(value) || 0;
+          }
+          cursor += 1;
+        }
+        vertices.push(vertex);
+      }
+      const segmentCount = closed ? vertices.length : Math.max(0, vertices.length - 1);
+      for (let segmentIndex = 0; segmentIndex < segmentCount; segmentIndex += 1) {
+        const start = vertices[segmentIndex];
+        const end = vertices[(segmentIndex + 1) % vertices.length];
+        sampleHatchBulge(loop, start, end, start.bulge);
+      }
+    }
+    else {
+      while (cursor < entityPairs.length && entityPairs[cursor][0] !== '93') {
+        cursor += 1;
+      }
+      const edgeCount = cursor < entityPairs.length ? Number(entityPairs[cursor][1]) : 0;
+      cursor += 1;
+      for (let edgeIndex = 0; edgeIndex < edgeCount; edgeIndex += 1) {
+        while (cursor < entityPairs.length && entityPairs[cursor][0] !== '72') {
+          cursor += 1;
+        }
+        if (cursor >= entityPairs.length) {
+          break;
+        }
+        const edgeType = Number(entityPairs[cursor][1]);
+        cursor += 1;
+        const edgePairs = [];
+        while (cursor < entityPairs.length && !['72', '92', '97'].includes(entityPairs[cursor][0])) {
+          edgePairs.push(entityPairs[cursor]);
+          cursor += 1;
+        }
+        sampleDxfHatchEdge(edgeType, edgePairs).forEach((point) => appendDistinctPoint(loop, point));
+      }
+    }
+    if (loop.length > 2 && distance(loop[0], loop[loop.length - 1]) <= SNAP_THRESHOLD) {
+      loop.pop();
+    }
+    if (loop.length >= 3 && Math.abs(polygonSignedArea(loop)) > SNAP_THRESHOLD) {
+      loops.push(loop);
+    }
+  }
+  return loops.sort((first, second) =>
+    Math.abs(polygonSignedArea(second)) - Math.abs(polygonSignedArea(first)));
 }
 
 function parseDxf(text) {
@@ -4245,12 +6186,45 @@ function parseDxf(text) {
 
   const layerDefinitions = [];
   let dxfInsUnits = null;
+  let dxfTextSize = null;
+  let dxfExtMin = null;
+  let dxfExtMax = null;
   for (let headerIndex = 0; headerIndex < pairs.length - 1; headerIndex += 1) {
-    if (pairs[headerIndex][0] === '9' && pairs[headerIndex][1] === '$INSUNITS') {
-      dxfInsUnits = Number(pairs[headerIndex + 1][1]);
-      break;
+    if (pairs[headerIndex][0] !== '9') {
+      continue;
+    }
+    const variable = pairs[headerIndex][1];
+    const record = {};
+    for (let valueIndex = headerIndex + 1; valueIndex < pairs.length; valueIndex += 1) {
+      const [valueCode, value] = pairs[valueIndex];
+      if (valueCode === '9' || valueCode === '0') {
+        break;
+      }
+      record[valueCode] = value;
+    }
+    if (variable === '$INSUNITS') {
+      dxfInsUnits = Number(record['70']);
+    }
+    if (variable === '$TEXTSIZE') {
+      dxfTextSize = Number(record['40']);
+    }
+    if (variable === '$EXTMIN') {
+      dxfExtMin = { x: Number(record['10']), y: Number(record['20']) };
+    }
+    if (variable === '$EXTMAX') {
+      dxfExtMax = { x: Number(record['10']), y: Number(record['20']) };
     }
   }
+  const dxfExtents = dxfExtMin && dxfExtMax &&
+    Number.isFinite(dxfExtMin.x) && Number.isFinite(dxfExtMin.y) &&
+    Number.isFinite(dxfExtMax.x) && Number.isFinite(dxfExtMax.y)
+    ? createBounds(
+      Math.min(dxfExtMin.x, dxfExtMax.x),
+      Math.min(-dxfExtMin.y, -dxfExtMax.y),
+      Math.max(dxfExtMin.x, dxfExtMax.x),
+      Math.max(-dxfExtMin.y, -dxfExtMax.y),
+    )
+    : null;
   for (let layerIndex = 0; layerIndex < pairs.length; layerIndex += 1) {
     const [code, value] = pairs[layerIndex];
     if (code !== '0' || value !== 'LAYER') {
@@ -4272,12 +6246,110 @@ function parseDxf(text) {
       });
     }
   }
+  const layerDefinitionMap = new Map(
+    layerDefinitions.map((layer) => [layer.name.toLowerCase(), layer]),
+  );
+
+  const blockDefinitions = [];
+  const blocksSection = dxfSectionBounds(pairs, 'BLOCKS');
+  if (blocksSection) {
+    let blockIndex = blocksSection.start;
+    while (blockIndex < blocksSection.end) {
+      if (pairs[blockIndex][0] !== '0' || pairs[blockIndex][1] !== 'BLOCK') {
+        blockIndex += 1;
+        continue;
+      }
+      const blockRecord = {};
+      blockIndex += 1;
+      while (blockIndex < blocksSection.end && pairs[blockIndex][0] !== '0') {
+        blockRecord[pairs[blockIndex][0]] = pairs[blockIndex][1];
+        blockIndex += 1;
+      }
+      const entityStart = blockIndex;
+      while (blockIndex < blocksSection.end && !(
+        pairs[blockIndex][0] === '0' && pairs[blockIndex][1] === 'ENDBLK'
+      )) {
+        blockIndex += 1;
+      }
+      const name = String(blockRecord['2'] || blockRecord['3'] || '').trim();
+      const isInternalBlock = /^\*(?:(?:MODEL|PAPER)_SPACE|D)/i.test(name);
+      if (name && !isInternalBlock) {
+        const blockEntities = parseDxf(
+          dxfBlockEntityText(pairs.slice(entityStart, blockIndex), layerDefinitions),
+        );
+        const basePoint = {
+          x: Number(blockRecord['10'] || 0),
+          y: -Number(blockRecord['20'] || 0),
+        };
+        blockEntities.forEach((entity) => moveEntityByVector(entity, {
+          x: -basePoint.x,
+          y: -basePoint.y,
+        }));
+        blockDefinitions.push({ name, revision: 0, entities: [...blockEntities] });
+      }
+      blockIndex += 1;
+    }
+  }
+  const blockDefinitionMap = new Map(
+    blockDefinitions.map((definition) => [definition.name.toLowerCase(), definition]),
+  );
 
   const entities = [];
-  let index = 0;
+  let skippedHatchCount = 0;
+  let skippedPatternHatchCount = 0;
+  const entitiesSection = dxfSectionBounds(pairs, 'ENTITIES');
+  let index = entitiesSection?.start || 0;
+  const entitiesEnd = entitiesSection?.end || pairs.length;
 
-  while (index < pairs.length) {
+  while (index < entitiesEnd) {
     const [code, value] = pairs[index];
+    if (code === '0' && value === 'POLYLINE') {
+      const record = {};
+      const vertices = [];
+      index += 1;
+      while (index < pairs.length && pairs[index][0] !== '0') {
+        record[pairs[index][0]] = pairs[index][1];
+        index += 1;
+      }
+      const flags = Number(record['70'] || 0);
+      const unsupportedMesh = (flags & 16) === 16 || (flags & 64) === 64;
+      while (index < pairs.length && pairs[index][0] === '0' && pairs[index][1] === 'VERTEX') {
+        const vertexRecord = {};
+        index += 1;
+        while (index < pairs.length && pairs[index][0] !== '0') {
+          vertexRecord[pairs[index][0]] = pairs[index][1];
+          index += 1;
+        }
+        if (!unsupportedMesh) {
+          vertices.push({
+            x: Number(vertexRecord['10']),
+            y: -Number(vertexRecord['20']),
+            startWidth: Number(vertexRecord['40'] ?? record['40']) || 0,
+            endWidth: Number(vertexRecord['41'] ?? record['41']) || 0,
+            bulge: -Number(vertexRecord['42'] || 0),
+          });
+        }
+      }
+      if (index < pairs.length && pairs[index][0] === '0' && pairs[index][1] === 'SEQEND') {
+        index += 1;
+        while (index < pairs.length && pairs[index][0] !== '0') {
+          index += 1;
+        }
+      }
+      if (!unsupportedMesh) {
+        const entity = polylineFromDxfVertices(
+          vertices,
+          record,
+          (flags & 1) === 1,
+          layerDefinitionMap,
+        );
+        if (entity) {
+          entities.push(entity);
+        }
+      }
+      continue;
+    }
+
     if (code === '0' && value === 'LWPOLYLINE') {
       const record = {};
       const vertices = [];
@@ -4315,29 +6387,118 @@ function parseDxf(text) {
         }
         index += 1;
       }
-      const closed = (Number(record['70'] || 0) & 1) === 1;
-      const segmentCount = closed ? vertices.length : Math.max(0, vertices.length - 1);
-      if (vertices.length >= 2 && vertices.every((point) =>
-        Number.isFinite(point.x) && Number.isFinite(point.y))) {
-        const segments = [];
-        for (let segmentIndex = 0; segmentIndex < segmentCount; segmentIndex += 1) {
-          const vertex = vertices[segmentIndex];
-          const nextVertex = vertices[(segmentIndex + 1) % vertices.length];
-          const center = arcCenterFromBulge(vertex, nextVertex, vertex.bulge);
-          segments.push({
-            type: center ? 'ARC' : 'LINE',
-            center,
-            clockwise: vertex.bulge >= 0,
-            startWidth: Math.max(0, vertex.startWidth),
-            endWidth: Math.max(0, vertex.endWidth),
-          });
+      const entity = polylineFromDxfVertices(
+        vertices,
+        record,
+        (Number(record['70'] || 0) & 1) === 1,
+        layerDefinitionMap,
+      );
+      if (entity) {
+        entities.push(entity);
+      }
+      continue;
+    }
+
+    if (code === '0' && value === 'INSERT') {
+      const record = {};
+      index += 1;
+      while (index < entitiesEnd && pairs[index][0] !== '0') {
+        record[pairs[index][0]] = pairs[index][1];
+        index += 1;
+      }
+      const name = String(record['2'] || '').trim();
+      const definition = blockDefinitionMap.get(name.toLowerCase());
+      const insertionPoint = {
+        x: Number(record['10'] || 0),
+        y: -Number(record['20'] || 0),
+      };
+      if (definition && Number.isFinite(insertionPoint.x) && Number.isFinite(insertionPoint.y)) {
+        entities.push(new BlockReferenceEntity(definition, insertionPoint, {
+          ...dxfEntityOptions(record, layerDefinitionMap),
+          rotation: Number(record['50'] || 0),
+          scaleX: Number(record['41'] || 1),
+          scaleY: Number(record['42'] || record['41'] || 1),
+        }));
+      }
+      continue;
+    }
+
+    if (code === '0' && value === 'DIMENSION') {
+      const record = {};
+      index += 1;
+      while (index < entitiesEnd && pairs[index][0] !== '0') {
+        record[pairs[index][0]] = pairs[index][1];
+        index += 1;
+      }
+      const typeCode = Number(record['70'] || 0) & 7;
+      const point = (xCode, yCode) => ({
+        x: Number(record[xCode] || 0),
+        y: -Number(record[yCode] || 0),
+      });
+      let placement = typeCode === 3 || typeCode === 4
+        ? point('11', '21')
+        : point('10', '20');
+      const textPosition = record['11'] !== undefined && record['21'] !== undefined
+        ? point('11', '21')
+        : null;
+      let kind = null;
+      let definitionPoints = [];
+      if (typeCode === 4 || typeCode === 3) {
+        kind = typeCode === 4 ? 'radius' : 'diameter';
+        const radiusPoint = point('15', '25');
+        const circularSource = typeCode === 4
+          ? entities
+            .flatMap((entity) => primitiveEntityParts(entity))
+            .filter((entity) => isCircularEntity(entity) && pointOnCircularEntity(radiusPoint, entity))
+            .filter((entity) => Math.abs(distance(entity.center, radiusPoint) - entity.radius) <=
+              Math.max(SNAP_THRESHOLD * 10, entity.radius * 1e-6))
+            .sort((first, second) =>
+              entityDistanceToPoint(first, radiusPoint) - entityDistanceToPoint(second, radiusPoint))[0]
+          : null;
+        const center = typeCode === 4
+          ? circularSource?.center || (record['13'] !== undefined ? point('13', '23') : point('10', '20'))
+          : entityMidpoint({ start: point('10', '20'), end: radiusPoint });
+        definitionPoints = [center, radiusPoint];
+        if (textPosition) {
+          const radialDirection = normalizedVector(center, radiusPoint);
+          if (radialDirection) {
+            const projectedDistance =
+              (textPosition.x - center.x) * radialDirection.x +
+              (textPosition.y - center.y) * radialDirection.y;
+            placement = {
+              x: center.x + radialDirection.x * projectedDistance,
+              y: center.y + radialDirection.y * projectedDistance,
+            };
+          }
         }
-        entities.push(new PolylineEntity(vertices, segments, {
-          closed,
-          layer: record['8'] || DEFAULT_LAYER.name,
-          lineStyle: lineStyleFromDxf(record),
-          lineType: lineTypeFromDxf(record),
-          lineColor: lineColorFromDxf(record),
+      }
+      else if (typeCode === 2) {
+        const firstStart = point('13', '23');
+        const firstEnd = point('14', '24');
+        const secondStart = point('15', '25');
+        const secondEnd = point('16', '26');
+        const firstDirection = { x: firstEnd.x - firstStart.x, y: firstEnd.y - firstStart.y };
+        const secondDirection = { x: secondEnd.x - secondStart.x, y: secondEnd.y - secondStart.y };
+        const vertex = infiniteLineLineIntersection(firstStart, firstDirection, secondStart, secondDirection) || firstStart;
+        kind = 'angular';
+        definitionPoints = [vertex, firstEnd, secondEnd];
+      }
+      else {
+        const rotation = Number(record['50'] || 0);
+        kind = typeCode === 1
+          ? 'aligned'
+          : Math.abs(Math.abs(rotation) - 90) <= 0.01 ? 'vertical' : 'horizontal';
+        definitionPoints = [point('13', '23'), point('14', '24')];
+      }
+      const styleId = String(record['3'] || '').toLowerCase().replace(/^webcad_/, '');
+      if (
+        kind &&
+        definitionPoints.every((candidate) => Number.isFinite(candidate.x) && Number.isFinite(candidate.y))
+      ) {
+        entities.push(new DimensionEntity(kind, definitionPoints, placement, {
+          ...dxfEntityOptions(record, layerDefinitionMap),
+          dimensionStyle: DIMENSION_STYLES[styleId]?.id || 'normal',
+          textPosition,
         }));
       }
       continue;
@@ -4370,12 +6531,7 @@ function parseDxf(text) {
         Number.isFinite(end.x) &&
         Number.isFinite(end.y)
       ) {
-        entities.push(new LineEntity(start, end, {
-          layer: record['8'] || DEFAULT_LAYER.name,
-          lineStyle: lineStyleFromDxf(record),
-          lineType: lineTypeFromDxf(record),
-          lineColor: lineColorFromDxf(record),
-        }));
+        entities.push(new LineEntity(start, end, dxfEntityOptions(record, layerDefinitionMap)));
       }
       continue;
     }
@@ -4404,12 +6560,11 @@ function parseDxf(text) {
         Number.isFinite(radius) &&
         radius > SNAP_THRESHOLD
       ) {
-        entities.push(new CircleEntity(center, radius, {
-          layer: record['8'] || DEFAULT_LAYER.name,
-          lineStyle: lineStyleFromDxf(record),
-          lineType: lineTypeFromDxf(record),
-          lineColor: lineColorFromDxf(record),
-        }));
+        entities.push(new CircleEntity(
+          center,
+          radius,
+          dxfEntityOptions(record, layerDefinitionMap),
+        ));
       }
       continue;
     }
@@ -4440,12 +6595,13 @@ function parseDxf(text) {
         Number.isFinite(radius) &&
         radius > SNAP_THRESHOLD
       ) {
-        entities.push(new ArcEntity(center, radius, startAngle, endAngle, {
-          layer: record['8'] || DEFAULT_LAYER.name,
-          lineStyle: lineStyleFromDxf(record),
-          lineType: lineTypeFromDxf(record),
-          lineColor: lineColorFromDxf(record),
-        }));
+        entities.push(new ArcEntity(
+          center,
+          radius,
+          startAngle,
+          endAngle,
+          dxfEntityOptions(record, layerDefinitionMap),
+        ));
       }
       continue;
     }
@@ -4475,10 +6631,7 @@ function parseDxf(text) {
         record['1']
       ) {
         entities.push(new TextEntity(insertionPoint, record['1'], height, {
-          layer: record['8'] || DEFAULT_LAYER.name,
-          lineStyle: lineStyleFromDxf(record),
-          lineType: lineTypeFromDxf(record),
-          lineColor: lineColorFromDxf(record),
+          ...dxfEntityOptions(record, layerDefinitionMap),
           angle: Number(record['50'] || 0),
         }));
       }
@@ -4487,36 +6640,44 @@ function parseDxf(text) {
 
     if (code === '0' && value === 'HATCH') {
       const record = {};
-      const boundary = [];
-      let readingBoundary = false;
-      let pendingX = null;
+      const hatchPairs = [];
       index += 1;
       while (index < pairs.length) {
         const [groupCode, groupValue] = pairs[index];
         if (groupCode === '0') {
           break;
         }
+        hatchPairs.push(pairs[index]);
         record[groupCode] = groupValue;
-        if (groupCode === '92') {
-          readingBoundary = true;
-        }
-        else if (readingBoundary && groupCode === '10') {
-          pendingX = Number(groupValue);
-        }
-        else if (readingBoundary && groupCode === '20' && pendingX !== null) {
-          boundary.push({ x: pendingX, y: -Number(groupValue) });
-          pendingX = null;
-        }
         index += 1;
       }
-      if (boundary.length >= 3 && boundary.every((point) =>
-        Number.isFinite(point.x) && Number.isFinite(point.y))) {
-        entities.push(new HatchEntity(boundary, {
-          layer: record['8'] || DEFAULT_LAYER.name,
-          lineStyle: lineStyleFromDxf(record),
-          lineType: lineTypeFromDxf(record),
-          lineColor: lineColorFromDxf(record),
-        }));
+      const hatchPattern = String(record['2'] || '').trim().toUpperCase();
+      const isSolidHatch = Number(record['70']) === 1 || hatchPattern === 'SOLID';
+      if (!isSolidHatch) {
+        skippedPatternHatchCount += 1;
+        continue;
+      }
+      const loops = parseDxfHatchLoops(hatchPairs);
+      const boundary = loops[0] || [];
+      const extentSpan = dxfExtents
+        ? Math.max(dxfExtents.maxX - dxfExtents.minX, dxfExtents.maxY - dxfExtents.minY)
+        : 0;
+      const hatchValidationBounds = dxfExtents
+        ? expandBounds(dxfExtents, Math.max(extentSpan * 0.1, 1))
+        : null;
+      if (boundary.length >= 3 && loops.every((loop) => loop.every((point) =>
+        Number.isFinite(point.x) && Number.isFinite(point.y) &&
+        (!hatchValidationBounds || (
+          point.x >= hatchValidationBounds.minX && point.x <= hatchValidationBounds.maxX &&
+          point.y >= hatchValidationBounds.minY && point.y <= hatchValidationBounds.maxY
+        ))))) {
+        entities.push(new HatchEntity(
+          boundary,
+          { ...dxfEntityOptions(record, layerDefinitionMap), loops },
+        ));
+      }
+      else {
+        skippedHatchCount += 1;
       }
       continue;
     }
@@ -4525,9 +6686,23 @@ function parseDxf(text) {
   }
 
   entities.layerDefinitions = layerDefinitions;
-  entities.drawingProfile = dxfInsUnits === DRAWING_PROFILES.architecture.dxfInsUnits
+  entities.blockDefinitions = blockDefinitions;
+  entities.drawingExtents = dxfExtents;
+  entities.skippedHatchCount = skippedHatchCount;
+  entities.skippedPatternHatchCount = skippedPatternHatchCount;
+  const textHeights = entities
+    .filter((entity) => entity.type === 'TEXT' && Number.isFinite(entity.height) && entity.height > 0)
+    .map((entity) => entity.height)
+    .sort((first, second) => first - second);
+  const typicalTextHeight = Number.isFinite(dxfTextSize) && dxfTextSize > 0
+    ? dxfTextSize
+    : textHeights.length ? textHeights[Math.floor(textHeights.length * 0.5)] : null;
+  const looksArchitectural = Number.isFinite(typicalTextHeight) && typicalTextHeight <= 1;
+  entities.drawingProfile = dxfInsUnits === DRAWING_PROFILES.architecture.dxfInsUnits || looksArchitectural
     ? 'architecture'
     : dxfInsUnits === DRAWING_PROFILES.engineering.dxfInsUnits ? 'engineering' : null;
+  entities.drawingProfileDetected = looksArchitectural &&
+    dxfInsUnits !== DRAWING_PROFILES.architecture.dxfInsUnits;
   return entities;
 }
 
@@ -4563,6 +6738,13 @@ class CadRenderer {
       this.state.viewOffset.y + this.visibleWorldHeight(),
     );
     return padding ? expandBounds(bounds, padding) : bounds;
+  }
+
+  displayLineWidth(entityOrStyle) {
+    const styleId = typeof entityOrStyle === 'string'
+      ? entityOrStyle
+      : entityOrStyle?.lineStyle;
+    return this.state.lineWeightDisplayEnabled ? getLineStyle(styleId).width : 2;
   }
 
   worldToScreen(point) {
@@ -4711,13 +6893,18 @@ class CadRenderer {
     const worldRight = worldLeft + this.visibleWorldWidth();
     const worldBottom = worldTop + this.visibleWorldHeight();
 
-    ctx.beginPath();
-    ctx.strokeStyle = AXIS_COLOR;
     ctx.lineWidth = 1.4 / this.state.viewScale;
     ctx.lineCap = 'butt';
     ctx.lineJoin = 'miter';
+
+    ctx.beginPath();
+    ctx.strokeStyle = Y_AXIS_COLOR;
     ctx.moveTo(0, worldTop);
     ctx.lineTo(0, worldBottom);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.strokeStyle = X_AXIS_COLOR;
     ctx.moveTo(worldLeft, 0);
     ctx.lineTo(worldRight, 0);
     ctx.stroke();
@@ -4891,24 +7078,75 @@ class CadRenderer {
     ctx.restore();
   }
 
+  drawDimensionEntity(ctx, entity, options = {}) {
+    const geometry = dimensionGeometry(entity);
+    const color = options.color || entity.color || LINE_COLOR;
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.fillStyle = color;
+    ctx.lineWidth = (options.width ?? 1.25) / this.state.viewScale;
+    ctx.lineCap = 'butt';
+    ctx.lineJoin = 'miter';
+    geometry.lines.forEach((line) => {
+      ctx.beginPath();
+      ctx.moveTo(line.start.x, line.start.y);
+      ctx.lineTo(line.end.x, line.end.y);
+      ctx.stroke();
+    });
+    geometry.arcs.forEach((arc) => {
+      ctx.beginPath();
+      ctx.arc(arc.center.x, arc.center.y, arc.radius, arc.startAngle, arc.endAngle, arc.counterclockwise);
+      ctx.stroke();
+    });
+    geometry.arrows.forEach((arrow) => {
+      ctx.beginPath();
+      ctx.moveTo(arrow[0].x, arrow[0].y);
+      ctx.lineTo(arrow[1].x, arrow[1].y);
+      ctx.lineTo(arrow[2].x, arrow[2].y);
+      ctx.closePath();
+      ctx.fill();
+    });
+    ctx.translate(geometry.text.point.x, geometry.text.point.y);
+    ctx.rotate(geometry.text.angle);
+    ctx.font = `${geometry.text.height}px ${CAD_TEXT_FONT}`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = color;
+    ctx.fillText(geometry.text.value, 0, 0);
+    ctx.restore();
+  }
+
   drawHatchFill(ctx, entity, options = {}) {
-    if (entity.boundary.length < 3) {
+    const loops = entity.loops || [entity.boundary];
+    if (!loops.some((loop) => loop.length >= 3)) {
       return;
     }
     ctx.save();
     ctx.beginPath();
-    entity.boundary.forEach((point, index) => {
-      if (index === 0) {
-        ctx.moveTo(point.x, point.y);
+    loops.forEach((loop) => {
+      if (loop.length < 3) {
+        return;
       }
-      else {
-        ctx.lineTo(point.x, point.y);
-      }
+      let lastDrawnPoint = null;
+      loop.forEach((point, index) => {
+        if (index === 0) {
+          ctx.moveTo(point.x, point.y);
+          lastDrawnPoint = point;
+        }
+        else if (
+          !options.minPointPixels ||
+          index === loop.length - 1 ||
+          distance(lastDrawnPoint, point) * this.state.viewScale >= options.minPointPixels
+        ) {
+          ctx.lineTo(point.x, point.y);
+          lastDrawnPoint = point;
+        }
+      });
+      ctx.closePath();
     });
-    ctx.closePath();
     ctx.fillStyle = options.color || entity.color;
     ctx.globalAlpha = options.alpha ?? activeDrawingProfile().hatchOpacity;
-    ctx.fill();
+    ctx.fill('evenodd');
     if (options.outline) {
       ctx.globalAlpha = 1;
       ctx.strokeStyle = options.color || entity.color;
@@ -4917,6 +7155,89 @@ class CadRenderer {
       ctx.stroke();
     }
     ctx.restore();
+  }
+
+  drawBlockReference(ctx, reference, options = {}) {
+    for (const entity of reference.expandedEntities()) {
+      const bounds = entity.bounds();
+      const pixelSpan = Math.max(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY) *
+        this.state.viewScale;
+      if (options.simplified && (
+        pixelSpan < 0.75 ||
+        (entity.type === 'TEXT' && entity.height * this.state.viewScale < 4)
+      )) {
+        continue;
+      }
+      const style = getLineStyle(entity.lineStyle);
+      const color = options.color || entity.color || style.color;
+      const width = options.width ?? this.displayLineWidth(entity);
+      if (entity.type === 'LINE') {
+        this.drawLineStroke(ctx, entity, { color, width });
+      }
+      if (entity.type === 'CIRCLE') {
+        this.drawCircleStroke(ctx, entity, { color, width });
+      }
+      if (entity.type === 'ARC') {
+        this.drawArcStroke(ctx, entity, { color, width });
+      }
+      if (entity.type === 'POLYLINE') {
+        this.drawPolylineStroke(ctx, entity, { color, width });
+      }
+      if (entity.type === 'TEXT') {
+        this.drawTextStroke(ctx, entity, { color, width });
+      }
+      if (entity.type === 'HATCH') {
+        this.drawHatchFill(ctx, entity, {
+          color,
+          alpha: options.alpha,
+          outline: options.outline,
+        });
+      }
+      if (entity.type === 'DIMENSION') {
+        this.drawDimensionEntity(ctx, entity, { color, width: options.width });
+      }
+    }
+  }
+
+  drawEntityOverlay(ctx, entity, options = {}) {
+    if (!entity) {
+      return;
+    }
+    const color = options.color || PREVIEW_COLOR;
+    const width = options.width ?? this.displayLineWidth(entity);
+    if (entity.type === 'LINE') {
+      this.drawLineStroke(ctx, entity, { color, width });
+    }
+    if (entity.type === 'CIRCLE') {
+      this.drawCircleStroke(ctx, entity, { color, width });
+    }
+    if (entity.type === 'ARC') {
+      this.drawArcStroke(ctx, entity, { color, width });
+    }
+    if (entity.type === 'POLYLINE') {
+      this.drawPolylineStroke(ctx, entity, { color, width });
+    }
+    if (entity.type === 'TEXT') {
+      this.drawTextStroke(ctx, entity, { color, width });
+    }
+    if (entity.type === 'DIMENSION') {
+      this.drawDimensionEntity(ctx, entity, { color, width });
+    }
+    if (entity.type === 'HATCH') {
+      this.drawHatchFill(ctx, entity, {
+        color,
+        alpha: options.alpha ?? 0.28,
+        outline: options.outline,
+      });
+    }
+    if (entity.type === 'INSERT') {
+      this.drawBlockReference(ctx, entity, {
+        color,
+        width,
+        alpha: options.alpha ?? 0.28,
+        outline: options.outline,
+      });
+    }
   }
 
   isExtendBoundary(entity) {
@@ -4933,39 +7254,88 @@ class CadRenderer {
     if (!entity) {
       return;
     }
-    const style = getLineStyle(entity.lineStyle);
-    const options = { color, width: Math.max(3, style.width + widthBoost) };
-    if (entity.type === 'LINE') {
-      this.drawLineStroke(ctx, entity, options);
-    }
-    if (entity.type === 'CIRCLE') {
-      this.drawCircleStroke(ctx, entity, options);
-    }
-    if (entity.type === 'ARC') {
-      this.drawArcStroke(ctx, entity, options);
+    this.drawEntityOverlay(ctx, entity, {
+      color,
+      width: Math.max(3, this.displayLineWidth(entity) + widthBoost),
+      alpha: entity.type === 'HATCH' ? 0.42 : 0.28,
+      outline: entity.type === 'HATCH',
+    });
+  }
+
+  entityPixelSpan(entity) {
+    const bounds = entity.bounds();
+    return Math.max(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY) * this.state.viewScale;
+  }
+
+  appendLodGeometry(batch, entity) {
+    if (entity.type === 'LINE' || entity.type === 'CIRCLE' || entity.type === 'ARC') {
+      batch.push(entity);
+      return;
     }
     if (entity.type === 'POLYLINE') {
-      this.drawPolylineStroke(ctx, entity, options);
+      entity.segments.forEach((_, index) => {
+        const geometry = polylineSegmentEntity(entity, index);
+        if (geometry) {
+          batch.push(geometry);
+        }
+      });
     }
-    if (entity.type === 'TEXT') {
-      this.drawTextStroke(ctx, entity, options);
+  }
+
+  drawLodBatches(ctx, batches) {
+    ctx.save();
+    ctx.lineWidth = 1.15 / this.state.viewScale;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    for (const [color, geometries] of batches) {
+      ctx.beginPath();
+      ctx.strokeStyle = color;
+      geometries.forEach((geometry) => {
+        if (geometry.type === 'LINE') {
+          ctx.moveTo(geometry.start.x, geometry.start.y);
+          ctx.lineTo(geometry.end.x, geometry.end.y);
+        }
+        else if (geometry.type === 'CIRCLE') {
+          ctx.moveTo(geometry.center.x + geometry.radius, geometry.center.y);
+          ctx.arc(geometry.center.x, geometry.center.y, geometry.radius, 0, TWO_PI);
+        }
+        else if (geometry.type === 'ARC') {
+          const start = pointAtCircleAngle(geometry, geometry.startAngle);
+          ctx.moveTo(start.x, start.y);
+          ctx.arc(
+            geometry.center.x,
+            geometry.center.y,
+            geometry.radius,
+            geometry.startAngle,
+            geometry.endAngle,
+            geometry.clockwise === false,
+          );
+        }
+      });
+      ctx.stroke();
     }
-    if (entity.type === 'HATCH') {
-      this.drawHatchFill(ctx, entity, { color, alpha: 0.42, outline: true });
-    }
+    ctx.restore();
   }
 
   drawEntities(ctx) {
     const viewBounds = this.visibleWorldBounds(18 / this.state.viewScale);
     const visibleEntities = this.doc.queryBounds(viewBounds);
+    const simplified = visibleEntities.length >= 6000;
+    const verySimplified = visibleEntities.length >= 24000;
+    const minimumGeometryPixels = verySimplified ? 1.1 : 0.55;
     for (const entity of visibleEntities) {
       if (entity.type !== 'HATCH' || this.doc.isSelected(entity) ||
-          !boundsIntersectsBounds(entity.bounds(), viewBounds)) {
+          !boundsIntersectsBounds(entity.bounds(), viewBounds) ||
+          (simplified && this.entityPixelSpan(entity) < minimumGeometryPixels)) {
         continue;
       }
-      this.drawHatchFill(ctx, entity, { color: entity.color });
+      this.drawHatchFill(ctx, entity, {
+        color: entity.color,
+        minPointPixels: simplified ? (verySimplified ? 2.5 : 1.5) : 0,
+      });
     }
 
+    const lodBatches = new Map();
     for (const entity of visibleEntities) {
       if (this.doc.isSelected(entity)) {
         continue;
@@ -4977,22 +7347,53 @@ class CadRenderer {
         continue;
       }
       const style = getLineStyle(entity.lineStyle);
+      const displayWidth = this.displayLineWidth(entity);
       const entityColor = entity.color || style.color;
+      if (
+        simplified &&
+        ['LINE', 'CIRCLE', 'ARC', 'POLYLINE'].includes(entity.type)
+      ) {
+        if (this.entityPixelSpan(entity) >= minimumGeometryPixels) {
+          if (!lodBatches.has(entityColor)) {
+            lodBatches.set(entityColor, []);
+          }
+          this.appendLodGeometry(lodBatches.get(entityColor), entity);
+        }
+        continue;
+      }
       if (entity.type === 'LINE') {
-        this.drawLineStroke(ctx, entity, { color: entityColor, width: style.width });
+        this.drawLineStroke(ctx, entity, { color: entityColor, width: displayWidth });
       }
       if (entity.type === 'CIRCLE') {
-        this.drawCircleStroke(ctx, entity, { color: entityColor, width: style.width });
+        this.drawCircleStroke(ctx, entity, { color: entityColor, width: displayWidth });
       }
       if (entity.type === 'ARC') {
-        this.drawArcStroke(ctx, entity, { color: entityColor, width: style.width });
+        this.drawArcStroke(ctx, entity, { color: entityColor, width: displayWidth });
       }
       if (entity.type === 'POLYLINE') {
-        this.drawPolylineStroke(ctx, entity, { color: entityColor, width: style.width });
+        this.drawPolylineStroke(ctx, entity, { color: entityColor, width: displayWidth });
       }
       if (entity.type === 'TEXT') {
-        this.drawTextStroke(ctx, entity, { color: entityColor, width: style.width });
+        if (!simplified || entity.height * this.state.viewScale >= (verySimplified ? 5 : 3)) {
+          this.drawTextStroke(ctx, entity, { color: entityColor, width: displayWidth });
+        }
       }
+      if (entity.type === 'DIMENSION') {
+        if (!simplified || this.entityPixelSpan(entity) >= 5) {
+          this.drawDimensionEntity(ctx, entity, { color: entityColor });
+        }
+        if (this.state.dimensionDraft?.phase === 'placement') {
+          this.drawDimensionGrips(ctx, entity, { color: PREVIEW_COLOR, passive: true });
+        }
+      }
+      if (entity.type === 'INSERT') {
+        if (!simplified || this.entityPixelSpan(entity) >= minimumGeometryPixels) {
+          this.drawBlockReference(ctx, entity, { simplified });
+        }
+      }
+    }
+    if (simplified) {
+      this.drawLodBatches(ctx, lodBatches);
     }
 
     if (this.state.tool === 'extend') {
@@ -5007,6 +7408,20 @@ class CadRenderer {
       }
     }
 
+    const filletFirstEntity = this.state.filletDraft?.firstEntity;
+    if (filletFirstEntity && boundsIntersectsBounds(filletFirstEntity.bounds(), viewBounds)) {
+      this.drawHighlightedEntity(ctx, filletFirstEntity, PREVIEW_COLOR, 2);
+    }
+
+    const hoveredEntity = this.state.hoveredEntity;
+    if (hoveredEntity && !this.doc.isSelected(hoveredEntity)) {
+      for (const entity of this.doc.expandEntityGroups([hoveredEntity])) {
+        if (!this.doc.isSelected(entity) && boundsIntersectsBounds(entity.bounds(), viewBounds)) {
+          this.drawHighlightedEntity(ctx, entity, PREVIEW_COLOR, 2);
+        }
+      }
+    }
+
     for (const selectedEntity of this.doc.selectedEntities) {
       if (!selectedEntity || !boundsIntersectsBounds(selectedEntity.bounds(), viewBounds)) {
         continue;
@@ -5015,44 +7430,44 @@ class CadRenderer {
         continue;
       }
       if (selectedEntity?.type === 'LINE') {
-        const selectedStyle = getLineStyle(selectedEntity.lineStyle);
         this.drawLineStroke(
           ctx,
           selectedEntity,
-          { color: SELECTED_COLOR, width: Math.max(3, selectedStyle.width + 1) },
+          { color: SELECTED_COLOR, width: Math.max(3, this.displayLineWidth(selectedEntity) + 1) },
         );
         this.drawLineGrips(ctx, selectedEntity);
       }
       if (selectedEntity?.type === 'CIRCLE') {
-        const selectedStyle = getLineStyle(selectedEntity.lineStyle);
         this.drawCircleStroke(
           ctx,
           selectedEntity,
-          { color: SELECTED_COLOR, width: Math.max(3, selectedStyle.width + 1) },
+          { color: SELECTED_COLOR, width: Math.max(3, this.displayLineWidth(selectedEntity) + 1) },
         );
         this.drawCircleGrips(ctx, selectedEntity);
       }
       if (selectedEntity?.type === 'ARC') {
-        const selectedStyle = getLineStyle(selectedEntity.lineStyle);
         this.drawArcStroke(
           ctx,
           selectedEntity,
-          { color: SELECTED_COLOR, width: Math.max(3, selectedStyle.width + 1) },
+          { color: SELECTED_COLOR, width: Math.max(3, this.displayLineWidth(selectedEntity) + 1) },
         );
         this.drawCircleGrips(ctx, selectedEntity);
       }
       if (selectedEntity?.type === 'POLYLINE') {
-        const selectedStyle = getLineStyle(selectedEntity.lineStyle);
         this.drawPolylineStroke(
           ctx,
           selectedEntity,
-          { color: SELECTED_COLOR, width: Math.max(3, selectedStyle.width + 1) },
+          { color: SELECTED_COLOR, width: Math.max(3, this.displayLineWidth(selectedEntity) + 1) },
         );
         this.drawPolylineGrips(ctx, selectedEntity);
       }
       if (selectedEntity?.type === 'TEXT') {
         this.drawTextStroke(ctx, selectedEntity, { color: SELECTED_COLOR, width: 1 });
         this.drawTextGrip(ctx, selectedEntity);
+      }
+      if (selectedEntity?.type === 'DIMENSION') {
+        this.drawDimensionEntity(ctx, selectedEntity, { color: SELECTED_COLOR, width: 2.25 });
+        this.drawDimensionGrips(ctx, selectedEntity);
       }
       if (selectedEntity?.type === 'HATCH') {
         this.drawHatchFill(ctx, selectedEntity, {
@@ -5062,6 +7477,15 @@ class CadRenderer {
         });
         this.drawHatchGrips(ctx, selectedEntity);
       }
+      if (selectedEntity?.type === 'INSERT') {
+        this.drawBlockReference(ctx, selectedEntity, {
+          color: SELECTED_COLOR,
+          width: Math.max(3, this.displayLineWidth(selectedEntity) + 1),
+          alpha: 0.35,
+          outline: true,
+        });
+        this.drawBlockGrip(ctx, selectedEntity);
+      }
     }
   }
 
@@ -5069,6 +7493,56 @@ class CadRenderer {
     const gripSize = 7 / this.state.viewScale;
     ctx.save();
     ctx.fillStyle = '#ffffff';
+    ctx.strokeStyle = SELECTED_COLOR;
+    ctx.lineWidth = 1.5 / this.state.viewScale;
+    ctx.beginPath();
+    ctx.rect(
+      entity.insertionPoint.x - gripSize * 0.5,
+      entity.insertionPoint.y - gripSize * 0.5,
+      gripSize,
+      gripSize,
+    );
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  drawDimensionGrips(ctx, entity, options = {}) {
+    const gripSize = 7 / this.state.viewScale;
+    const color = options.color || SELECTED_COLOR;
+    ctx.save();
+    ctx.fillStyle = '#ffffff';
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.5 / this.state.viewScale;
+    for (const candidate of dimensionReferencePoints(entity)) {
+      const active = (
+        this.state.selectedGrip?.entity === entity &&
+        this.state.selectedGrip?.key === candidate.key
+      ) || (
+        this.state.activeObjectSnap?.entity === entity &&
+        this.state.activeObjectSnap?.key === candidate.key
+      );
+      ctx.fillStyle = active
+        ? color
+        : options.passive ? 'rgba(255, 255, 255, 0.82)' : '#ffffff';
+      ctx.beginPath();
+      ctx.rect(
+        candidate.point.x - gripSize * 0.5,
+        candidate.point.y - gripSize * 0.5,
+        gripSize,
+        gripSize,
+      );
+      ctx.fill();
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  drawBlockGrip(ctx, entity) {
+    const gripSize = 9 / this.state.viewScale;
+    const active = this.state.selectedGrip?.entity === entity;
+    ctx.save();
+    ctx.fillStyle = active ? SELECTED_COLOR : '#ffffff';
     ctx.strokeStyle = SELECTED_COLOR;
     ctx.lineWidth = 1.5 / this.state.viewScale;
     ctx.beginPath();
@@ -5192,9 +7666,12 @@ class CadRenderer {
       (this.state.tool === 'copy' && !this.state.copyDraft?.selecting) ||
       (this.state.tool === 'move' && !this.state.moveDraft?.selecting) ||
       (this.state.tool === 'rotate' && !this.state.rotateDraft?.selecting) ||
+      (this.state.tool === 'block-create' && !this.state.blockCreateDraft?.selecting) ||
+      this.state.tool === 'block-insert' ||
       this.state.tool === 'text' ||
       this.state.tool === 'hatch' ||
       this.state.tool === 'trim' ||
+      DIMENSION_TOOLS.has(this.state.tool) ||
       Boolean(this.state.selectedGrip)
     );
     if (!snap || !visibleForTool) {
@@ -5273,7 +7750,7 @@ class CadRenderer {
     ctx.setLineDash(previewDash.map((length) => length / this.state.viewScale));
     const activeStyle = getLineStyle(activeLineStyleId());
     ctx.strokeStyle = PREVIEW_COLOR;
-    ctx.lineWidth = activeStyle.width / this.state.viewScale;
+    ctx.lineWidth = this.displayLineWidth(activeLineStyleId()) / this.state.viewScale;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
 
@@ -5332,7 +7809,7 @@ class CadRenderer {
         ctx.setLineDash([]);
         this.drawPolylineStroke(ctx, committedPreview, {
           color: committedPreview.color || activeStyle.color,
-          width: activeStyle.width,
+          width: this.displayLineWidth(activeLineStyleId()),
         });
         ctx.setLineDash(previewDash.map((length) => length / this.state.viewScale));
       }
@@ -5362,7 +7839,7 @@ class CadRenderer {
         );
         this.drawPolylineStroke(ctx, activePreview, {
           color: PREVIEW_COLOR,
-          width: activeStyle.width,
+          width: this.displayLineWidth(activeLineStyleId()),
         });
       }
       const radius = 4 / this.state.viewScale;
@@ -5569,6 +8046,61 @@ class CadRenderer {
       ctx.stroke();
     }
 
+    if (this.state.blockInsertDraft) {
+      const insertionPoint = resolveCursorPoint(this.state.mouseWorld, this.state);
+      const draft = this.state.blockInsertDraft;
+      const preview = new BlockReferenceEntity(draft.definition, insertionPoint, {
+        rotation: draft.rotation,
+        scaleX: draft.scale,
+        scaleY: draft.scale,
+        layer: activeLayerName(),
+        lineStyle: activeLineStyleId(),
+        lineType: activeLineTypeId(),
+        lineColor: activeLineColorId(),
+      });
+      this.drawBlockReference(ctx, preview, {
+        color: PREVIEW_COLOR,
+        alpha: 0.25,
+        outline: true,
+      });
+      ctx.setLineDash([]);
+      ctx.fillStyle = PREVIEW_COLOR;
+      ctx.beginPath();
+      ctx.arc(insertionPoint.x, insertionPoint.y, 4 / this.state.viewScale, 0, TWO_PI);
+      ctx.fill();
+    }
+
+    if (this.state.dimensionDraft) {
+      const draft = this.state.dimensionDraft;
+      const cursor = resolveCursorPoint(this.state.mouseWorld, this.state);
+      if (draft.phase === 'placement') {
+        const placement = dimensionPlacementPoint(draft, cursor, this.state);
+        const preview = dimensionDraftEntity(draft, placement);
+        if (preview) {
+          this.drawDimensionEntity(ctx, preview, { color: PREVIEW_COLOR, width: 1.5 });
+        }
+      }
+      else {
+        const guidePoints = [...draft.points, cursor].filter(Boolean);
+        ctx.setLineDash([6 / this.state.viewScale, 5 / this.state.viewScale]);
+        ctx.strokeStyle = PREVIEW_COLOR;
+        ctx.lineWidth = 1.5 / this.state.viewScale;
+        if (draft.firstLine) {
+          ctx.beginPath();
+          ctx.moveTo(draft.firstLine.start.x, draft.firstLine.start.y);
+          ctx.lineTo(draft.firstLine.end.x, draft.firstLine.end.y);
+          ctx.stroke();
+        }
+        if (guidePoints.length > 1) {
+          ctx.beginPath();
+          ctx.moveTo(guidePoints[0].x, guidePoints[0].y);
+          guidePoints.slice(1).forEach((point) => ctx.lineTo(point.x, point.y));
+          ctx.stroke();
+        }
+        ctx.setLineDash([]);
+      }
+    }
+
     ctx.setLineDash([]);
     ctx.restore();
   }
@@ -5667,22 +8199,11 @@ class CadRenderer {
         continue;
       }
 
-      const width = getLineStyle(preview.lineStyle).width;
-      if (preview.type === 'LINE') {
-        this.drawLineStroke(ctx, preview, { color: PREVIEW_COLOR, width });
-      }
-      if (preview.type === 'CIRCLE') {
-        this.drawCircleStroke(ctx, preview, { color: PREVIEW_COLOR, width });
-      }
-      if (preview.type === 'ARC') {
-        this.drawArcStroke(ctx, preview, { color: PREVIEW_COLOR, width });
-      }
-      if (preview.type === 'TEXT') {
-        this.drawTextStroke(ctx, preview, { color: PREVIEW_COLOR, width });
-      }
-      if (preview.type === 'HATCH') {
-        this.drawHatchFill(ctx, preview, { color: PREVIEW_COLOR, alpha: 0.28, outline: true });
-      }
+      this.drawEntityOverlay(ctx, preview, {
+        color: PREVIEW_COLOR,
+        alpha: 0.28,
+        outline: true,
+      });
     }
     ctx.setLineDash([]);
     ctx.restore();
@@ -5784,7 +8305,9 @@ class CadRenderer {
       this.state.tool === 'select-set' ||
       (this.state.tool === 'copy' && this.state.copyDraft?.selecting) ||
       (this.state.tool === 'move' && this.state.moveDraft?.selecting) ||
-      (this.state.tool === 'rotate' && this.state.rotateDraft?.selecting)
+      (this.state.tool === 'rotate' && this.state.rotateDraft?.selecting) ||
+      (this.state.dimensionDraft &&
+        (this.state.dimensionDraft.phase === 'reference' || this.state.dimensionDraft.phase === 'second-line'))
     ) {
       return;
     }
@@ -5848,13 +8371,12 @@ class CadController {
     this.shortcutTimer = null;
     this.lastTextPointerDown = null;
     this.lastHatchPointerDown = null;
-    this.mouseWheelZoomFrame = null;
-    this.mouseWheelZoomTarget = null;
-    this.mouseWheelZoomAnchor = null;
+    this.lastBlockPointerDown = null;
     this.keyboardRefreshFrame = null;
 
     this.canvas.addEventListener('pointerdown', (event) => this.onPointerDown(event));
     this.canvas.addEventListener('pointermove', (event) => this.onPointerMove(event));
+    this.canvas.addEventListener('pointerleave', () => this.onPointerLeave());
     window.addEventListener('pointerup', (event) => this.onPointerUp(event));
     window.addEventListener('pointercancel', (event) => this.onPointerUp(event));
     this.canvas.addEventListener('wheel', (event) => this.onWheel(event), { passive: false });
@@ -5890,6 +8412,7 @@ class CadController {
     this.shortcutTimer = null;
     this.lastTextPointerDown = null;
     this.lastHatchPointerDown = null;
+    this.lastBlockPointerDown = null;
   }
 
   armShortcutPrefix(prefix) {
@@ -5999,12 +8522,20 @@ class CadController {
     this.state.copyDraft = null;
     this.state.moveDraft = null;
     this.state.rotateDraft = null;
+    this.state.filletDraft = tool === 'fillet'
+      ? { firstEntity: null, firstPick: null }
+      : null;
     this.state.selectionSetDraft = null;
     this.state.eraseDraft = null;
+    this.state.explodeDraft = null;
     this.state.extendDraft = null;
+    this.state.blockCreateDraft = null;
+    this.state.blockInsertDraft = null;
+    this.state.dimensionDraft = null;
     this.state.distanceInput = '';
     this.state.selectedGrip = null;
     this.state.activeObjectSnap = null;
+    this.state.hoveredEntity = null;
     this.state.selectionWindow = null;
     this.gripDragState = null;
     if (
@@ -6018,38 +8549,55 @@ class CadController {
       tool === 'arc-center-radius' ||
       tool === 'arc-3p' ||
       tool === 'arc-center-start-end' ||
+      tool === 'block-create' ||
+      tool === 'block-insert' ||
+      DIMENSION_TOOLS.has(tool) ||
       tool === 'copy' ||
       tool === 'move' ||
       tool === 'rotate' ||
       tool === 'select-set' ||
       tool === 'trim' ||
+      tool === 'fillet' ||
       tool === 'extend' ||
-      tool === 'erase'
+      tool === 'erase' ||
+      tool === 'explode'
     ) {
-      if (tool !== 'copy' && tool !== 'move' && tool !== 'rotate' && tool !== 'select-set' && tool !== 'erase' && tool !== 'extend') {
+      if (tool !== 'copy' && tool !== 'move' && tool !== 'rotate' && tool !== 'select-set' && tool !== 'erase' && tool !== 'explode' && tool !== 'extend' && tool !== 'block-create') {
         this.doc.selectEntity(null);
       }
+    }
+    filletRadiusControl.hidden = tool !== 'fillet';
+    if (tool === 'fillet') {
+      syncFilletRadiusControl();
     }
     this.state.statusText = tool === 'select'
       ? 'Seleccionar entidad'
       : tool === 'trim'
         ? 'Recortar: pique el tramo a eliminar'
+        : tool === 'fillet'
+          ? `Empalme R${formatNumber(activeFilletRadius())}: seleccione la primera linea`
         : tool === 'extend'
           ? 'Alargar: seleccione limites'
         : tool === 'erase'
           ? 'Borrar: seleccione objetos y confirme'
+        : tool === 'explode'
+          ? 'Descomponer: seleccione bloques o polilineas y confirme'
           : tool === 'copy'
             ? 'Copiar: indique punto origen'
             : tool === 'move'
               ? 'Desplazar: indique punto origen'
-              : tool === 'rotate'
-                ? 'Girar: indique punto base'
+                : tool === 'rotate'
+                  ? 'Girar: indique punto base'
+                : tool === 'block-create'
+                  ? 'Crear bloque: seleccione objetos'
+                : tool === 'block-insert'
+                  ? 'Insertar bloque: indique punto de insercion'
                 : tool === 'text'
                   ? 'Texto: indique contenido y altura'
                   : tool === 'select-set'
                     ? 'Seleccionar conjunto: elija objetos y confirme'
                     : tool === 'hatch'
-                      ? 'Sombreado: elija tipo de contorno'
+                      ? 'Sombreado: configure sus propiedades'
           : tool === 'circle-center'
             ? 'Circulo: indique centro'
             : tool === 'circle-3p'
@@ -6076,17 +8624,26 @@ class CadController {
       'is-active',
       tool === 'arc-center-radius' || tool === 'arc-3p' || tool === 'arc-center-start-end',
     );
+    blockToolButton.classList.toggle('is-active', tool === 'block-create' || tool === 'block-insert');
     trimToolButton.classList.toggle('is-active', tool === 'trim');
+    filletToolButton.classList.toggle('is-active', tool === 'fillet');
     extendToolButton.classList.toggle('is-active', tool === 'extend');
     copyToolButton.classList.toggle('is-active', tool === 'copy');
     moveToolButton.classList.toggle('is-active', tool === 'move');
     rotateToolButton.classList.toggle('is-active', tool === 'rotate');
     eraseToolButton.classList.toggle('is-active', tool === 'erase');
+    explodeToolButton.classList.toggle('is-active', tool === 'explode');
+    dimensionToolButtons.forEach((button) => {
+      button.classList.toggle('is-active', button.dataset.command === tool);
+    });
     toolFlyoutCommandButtons.forEach((button) => {
       button.classList.toggle('is-active', button.dataset.command === tool);
     });
     this.canvas.classList.toggle('is-select-tool', tool === 'select');
-    this.canvas.classList.toggle('is-line-tool', tool === 'line' || tool === 'polyline' || tool === 'rectangle');
+    this.canvas.classList.toggle(
+      'is-line-tool',
+      tool === 'line' || tool === 'polyline' || tool === 'rectangle' || DIMENSION_TOOLS.has(tool),
+    );
     this.canvas.classList.toggle('is-text-tool', tool === 'text');
     this.canvas.classList.toggle('is-hatch-tool', tool === 'hatch');
     this.canvas.classList.toggle('is-circle-tool', tool === 'circle-center' || tool === 'circle-3p');
@@ -6094,19 +8651,27 @@ class CadController {
       'is-arc-tool',
       tool === 'arc-center-radius' || tool === 'arc-3p' || tool === 'arc-center-start-end',
     );
-    this.canvas.classList.toggle('is-trim-tool', tool === 'trim');
+    this.canvas.classList.toggle('is-trim-tool', tool === 'trim' || tool === 'fillet');
     this.canvas.classList.toggle('is-extend-tool', tool === 'extend');
     this.canvas.classList.toggle('is-copy-tool', tool === 'copy' && this.state.copyDraft?.selecting);
     this.canvas.classList.toggle('is-move-tool', tool === 'move' && this.state.moveDraft?.selecting);
     this.canvas.classList.toggle('is-rotate-tool', tool === 'rotate' && this.state.rotateDraft?.selecting);
     this.canvas.classList.toggle('is-selection-set-tool', tool === 'select-set');
     this.canvas.classList.toggle(
+      'is-dimension-select-tool',
+      DIMENSION_TOOLS.has(tool) && Boolean(this.state.dimensionDraft) &&
+        (this.state.dimensionDraft.phase === 'reference' || this.state.dimensionDraft.phase === 'second-line'),
+    );
+    this.canvas.classList.toggle(
       'is-point-input-tool',
       (tool === 'copy' && this.state.copyDraft && !this.state.copyDraft.selecting) ||
         (tool === 'move' && this.state.moveDraft && !this.state.moveDraft.selecting) ||
-        (tool === 'rotate' && this.state.rotateDraft && !this.state.rotateDraft.selecting),
+        (tool === 'rotate' && this.state.rotateDraft && !this.state.rotateDraft.selecting) ||
+        (tool === 'block-create' && this.state.blockCreateDraft && !this.state.blockCreateDraft.selecting) ||
+        (tool === 'block-insert' && this.state.blockInsertDraft),
     );
     this.canvas.classList.toggle('is-erase-tool', tool === 'erase');
+    this.canvas.classList.toggle('is-explode-tool', tool === 'explode');
     this.updateUiStatus();
     this.renderer.draw();
   }
@@ -6140,19 +8705,92 @@ class CadController {
       if (entity.type === 'HATCH' && entityDistanceToPoint(entity, point) <= tolerance) {
         return entity;
       }
+      if (entity.type === 'DIMENSION' && entityDistanceToPoint(entity, point) <= tolerance) {
+        return entity;
+      }
+      if (entity.type === 'INSERT' && entityDistanceToPoint(entity, point) <= tolerance) {
+        return entity;
+      }
     }
     return null;
+  }
+
+  isEntityHoverSelectionActive() {
+    if (this.state.selectionWindow || this.gripDragState || this.panState) {
+      return false;
+    }
+    if (this.state.tool === 'select') {
+      return !this.state.selectedGrip;
+    }
+    if (this.state.tool === 'trim') {
+      return true;
+    }
+    if (this.state.tool === 'fillet') {
+      return true;
+    }
+    if (this.state.tool === 'select-set') {
+      return Boolean(this.state.selectionSetDraft?.selecting);
+    }
+    if (this.state.tool === 'block-create') {
+      return Boolean(this.state.blockCreateDraft?.selecting);
+    }
+    if (this.state.tool === 'copy') {
+      return Boolean(this.state.copyDraft?.selecting);
+    }
+    if (this.state.tool === 'move') {
+      return Boolean(this.state.moveDraft?.selecting);
+    }
+    if (this.state.tool === 'rotate') {
+      return Boolean(this.state.rotateDraft?.selecting);
+    }
+    if (this.state.tool === 'erase') {
+      return Boolean(this.state.eraseDraft?.selecting);
+    }
+    if (this.state.tool === 'explode') {
+      return Boolean(this.state.explodeDraft?.selecting);
+    }
+    if (this.state.tool === 'extend') {
+      return this.state.extendDraft?.phase === 'boundaries' ||
+        this.state.extendDraft?.phase === 'targets';
+    }
+    if (DIMENSION_TOOLS.has(this.state.tool)) {
+      return this.state.dimensionDraft?.phase === 'reference' ||
+        this.state.dimensionDraft?.phase === 'second-line';
+    }
+    return false;
+  }
+
+  updateHoveredEntity() {
+    this.state.hoveredEntity = this.isEntityHoverSelectionActive() && this.state.mouseWorld
+      ? this.findEntityAt(this.state.mouseWorld)
+      : null;
+  }
+
+  onPointerLeave() {
+    if (!this.state.hoveredEntity) {
+      return;
+    }
+    this.state.hoveredEntity = null;
+    this.renderer.draw();
   }
 
   updateCanvasCursorMode() {
     this.canvas.classList.toggle('is-copy-tool', this.state.tool === 'copy' && this.state.copyDraft?.selecting);
     this.canvas.classList.toggle('is-move-tool', this.state.tool === 'move' && this.state.moveDraft?.selecting);
     this.canvas.classList.toggle('is-rotate-tool', this.state.tool === 'rotate' && this.state.rotateDraft?.selecting);
+    this.canvas.classList.toggle('is-explode-tool', this.state.tool === 'explode');
+    this.canvas.classList.toggle(
+      'is-dimension-select-tool',
+      DIMENSION_TOOLS.has(this.state.tool) && Boolean(this.state.dimensionDraft) &&
+        (this.state.dimensionDraft.phase === 'reference' || this.state.dimensionDraft.phase === 'second-line'),
+    );
     this.canvas.classList.toggle(
       'is-point-input-tool',
       (this.state.tool === 'copy' && this.state.copyDraft && !this.state.copyDraft.selecting) ||
         (this.state.tool === 'move' && this.state.moveDraft && !this.state.moveDraft.selecting) ||
-        (this.state.tool === 'rotate' && this.state.rotateDraft && !this.state.rotateDraft.selecting),
+        (this.state.tool === 'rotate' && this.state.rotateDraft && !this.state.rotateDraft.selecting) ||
+        (this.state.tool === 'block-create' && this.state.blockCreateDraft && !this.state.blockCreateDraft.selecting) ||
+        (this.state.tool === 'block-insert' && this.state.blockInsertDraft),
     );
   }
 
@@ -6167,9 +8805,14 @@ class CadController {
       !this.state.copyDraft &&
       !this.state.moveDraft &&
       !this.state.rotateDraft &&
+      !this.state.filletDraft &&
       !this.state.selectionSetDraft &&
       !this.state.eraseDraft &&
+      !this.state.explodeDraft &&
       !this.state.extendDraft &&
+      !this.state.blockCreateDraft &&
+      !this.state.blockInsertDraft &&
+      !this.state.dimensionDraft &&
       !this.state.selectionWindow &&
       !this.state.selectedGrip &&
       !this.gripDragState &&
@@ -6200,13 +8843,17 @@ class CadController {
       this.state.tool === 'arc-center-radius' ||
       this.state.tool === 'arc-3p' ||
       this.state.tool === 'arc-center-start-end' ||
+      this.state.tool === 'block-create' ||
+      this.state.tool === 'block-insert' ||
       this.state.tool === 'copy' ||
       this.state.tool === 'move' ||
       this.state.tool === 'rotate' ||
       this.state.tool === 'select-set' ||
       this.state.tool === 'trim' ||
+      this.state.tool === 'fillet' ||
       this.state.tool === 'extend' ||
       this.state.tool === 'erase' ||
+      this.state.tool === 'explode' ||
       this.state.pendingLineStart ||
       this.state.polylineDraft ||
       this.state.rectangleDraft ||
@@ -6217,9 +8864,14 @@ class CadController {
       this.state.copyDraft ||
       this.state.moveDraft ||
       this.state.rotateDraft ||
+      this.state.filletDraft ||
       this.state.selectionSetDraft ||
       this.state.eraseDraft ||
-      this.state.extendDraft
+      this.state.explodeDraft ||
+      this.state.extendDraft ||
+      this.state.blockCreateDraft ||
+      this.state.blockInsertDraft ||
+      this.state.dimensionDraft
     ) {
       this.setTool('select');
       if (clearCommandSelection) {
@@ -6238,6 +8890,9 @@ class CadController {
   }
 
   handleCommandEnter() {
+    if (this.state.tool === 'block-create' && this.state.blockCreateDraft?.selecting) {
+      return this.confirmBlockCreateSelection();
+    }
     if (this.state.tool === 'copy' && this.state.copyDraft?.selecting) {
       return this.confirmCopySelection();
     }
@@ -6265,6 +8920,9 @@ class CadController {
     if (this.state.tool === 'erase' && this.state.eraseDraft?.selecting) {
       return this.confirmEraseSelection();
     }
+    if (this.state.tool === 'explode' && this.state.explodeDraft?.selecting) {
+      return this.confirmExplodeSelection();
+    }
     if (this.state.tool === 'extend' && this.state.extendDraft?.phase === 'boundaries') {
       return this.confirmExtendBoundaries();
     }
@@ -6276,6 +8934,14 @@ class CadController {
     }
     if (this.state.distanceInput && this.handleDistanceInputKey({ key: 'Enter' })) {
       return true;
+    }
+    if (this.state.dimensionDraft?.phase === 'placement' && this.state.mouseWorld) {
+      const cursor = resolveCursorPoint(this.state.mouseWorld, this.state);
+      return this.createDimensionAt(dimensionPlacementPoint(
+        this.state.dimensionDraft,
+        cursor,
+        this.state,
+      ));
     }
     if (this.state.pendingLineStart && this.state.tool === 'line') {
       this.setTool('select');
@@ -6301,8 +8967,10 @@ class CadController {
       this.state.tool === 'rotate' ||
       this.state.tool === 'select-set' ||
       this.state.tool === 'trim' ||
+      this.state.tool === 'fillet' ||
       this.state.tool === 'extend' ||
       this.state.tool === 'erase' ||
+      this.state.tool === 'explode' ||
       this.state.circleDraft ||
       this.state.polylineDraft ||
       this.state.rectangleDraft ||
@@ -6312,9 +8980,14 @@ class CadController {
       this.state.copyDraft ||
       this.state.moveDraft ||
       this.state.rotateDraft ||
+      this.state.filletDraft ||
       this.state.selectionSetDraft ||
       this.state.eraseDraft ||
-      this.state.extendDraft
+      this.state.explodeDraft ||
+      this.state.extendDraft ||
+      this.state.blockCreateDraft ||
+      this.state.blockInsertDraft ||
+      this.state.dimensionDraft
     ) {
       this.setTool('select');
       this.state.statusText = 'Orden terminada';
@@ -6345,6 +9018,12 @@ class CadController {
         }
         continue;
       }
+      if (entity.type === 'INSERT') {
+        if (distance(point, entity.insertionPoint) <= tolerance) {
+          return { entity, key: 'insertionPoint' };
+        }
+        continue;
+      }
       if (isCircularEntity(entity)) {
         for (const candidate of circularReferencePoints(entity)) {
           if (distance(point, candidate.point) <= tolerance) {
@@ -6358,6 +9037,16 @@ class CadController {
           if (distance(point, candidate.point) <= tolerance) {
             return { entity, key: candidate.key };
           }
+        }
+        continue;
+      }
+      if (entity.type === 'DIMENSION') {
+        const nearestGrip = dimensionReferencePoints(entity)
+          .map((candidate) => ({ ...candidate, distance: distance(point, candidate.point) }))
+          .filter((candidate) => candidate.distance <= tolerance)
+          .sort((first, second) => first.distance - second.distance)[0];
+        if (nearestGrip) {
+          return { entity, key: nearestGrip.key };
         }
         continue;
       }
@@ -6416,6 +9105,11 @@ class CadController {
       this.doc.markDirty();
       return true;
     }
+    if (grip.entity.type === 'INSERT') {
+      grip.entity.insertionPoint = { ...targetPoint };
+      this.doc.markDirty();
+      return true;
+    }
     if (isCircularEntity(grip.entity)) {
       const moved = moveCircularGrip(grip.entity, grip.key, targetPoint);
       if (moved) {
@@ -6425,6 +9119,13 @@ class CadController {
     }
     if (grip.entity.type === 'POLYLINE') {
       const moved = movePolylineGrip(grip.entity, grip.key, targetPoint);
+      if (moved) {
+        this.doc.markDirty();
+      }
+      return moved;
+    }
+    if (grip.entity.type === 'DIMENSION') {
+      const moved = moveDimensionGrip(grip.entity, grip.key, targetPoint);
       if (moved) {
         this.doc.markDirty();
       }
@@ -6537,6 +9238,7 @@ class CadController {
       (this.state.tool === 'move' && this.state.moveDraft?.selecting) ||
       (this.state.tool === 'rotate' && this.state.rotateDraft?.selecting) ||
       (this.state.tool === 'erase' && this.state.eraseDraft?.selecting) ||
+      (this.state.tool === 'explode' && this.state.explodeDraft?.selecting) ||
       (this.state.tool === 'extend' && this.state.extendDraft?.phase === 'boundaries') ||
       this.state.tool === 'select-set'
     ) {
@@ -6591,6 +9293,112 @@ class CadController {
   startHatch() {
     this.setTool('hatch');
     openHatchDialog();
+    return true;
+  }
+
+  startBlockCreate() {
+    const sourceEntities = [...this.doc.selectedEntities];
+    if (sourceEntities.length) {
+      this.rememberSelectionSet(sourceEntities);
+    }
+    this.setTool('block-create');
+    this.state.blockCreateDraft = {
+      sourceEntities,
+      selecting: !sourceEntities.length,
+      name: null,
+    };
+    if (sourceEntities.length) {
+      this.doc.selectEntities(sourceEntities);
+      openBlockCreateDialog();
+    }
+    else {
+      this.state.statusText = 'Crear bloque: seleccione objetos y confirme';
+    }
+    this.updateUiStatus();
+    this.renderer.draw();
+    return true;
+  }
+
+  confirmBlockCreateSelection() {
+    if (!this.state.blockCreateDraft?.selecting) {
+      return false;
+    }
+    const sourceEntities = [...this.doc.selectedEntities];
+    if (!sourceEntities.length) {
+      this.state.statusText = 'Seleccione entidades para crear el bloque';
+      return false;
+    }
+    this.rememberSelectionSet(sourceEntities);
+    this.state.blockCreateDraft = {
+      sourceEntities,
+      selecting: false,
+      name: null,
+    };
+    openBlockCreateDialog();
+    return true;
+  }
+
+  createBlockAt(basePoint) {
+    const draft = this.state.blockCreateDraft;
+    if (!draft?.name || !draft.sourceEntities.length || !basePoint) {
+      return false;
+    }
+    const localEntities = cloneEntitiesWithOffset(
+      draft.sourceEntities,
+      { x: -basePoint.x, y: -basePoint.y },
+    );
+    if (!localEntities.length) {
+      this.state.statusText = 'No se pudo crear la definicion del bloque';
+      return false;
+    }
+    this.doc.recordHistory();
+    const definition = { name: draft.name, revision: 0, entities: localEntities };
+    this.doc.blockDefinitions.set(definition.name.toLowerCase(), definition);
+    const reference = new BlockReferenceEntity(definition, basePoint, {
+      layer: activeLayerName(),
+      lineStyle: activeLineStyleId(),
+      lineType: activeLineTypeId(),
+      lineColor: activeLineColorId(),
+    });
+    this.doc.replaceEntities(draft.sourceEntities, [reference], { recordHistory: false });
+    this.setTool('select');
+    this.doc.clearSelection();
+    this.state.statusText = `Bloque ${definition.name} creado`;
+    return true;
+  }
+
+  startBlockInsert() {
+    const hasInsertableBlock = [...this.doc.blockDefinitions.values()].some((definition) =>
+      definition.name.toLowerCase() !== String(this.doc.editingBlockName || '').toLowerCase());
+    if (!hasInsertableBlock) {
+      this.state.statusText = 'No hay bloques definidos en el dibujo';
+      this.updateUiStatus();
+      this.renderer.draw();
+      return false;
+    }
+    this.setTool('block-insert');
+    openBlockInsertDialog();
+    return true;
+  }
+
+  insertBlockAt(insertionPoint) {
+    const draft = this.state.blockInsertDraft;
+    const definition = draft?.definition;
+    if (!definition || !insertionPoint) {
+      return false;
+    }
+    this.doc.addEntity(new BlockReferenceEntity(definition, insertionPoint, {
+      layer: activeLayerName(),
+      lineStyle: activeLineStyleId(),
+      lineType: activeLineTypeId(),
+      lineColor: activeLineColorId(),
+      rotation: draft.rotation,
+      scaleX: draft.scale,
+      scaleY: draft.scale,
+    }));
+    this.setTool('select');
+    this.doc.clearSelection();
+    this.state.statusText = `Bloque ${definition.name} insertado`;
     return true;
   }
 
@@ -6706,6 +9514,21 @@ class CadController {
     return true;
   }
 
+  startExplode() {
+    const selectedCount = this.doc.selectedEntities.size;
+    if (selectedCount) {
+      this.rememberSelectionSet();
+    }
+    this.setTool('explode');
+    this.state.explodeDraft = { selecting: true };
+    this.state.statusText = selectedCount
+      ? `Descomponer ${selectedCount} entidad${selectedCount === 1 ? '' : 'es'} - seleccione mas o confirme`
+      : 'Descomponer: seleccione bloques o polilineas y confirme';
+    this.updateUiStatus();
+    this.renderer.draw();
+    return true;
+  }
+
   startExtend() {
     const selectedBoundaries = [...this.doc.selectedEntities];
     if (selectedBoundaries.length) {
@@ -6811,24 +9634,97 @@ class CadController {
       return false;
     }
 
-    const entities = [...this.doc.selectedEntities];
-    if (!entities.length) {
+    if (!this.doc.selectedEntities.size) {
       this.state.statusText = 'Seleccione entidades para borrar';
       this.updateUiStatus();
       this.renderer.draw();
       return false;
     }
 
+    return this.deleteSelectedEntities();
+  }
+
+  deleteSelectedEntities() {
+    const entities = [...this.doc.selectedEntities];
+    if (!entities.length) {
+      return false;
+    }
+
     this.rememberSelectionSet(entities);
 
     const removedCount = this.doc.removeEntities(entities);
-    this.state.eraseDraft = null;
     this.setTool('select');
     this.doc.clearSelection();
     this.state.statusText = removedCount
       ? `${removedCount} entidad${removedCount === 1 ? '' : 'es'} borrada${removedCount === 1 ? '' : 's'}`
       : 'No se pudo borrar';
     return removedCount > 0;
+  }
+
+  confirmExplodeSelection() {
+    if (!this.state.explodeDraft?.selecting) {
+      return false;
+    }
+    const selectedEntities = [...this.doc.selectedEntities];
+    const candidates = selectedEntities.filter(entityCanExplode);
+    if (!candidates.length) {
+      this.state.statusText = 'Seleccione al menos un bloque o una polilinea';
+      this.updateUiStatus();
+      this.renderer.draw();
+      return false;
+    }
+
+    this.rememberSelectionSet(candidates);
+    this.doc.recordHistory();
+    const groupedIds = new Set(candidates.map((entity) => entity.groupId).filter(Boolean));
+    const standaloneCandidates = candidates.filter((entity) => !entity.groupId);
+    let explodedCount = 0;
+    let resultCount = 0;
+    let lostVariableWidth = false;
+
+    groupedIds.forEach((groupId) => {
+      const groupEntities = this.doc.entities.filter((entity) => entity.groupId === groupId);
+      groupEntities.forEach((entity) => {
+        entity.groupId = null;
+      });
+      explodedCount += 1;
+      resultCount += groupEntities.length;
+    });
+
+    for (const entity of standaloneCandidates) {
+      if (!this.doc.entities.includes(entity)) {
+        continue;
+      }
+      let replacements = [];
+      if (entity.type === 'INSERT') {
+        replacements = transformedBlockContents(entity);
+      }
+      else if (entity.type === 'POLYLINE') {
+        lostVariableWidth = lostVariableWidth || entity.segments.some((segment) =>
+          segment.startWidth > SNAP_THRESHOLD || segment.endWidth > SNAP_THRESHOLD);
+        replacements = polylineSegmentEntities(entity);
+      }
+      if (!replacements.length) {
+        continue;
+      }
+      this.doc.replaceEntity(entity, replacements, { recordHistory: false });
+      explodedCount += 1;
+      resultCount += replacements.length;
+    }
+
+    if (!explodedCount) {
+      this.doc.undoStack.pop();
+      this.state.statusText = 'No se pudo descomponer la seleccion';
+      return false;
+    }
+    this.doc.markDirty();
+    this.state.explodeDraft = null;
+    this.setTool('select');
+    this.doc.clearSelection();
+    this.state.statusText = `${explodedCount} elemento${explodedCount === 1 ? '' : 's'} descompuesto${explodedCount === 1 ? '' : 's'} en ${resultCount} ${resultCount === 1 ? 'entidad' : 'entidades'}${
+      lostVariableWidth ? ' · anchura variable convertida a entidades simples' : ''
+    }`;
+    return true;
   }
 
   confirmExtendBoundaries() {
@@ -7055,6 +9951,8 @@ class CadController {
       return this.beginPolyline(point);
     }
     const start = draft.vertices[draft.vertices.length - 1];
+    const closesPolyline = draft.vertices.length >= 3 &&
+      distance(draft.vertices[0], point) <= SNAP_THRESHOLD;
     if (draft.mode === 'arc-end') {
       if (distance(start, point) <= SNAP_THRESHOLD) {
         this.state.statusText = 'Punto repetido';
@@ -7069,6 +9967,9 @@ class CadController {
         endWidth: draft.endWidth,
       });
       draft.vertices.push({ ...point });
+      if (closesPolyline) {
+        return this.finishPolyline(true);
+      }
       this.state.statusText = 'Arco tangente añadido - indique siguiente extremo · L vuelve a linea';
       return true;
     }
@@ -7083,6 +9984,9 @@ class CadController {
       endWidth: draft.endWidth,
     });
     draft.vertices.push({ ...point });
+    if (closesPolyline) {
+      return this.finishPolyline(true);
+    }
     this.state.statusText = 'Tramo añadido - indique siguiente punto · A arco · W anchura · C cerrar';
     return true;
   }
@@ -7158,6 +10062,235 @@ class CadController {
     return false;
   }
 
+  startDimension(tool) {
+    if (!DIMENSION_TOOLS.has(tool)) {
+      return false;
+    }
+    this.setTool(tool);
+    const kind = tool.replace('dimension-', '');
+    this.state.dimensionDraft = {
+      kind,
+      requestedKind: kind,
+      phase: 'reference',
+      points: [],
+      firstLine: null,
+    };
+    this.state.statusText = kind === 'radius' || kind === 'diameter'
+      ? `Cota de ${kind === 'radius' ? 'radio' : 'diametro'}: seleccione un circulo o arco`
+      : kind === 'angular'
+        ? 'Cota angular: seleccione primera linea o capture el vertice mediante snap'
+        : 'Seleccione una linea o tramo de polilinea, o capture el primer punto mediante snap';
+    this.updateUiStatus();
+    this.renderer.draw();
+    return true;
+  }
+
+  setDimensionKind(kind) {
+    if (!this.state.dimensionDraft) {
+      return false;
+    }
+    this.state.dimensionDraft.kind = kind;
+    this.state.tool = `dimension-${kind}`;
+    dimensionToolButtons.forEach((button) => {
+      button.classList.toggle('is-active', button.dataset.command === this.state.tool);
+    });
+    toolFlyoutCommandButtons.forEach((button) => {
+      button.classList.toggle('is-active', button.dataset.command === this.state.tool);
+    });
+    return true;
+  }
+
+  beginDimensionPlacement(message = 'Indique separacion de la cota o escriba la distancia') {
+    const draft = this.state.dimensionDraft;
+    if (!draft) {
+      return false;
+    }
+    draft.phase = 'placement';
+    const rememberedOffset = this.state.lastDimensionOffsets[activeDrawingProfile().id];
+    this.state.distanceInput = '';
+    if (Number.isFinite(rememberedOffset) && rememberedOffset > SNAP_THRESHOLD) {
+      draft.suggestedOffset = rememberedOffset;
+      draft.suggestionActive = false;
+      this.state.statusText = `${message} · referencia ${formatNumber(rememberedOffset)} ${UNITS_LABEL}`;
+    }
+    else {
+      draft.suggestedOffset = null;
+      draft.suggestionActive = false;
+      this.state.statusText = message;
+    }
+    return true;
+  }
+
+  createDimensionAt(placement, options = {}) {
+    const draft = this.state.dimensionDraft;
+    const entity = dimensionDraftEntity(draft, placement);
+    if (!entity || entity.measurement() <= SNAP_THRESHOLD) {
+      this.state.statusText = 'Cota no valida';
+      return false;
+    }
+    const kind = draft.kind;
+    const kindLabel = {
+      horizontal: 'horizontal',
+      vertical: 'vertical',
+      aligned: 'alineada',
+      angular: 'angular',
+      radius: 'de radio',
+      diameter: 'de diametro',
+    }[kind] || kind;
+    const placementDistance = dimensionPlacementDistance(draft, placement);
+    if (
+      options.rememberOffset === true &&
+      Number.isFinite(placementDistance) &&
+      placementDistance > SNAP_THRESHOLD
+    ) {
+      this.state.lastDimensionOffsets[activeDrawingProfile().id] = placementDistance;
+    }
+    const requestedKind = draft.requestedKind || kind;
+    this.doc.addEntity(entity);
+    this.startDimension(`dimension-${requestedKind}`);
+    this.state.statusText = `${
+      `Cota ${kindLabel} creada · ${dimensionTextValue(entity)} ${kind === 'angular' ? '' : UNITS_LABEL}`.trim()
+    } · seleccione la siguiente entidad (Escape para terminar)`;
+    return true;
+  }
+
+  handleDimensionPoint(worldPoint) {
+    const draft = this.state.dimensionDraft;
+    if (!draft) {
+      return false;
+    }
+    if (draft.phase === 'placement') {
+      const cursor = this.resolveInputPoint(worldPoint);
+      return this.createDimensionAt(dimensionPlacementPoint(draft, cursor, this.state));
+    }
+
+    const pickedEntity = this.findEntityAt(worldPoint);
+    const selectionSnap = draft.phase === 'reference'
+      ? objectSnapPoint(worldPoint, this.state)
+      : null;
+    this.state.activeObjectSnap = selectionSnap;
+
+    if (selectionSnap && draft.kind !== 'radius' && draft.kind !== 'diameter') {
+      draft.points = [{ ...selectionSnap.point }];
+      draft.phase = draft.kind === 'angular' ? 'first-ray' : 'second-point';
+      this.state.statusText = draft.kind === 'angular'
+        ? 'Vertice capturado - indique un punto sobre el primer lado'
+        : 'Primer punto capturado - indique segundo punto';
+      return true;
+    }
+
+    if (draft.phase === 'reference') {
+      const circularEntity = dimensionCircularFromEntity(pickedEntity, worldPoint);
+      if (circularEntity) {
+        if (draft.kind !== 'radius' && draft.kind !== 'diameter') {
+          this.setDimensionKind(circularEntity.type === 'ARC' ? 'radius' : 'diameter');
+        }
+        const pickedRadiusPoint = {
+          x: circularEntity.center.x + Math.cos(angleOfPoint(circularEntity.center, worldPoint)) * circularEntity.radius,
+          y: circularEntity.center.y + Math.sin(angleOfPoint(circularEntity.center, worldPoint)) * circularEntity.radius,
+        };
+        draft.points = [{ ...circularEntity.center }, pickedRadiusPoint];
+        this.beginDimensionPlacement();
+        return true;
+      }
+    }
+
+    if (draft.kind === 'radius' || draft.kind === 'diameter') {
+      const circularEntity = dimensionCircularFromEntity(pickedEntity, worldPoint);
+      if (!circularEntity) {
+        this.state.statusText = 'Seleccione un circulo o arco';
+        return false;
+      }
+      const pickedRadiusPoint = {
+        x: circularEntity.center.x + Math.cos(angleOfPoint(circularEntity.center, worldPoint)) * circularEntity.radius,
+        y: circularEntity.center.y + Math.sin(angleOfPoint(circularEntity.center, worldPoint)) * circularEntity.radius,
+      };
+      draft.points = [{ ...circularEntity.center }, pickedRadiusPoint];
+      this.beginDimensionPlacement();
+      return true;
+    }
+
+    if (draft.kind === 'angular') {
+      if (draft.phase === 'reference') {
+        const firstLine = dimensionLineFromEntity(pickedEntity, worldPoint);
+        if (firstLine) {
+          draft.firstLine = new LineEntity(firstLine.start, firstLine.end);
+          draft.phase = 'second-line';
+          this.state.statusText = 'Seleccione la segunda linea o tramo';
+        }
+        else if (!pickedEntity) {
+          draft.points = [this.resolveInputPoint(worldPoint)];
+          draft.phase = 'first-ray';
+          this.state.statusText = 'Vertice indicado - indique un punto sobre el primer lado';
+        }
+        else {
+          this.state.statusText = 'Seleccione una linea o capture el vertice mediante snap';
+        }
+        return true;
+      }
+      if (draft.phase === 'second-line') {
+        const secondLine = dimensionLineFromEntity(pickedEntity, worldPoint);
+        if (!secondLine) {
+          this.state.statusText = 'Seleccione una segunda linea o tramo de polilinea';
+          return false;
+        }
+        const firstDirection = {
+          x: draft.firstLine.end.x - draft.firstLine.start.x,
+          y: draft.firstLine.end.y - draft.firstLine.start.y,
+        };
+        const secondDirection = {
+          x: secondLine.end.x - secondLine.start.x,
+          y: secondLine.end.y - secondLine.start.y,
+        };
+        const vertex = infiniteLineLineIntersection(
+          draft.firstLine.start,
+          firstDirection,
+          secondLine.start,
+          secondDirection,
+        );
+        if (!vertex) {
+          this.state.statusText = 'Las lineas son paralelas';
+          return false;
+        }
+        const fartherPoint = (line) => distance(vertex, line.start) >= distance(vertex, line.end)
+          ? line.start : line.end;
+        draft.points = [{ ...vertex }, { ...fartherPoint(draft.firstLine) }, { ...fartherPoint(secondLine) }];
+        this.beginDimensionPlacement('Indique separacion angular o escriba la distancia');
+        return true;
+      }
+      draft.points.push(this.resolveInputPoint(worldPoint));
+      if (draft.phase === 'first-ray') {
+        draft.phase = 'second-ray';
+        this.state.statusText = 'Indique un punto sobre el segundo lado';
+      }
+      else {
+        this.beginDimensionPlacement('Indique separacion angular o escriba la distancia');
+      }
+      return true;
+    }
+
+    if (draft.phase === 'reference') {
+      const segment = dimensionLineFromEntity(pickedEntity, worldPoint);
+      if (segment) {
+        this.setDimensionKind(dimensionKindForLine(segment));
+        draft.points = [{ ...segment.start }, { ...segment.end }];
+        this.beginDimensionPlacement();
+      }
+      else if (!pickedEntity) {
+        draft.points = [this.resolveInputPoint(worldPoint)];
+        draft.phase = 'second-point';
+        this.state.statusText = 'Primer punto indicado - indique segundo punto';
+      }
+      else {
+        this.state.statusText = 'Seleccione una linea o capture el primer punto mediante snap';
+      }
+      return true;
+    }
+    draft.points.push(this.resolveInputPoint(worldPoint));
+    this.beginDimensionPlacement();
+    return true;
+  }
+
   createRectangleTo(point) {
     const firstPoint = this.state.rectangleDraft?.firstPoint;
     if (!firstPoint) {
@@ -7174,16 +10307,26 @@ class CadController {
 
     this.state.activeLineStyle = activeLineStyleId();
     const style = getLineStyle(activeLineStyleId());
-    const groupId = createEntityGroupId('polyline');
     const topRight = { x: point.x, y: firstPoint.y };
     const bottomLeft = { x: firstPoint.x, y: point.y };
-    const entities = [
-      new LineEntity(firstPoint, topRight, { layer: activeLayerName(), lineStyle: style.id, lineType: activeLineTypeId(), lineColor: activeLineColorId(), groupId }),
-      new LineEntity(topRight, point, { layer: activeLayerName(), lineStyle: style.id, lineType: activeLineTypeId(), lineColor: activeLineColorId(), groupId }),
-      new LineEntity(point, bottomLeft, { layer: activeLayerName(), lineStyle: style.id, lineType: activeLineTypeId(), lineColor: activeLineColorId(), groupId }),
-      new LineEntity(bottomLeft, firstPoint, { layer: activeLayerName(), lineStyle: style.id, lineType: activeLineTypeId(), lineColor: activeLineColorId(), groupId }),
-    ];
-    this.doc.addEntities(entities);
+    const segments = Array.from({ length: 4 }, () => ({
+      type: 'LINE',
+      center: null,
+      clockwise: true,
+      startWidth: 0,
+      endWidth: 0,
+    }));
+    this.doc.addEntity(new PolylineEntity(
+      [firstPoint, topRight, point, bottomLeft],
+      segments,
+      {
+        closed: true,
+        layer: activeLayerName(),
+        lineStyle: style.id,
+        lineType: activeLineTypeId(),
+        lineColor: activeLineColorId(),
+      },
+    ));
     this.state.rectangleDraft = null;
     this.state.statusText = `Rectangulo ${style.label.toLowerCase()} creado (${this.doc.entities.length})`;
     return true;
@@ -7224,6 +10367,44 @@ class CadController {
     }));
     this.state.arcDraft = null;
     this.state.statusText = `Arco ${style.label.toLowerCase()} creado - radio ${formatNumber(radius)} ${UNITS_LABEL}`;
+    return true;
+  }
+
+  handleFilletPoint(worldPoint) {
+    const draft = this.state.filletDraft || { firstEntity: null, firstPick: null };
+    const entity = this.findEntityAt(worldPoint);
+    if (!entity || entity.type !== 'LINE' || entity.groupId) {
+      this.state.statusText = entity?.groupId
+        ? 'Descomponga la polilinea agrupada antes de empalmar'
+        : 'Empalme: seleccione una entidad de linea';
+      return false;
+    }
+    if (!draft.firstEntity) {
+      draft.firstEntity = entity;
+      draft.firstPick = { ...worldPoint };
+      this.state.filletDraft = draft;
+      this.state.statusText = `Primera linea indicada · R${formatNumber(activeFilletRadius())} · seleccione la segunda`;
+      return true;
+    }
+    if (entity === draft.firstEntity) {
+      this.state.statusText = 'Seleccione una segunda linea distinta';
+      return false;
+    }
+    const result = applyLineFillet(
+      this.doc,
+      draft.firstEntity,
+      draft.firstPick,
+      entity,
+      worldPoint,
+      activeFilletRadius(),
+    );
+    if (!result.valid) {
+      this.state.statusText = result.reason;
+      return false;
+    }
+    this.state.filletDraft = { firstEntity: null, firstPick: null };
+    this.state.hoveredEntity = null;
+    this.state.statusText = `Empalme creado · R${formatNumber(result.radius)} ${UNITS_LABEL} · seleccione otra primera linea`;
     return true;
   }
 
@@ -7356,7 +10537,10 @@ class CadController {
       this.state.arcDraft?.points.length ||
       this.state.copyDraft?.basePoint ||
       this.state.moveDraft?.basePoint ||
-      this.state.rotateDraft?.basePoint,
+      this.state.rotateDraft?.basePoint ||
+      this.state.blockCreateDraft?.name ||
+      this.state.blockInsertDraft ||
+      this.state.dimensionDraft?.phase === 'placement'
     );
     if (!this.state.pendingLineStart && !this.state.selectedGrip && !radiusDraft && !pointDraft && !this.state.lastCopy) {
       return false;
@@ -7440,8 +10624,47 @@ class CadController {
         this.state.rectangleDraft?.firstPoint ||
         this.state.circleDraft?.points[0] ||
         this.state.arcDraft?.points[0] ||
+        (this.state.blockCreateDraft?.name ? { x: 0, y: 0 } : null) ||
+        (this.state.blockInsertDraft ? { x: 0, y: 0 } : null) ||
+        dimensionPlacementOrigin(this.state.dimensionDraft) ||
         null;
       const coordinateTarget = pointFromRelativeCoordinates(coordinateOrigin, this.state.distanceInput);
+
+      if (this.state.dimensionDraft?.phase === 'placement') {
+        const cursor = resolveCursorPoint(this.state.mouseWorld, this.state);
+        const targetPoint = coordinateTarget || dimensionPlacementPoint(
+          this.state.dimensionDraft,
+          cursor,
+          this.state,
+        );
+        if (targetPoint && this.createDimensionAt(targetPoint, { rememberOffset: true })) {
+          this.state.distanceInput = '';
+        }
+        else {
+          this.state.statusText = 'Separacion de cota no valida';
+        }
+        return true;
+      }
+
+      if (this.state.blockCreateDraft?.name) {
+        if (coordinateTarget && this.createBlockAt(coordinateTarget)) {
+          this.state.distanceInput = '';
+        }
+        else {
+          this.state.statusText = 'Punto base no valido';
+        }
+        return true;
+      }
+
+      if (this.state.blockInsertDraft) {
+        if (coordinateTarget && this.insertBlockAt(coordinateTarget)) {
+          this.state.distanceInput = '';
+        }
+        else {
+          this.state.statusText = 'Punto de insercion no valido';
+        }
+        return true;
+      }
 
       if (this.state.copyDraft?.basePoint) {
         const cursor = resolveCursorPoint(this.state.mouseWorld, this.state);
@@ -7594,55 +10817,16 @@ class CadController {
   }
 
   cancelMouseWheelZoom() {
-    if (this.mouseWheelZoomFrame !== null) {
-      cancelAnimationFrame(this.mouseWheelZoomFrame);
-    }
-    this.mouseWheelZoomFrame = null;
-    this.mouseWheelZoomTarget = null;
-    this.mouseWheelZoomAnchor = null;
+    return false;
   }
 
   queueMouseWheelZoom(zoomDelta) {
     if (!Number.isFinite(zoomDelta) || Math.abs(zoomDelta) <= SNAP_THRESHOLD) {
       return false;
     }
-    const normalizedStep = clamp(Math.abs(zoomDelta) / 100, 0.35, 1.25);
-    const direction = Math.sign(zoomDelta);
-    const baseScale = this.mouseWheelZoomTarget ?? this.state.viewScale;
-    this.mouseWheelZoomTarget = clamp(
-      baseScale * Math.pow(VIEW_SCALE_FACTOR, -direction * normalizedStep),
-      MIN_VIEW_SCALE,
-      MAX_VIEW_SCALE,
-    );
-    this.mouseWheelZoomAnchor = this.state.mouseScreen
-      ? { ...this.state.mouseScreen }
-      : null;
-
-    if (this.mouseWheelZoomFrame !== null) {
-      return true;
-    }
-    const animate = () => {
-      if (this.mouseWheelZoomTarget === null) {
-        this.mouseWheelZoomFrame = null;
-        return;
-      }
-      const difference = this.mouseWheelZoomTarget - this.state.viewScale;
-      const threshold = Math.max(SNAP_THRESHOLD, this.mouseWheelZoomTarget * 0.0008);
-      if (Math.abs(difference) <= threshold) {
-        this.renderer.zoom(this.mouseWheelZoomTarget, this.mouseWheelZoomAnchor);
-        this.mouseWheelZoomFrame = null;
-        this.mouseWheelZoomTarget = null;
-        this.mouseWheelZoomAnchor = null;
-        return;
-      }
-      this.renderer.zoom(
-        this.state.viewScale + difference * 0.32,
-        this.mouseWheelZoomAnchor,
-      );
-      this.mouseWheelZoomFrame = requestAnimationFrame(animate);
-    };
-    this.mouseWheelZoomFrame = requestAnimationFrame(animate);
-    return true;
+    const boundedDelta = clamp(zoomDelta, -100, 100);
+    const zoomFactor = Math.pow(VIEW_SCALE_FACTOR, -boundedDelta / 100);
+    return this.renderer.zoom(this.state.viewScale * zoomFactor, this.state.mouseScreen);
   }
 
   onPointerDown(event) {
@@ -7701,8 +10885,14 @@ class CadController {
         };
         this.state.statusText = grip.entity.type === 'HATCH'
           ? `Pinzamiento del sombreado seleccionado`
+          : grip.entity.type === 'INSERT'
+            ? 'Punto de insercion del bloque seleccionado'
           : grip.entity.type === 'POLYLINE'
             ? 'Pinzamiento de polilinea seleccionado'
+          : grip.entity.type === 'DIMENSION'
+            ? grip.key === 'text'
+              ? 'Texto de cota seleccionado'
+              : 'Pinzamiento de cota seleccionado'
           : isCircularEntity(grip.entity)
             ? `Pinzamiento ${formatSnapType(grip.key === 'midpoint' ? 'midpoint' : grip.key)} seleccionado`
             : `Punto ${grip.key === 'start' ? 'inicial' : 'final'} seleccionado`;
@@ -7722,10 +10912,26 @@ class CadController {
         const isHatchDoubleClick = entity.type === 'HATCH' &&
           this.lastHatchPointerDown?.entity === entity &&
           now - this.lastHatchPointerDown.time <= 450;
+        const isBlockDoubleClick = entity.type === 'INSERT' &&
+          this.lastBlockPointerDown?.entity === entity &&
+          now - this.lastBlockPointerDown.time <= 450;
         this.lastTextPointerDown = entity.type === 'TEXT' ? { entity, time: now } : null;
         this.lastHatchPointerDown = entity.type === 'HATCH' ? { entity, time: now } : null;
+        this.lastBlockPointerDown = entity.type === 'INSERT' ? { entity, time: now } : null;
         this.doc.selectEntity(entity);
         this.rememberSelectionSet();
+        if (isBlockDoubleClick) {
+          this.lastBlockPointerDown = null;
+          if (this.state.blockEditDraft) {
+            this.state.statusText = 'Guarde o descarte el bloque actual antes de editar otro';
+          }
+          else {
+            enterBlockEditor(entity);
+          }
+          this.updateUiStatus();
+          this.renderer.draw();
+          return;
+        }
         if (isTextDoubleClick) {
           this.lastTextPointerDown = null;
           openTextDialog(entity);
@@ -7745,6 +10951,10 @@ class CadController {
         const selectedEntities = [...this.doc.selectedEntities];
         const entityLabel = entity.type === 'POLYLINE'
           ? 'Polilinea'
+          : entity.type === 'DIMENSION'
+            ? 'Cota'
+          : entity.type === 'INSERT'
+            ? `Bloque ${entity.blockName}`
           : entity.groupId
           ? 'Polilinea'
           : entity.type === 'CIRCLE'
@@ -7755,7 +10965,8 @@ class CadController {
               ? 'Texto'
               : entity.type === 'HATCH' ? 'Sombreado' : 'Linea';
         const selectedLength = selectedEntities.reduce((total, selectedEntity) => total + selectedEntity.length(), 0);
-        this.state.statusText = `${entityLabel} seleccionada - capa ${entity.layer} - grosor ${getLineStyle(entity.lineStyle).label} - ${formatNumber(selectedLength)} ${UNITS_LABEL}`;
+        const selectionLabel = entity.type === 'INSERT' ? 'seleccionado' : 'seleccionada';
+        this.state.statusText = `${entityLabel} ${selectionLabel} - capa ${entity.layer} - grosor ${getLineStyle(entity.lineStyle).label} - ${formatNumber(selectedLength)} ${UNITS_LABEL}`;
         this.updateUiStatus();
         this.renderer.draw();
         return;
@@ -7763,6 +10974,7 @@ class CadController {
 
       this.lastTextPointerDown = null;
       this.lastHatchPointerDown = null;
+      this.lastBlockPointerDown = null;
       this.state.selectionWindow = {
         startWorld: { ...worldPoint },
         currentWorld: { ...worldPoint },
@@ -7791,6 +11003,50 @@ class CadController {
         };
         this.state.statusText = 'Ventana para seleccionar conjunto';
       }
+      this.updateUiStatus();
+      this.renderer.draw();
+      return;
+    }
+
+    if (this.state.tool === 'block-create') {
+      const draft = this.state.blockCreateDraft;
+      if (draft?.selecting) {
+        const entity = this.findEntityAt(worldPoint);
+        if (entity) {
+          this.doc.addSelectedEntities([entity]);
+          this.state.statusText = `${this.doc.selectedEntities.size} entidad${this.doc.selectedEntities.size === 1 ? '' : 'es'} para el bloque`;
+        }
+        else {
+          this.state.selectionWindow = {
+            startWorld: { ...worldPoint },
+            currentWorld: { ...worldPoint },
+            startScreen: { ...this.state.mouseScreen },
+            dragging: false,
+            purpose: 'block-create',
+          };
+          this.state.statusText = 'Ventana de seleccion para crear bloque';
+        }
+      }
+      else if (draft?.name) {
+        this.createBlockAt(this.resolveInputPoint(worldPoint));
+      }
+      else {
+        openBlockCreateDialog();
+      }
+      this.state.distanceInput = '';
+      this.updateUiStatus();
+      this.renderer.draw();
+      return;
+    }
+
+    if (this.state.tool === 'block-insert') {
+      if (this.state.blockInsertDraft) {
+        this.insertBlockAt(this.resolveInputPoint(worldPoint));
+      }
+      else {
+        openBlockInsertDialog();
+      }
+      this.state.distanceInput = '';
       this.updateUiStatus();
       this.renderer.draw();
       return;
@@ -7940,10 +11196,19 @@ class CadController {
       this.state.statusText = result.trimmed
         ? result.hatch
           ? 'Sombreado recortado'
+          : result.polylineSegment
+          ? `Tramo de polilinea eliminado · quedan ${result.remainingSegments} tramo${result.remainingSegments === 1 ? '' : 's'}`
           : result.grouped
           ? `Polilinea recortada en bloque - quedan ${result.keptCount} componente${result.keptCount === 1 ? '' : 's'}`
           : `Tramo recortado - quedan ${result.keptCount} tramo${result.keptCount === 1 ? '' : 's'}`
         : 'No se pudo recortar';
+      this.updateUiStatus();
+      this.renderer.draw();
+      return;
+    }
+
+    if (this.state.tool === 'fillet') {
+      this.handleFilletPoint(worldPoint);
       this.updateUiStatus();
       this.renderer.draw();
       return;
@@ -8020,6 +11285,31 @@ class CadController {
       return;
     }
 
+    if (this.state.tool === 'explode') {
+      if (!this.state.explodeDraft) {
+        this.startExplode();
+        return;
+      }
+      const entity = this.findEntityAt(worldPoint);
+      if (entity) {
+        this.doc.addSelectedEntities([entity]);
+        this.state.statusText = `${this.doc.selectedEntities.size} entidad${this.doc.selectedEntities.size === 1 ? '' : 'es'} seleccionada${this.doc.selectedEntities.size === 1 ? '' : 's'} para descomponer`;
+      }
+      else {
+        this.state.selectionWindow = {
+          startWorld: { ...worldPoint },
+          currentWorld: { ...worldPoint },
+          startScreen: { ...this.state.mouseScreen },
+          dragging: false,
+          purpose: 'explode',
+        };
+        this.state.statusText = 'Ventana de seleccion para descomponer';
+      }
+      this.updateUiStatus();
+      this.renderer.draw();
+      return;
+    }
+
     if (this.state.tool === 'text') {
       if (!this.state.textDraft?.text) {
         openTextDialog();
@@ -8037,17 +11327,9 @@ class CadController {
         openHatchDialog();
         return;
       }
-      let boundary = null;
-      if (this.state.hatchDraft.mode === 'point') {
-        boundary = hatchBoundaryAtPoint(this.doc, worldPoint);
-      }
-      else {
-        boundary = closedLineGroupPolygon(this.doc, this.findEntityAt(worldPoint));
-      }
+      const boundary = hatchBoundaryAtPoint(this.doc, worldPoint);
       if (!boundary) {
-        this.state.statusText = this.state.hatchDraft.mode === 'point'
-          ? 'No se encontro un recinto cerrado en ese punto'
-          : 'Seleccione una polilinea cerrada';
+        this.state.statusText = 'No se encontro un recinto cerrado en ese punto';
       }
       else {
         this.createHatch(boundary);
@@ -8074,6 +11356,17 @@ class CadController {
       const point = this.resolveInputPoint(worldPoint);
       this.handleArcPoint(point);
       this.state.distanceInput = '';
+      this.updateUiStatus();
+      this.renderer.draw();
+      return;
+    }
+
+    if (DIMENSION_TOOLS.has(this.state.tool)) {
+      const wasPlacement = this.state.dimensionDraft?.phase === 'placement';
+      if (!wasPlacement) {
+        this.state.distanceInput = '';
+      }
+      this.handleDimensionPoint(worldPoint);
       this.updateUiStatus();
       this.renderer.draw();
       return;
@@ -8132,14 +11425,18 @@ class CadController {
       const mode = selectionWindowMode(this.state.selectionWindow) === 'window' ? 'ventana' : 'captura';
       this.state.statusText = this.state.selectionWindow.purpose === 'copy'
         ? `Seleccion para copiar por ${mode}`
+        : this.state.selectionWindow.purpose === 'block-create'
+          ? `Seleccion para crear bloque por ${mode}`
         : this.state.selectionWindow.purpose === 'select-set'
           ? `Seleccion de conjunto por ${mode}`
         : this.state.selectionWindow.purpose === 'move'
           ? `Seleccion para desplazar por ${mode}`
           : this.state.selectionWindow.purpose === 'rotate'
             ? `Seleccion para girar por ${mode}`
-          : this.state.selectionWindow.purpose === 'erase'
-            ? `Seleccion para borrar por ${mode}`
+        : this.state.selectionWindow.purpose === 'erase'
+          ? `Seleccion para borrar por ${mode}`
+        : this.state.selectionWindow.purpose === 'explode'
+          ? `Seleccion para descomponer por ${mode}`
             : this.state.selectionWindow.purpose === 'extend-boundaries'
               ? `Limites para alargar por ${mode}`
               : this.state.selectionWindow.purpose === 'extend-targets'
@@ -8164,6 +11461,8 @@ class CadController {
       };
       this.canvas.classList.add('is-dragging');
     }
+
+    this.updateHoveredEntity();
 
     this.updateUiStatus();
     this.renderer.draw();
@@ -8196,10 +11495,12 @@ class CadController {
       if (!selectionWindow.dragging) {
         if (
           selectionWindow.purpose !== 'copy' &&
+          selectionWindow.purpose !== 'block-create' &&
           selectionWindow.purpose !== 'select-set' &&
           selectionWindow.purpose !== 'move' &&
           selectionWindow.purpose !== 'rotate' &&
           selectionWindow.purpose !== 'erase' &&
+          selectionWindow.purpose !== 'explode' &&
           selectionWindow.purpose !== 'extend-boundaries' &&
           selectionWindow.purpose !== 'extend-targets'
         ) {
@@ -8207,6 +11508,8 @@ class CadController {
         }
         this.state.statusText = selectionWindow.purpose === 'copy'
           ? 'Seleccione objetos para copiar'
+          : selectionWindow.purpose === 'block-create'
+            ? 'Seleccione objetos para crear el bloque'
           : selectionWindow.purpose === 'select-set'
             ? 'Seleccione objetos para el conjunto'
           : selectionWindow.purpose === 'move'
@@ -8215,6 +11518,8 @@ class CadController {
               ? 'Seleccione objetos para girar'
             : selectionWindow.purpose === 'erase'
               ? 'Seleccione objetos para borrar'
+            : selectionWindow.purpose === 'explode'
+              ? 'Seleccione bloques o polilineas para descomponer'
               : selectionWindow.purpose === 'extend-boundaries'
                 ? 'Seleccione limites para alargar'
                 : selectionWindow.purpose === 'extend-targets'
@@ -8225,10 +11530,12 @@ class CadController {
         const entities = this.selectedEntitiesFromWindow(selectionWindow);
         if (
           selectionWindow.purpose === 'copy' ||
+          selectionWindow.purpose === 'block-create' ||
           selectionWindow.purpose === 'select-set' ||
           selectionWindow.purpose === 'move' ||
           selectionWindow.purpose === 'rotate' ||
           selectionWindow.purpose === 'erase' ||
+          selectionWindow.purpose === 'explode' ||
           selectionWindow.purpose === 'extend-boundaries'
         ) {
           this.doc.addSelectedEntities(entities);
@@ -8246,6 +11553,8 @@ class CadController {
         const mode = selectionWindowMode(selectionWindow) === 'window' ? 'ventana' : 'captura';
         const selectedCount = selectionWindow.purpose === 'copy'
           ? this.doc.selectedEntities.size
+          : selectionWindow.purpose === 'block-create'
+            ? this.doc.selectedEntities.size
           : selectionWindow.purpose === 'select-set'
             ? this.doc.selectedEntities.size
           : selectionWindow.purpose === 'move'
@@ -8254,6 +11563,8 @@ class CadController {
               ? this.doc.selectedEntities.size
             : selectionWindow.purpose === 'erase'
               ? this.doc.selectedEntities.size
+            : selectionWindow.purpose === 'explode'
+              ? this.doc.selectedEntities.size
               : selectionWindow.purpose === 'extend-boundaries'
                 ? this.doc.selectedEntities.size
           : entities.length;
@@ -8261,6 +11572,8 @@ class CadController {
           ? `${selectedCount} entidad${selectedCount === 1 ? '' : 'es'} seleccionada${selectedCount === 1 ? '' : 's'}${
               selectionWindow.purpose === 'copy'
                 ? ' para copiar'
+                : selectionWindow.purpose === 'block-create'
+                  ? ' para crear el bloque'
                 : selectionWindow.purpose === 'select-set'
                   ? ' para el conjunto'
                 : selectionWindow.purpose === 'move'
@@ -8269,6 +11582,8 @@ class CadController {
                     ? ' para girar'
                   : selectionWindow.purpose === 'erase'
                     ? ' para borrar'
+                  : selectionWindow.purpose === 'explode'
+                    ? ' para descomponer'
                     : selectionWindow.purpose === 'extend-boundaries' ? ' como limite' : ''
             } por ${mode}`
           : `Sin seleccion por ${mode}`;
@@ -8321,7 +11636,8 @@ class CadController {
 
   onKeyDown(event) {
     if (!drawingProfileDialog.hidden || !textDialog.hidden || !hatchDialog.hidden ||
-        !polylineWidthDialog.hidden || !aboutDialog.hidden) {
+        !polylineWidthDialog.hidden || !blockCreateDialog.hidden ||
+        !blockInsertDialog.hidden || !aboutDialog.hidden) {
       return;
     }
     if (event.target instanceof HTMLInputElement ||
@@ -8350,6 +11666,32 @@ class CadController {
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'y') {
       event.preventDefault();
       redoDrawing();
+      return;
+    }
+    if (
+      event.key.toLowerCase() === 'o' &&
+      !event.metaKey && !event.ctrlKey && !event.altKey
+    ) {
+      event.preventDefault();
+      if (!event.repeat) {
+        this.clearShortcutPrefix();
+        runCommand('toggle-ortho');
+      }
+      return;
+    }
+    const deleteSelectionKey = event.key === 'Delete' ||
+      (event.key === 'Backspace' && !this.state.distanceInput);
+    if (
+      deleteSelectionKey &&
+      !event.metaKey && !event.ctrlKey && !event.altKey &&
+      this.doc.selectedEntities.size
+    ) {
+      event.preventDefault();
+      this.cancelKeyboardRefresh();
+      this.clearShortcutPrefix();
+      this.deleteSelectedEntities();
+      this.updateUiStatus();
+      this.renderer.draw();
       return;
     }
     if (this.handlePolylineCommandKey(event)) {
@@ -8411,6 +11753,7 @@ class CadController {
         this.state.moveDraft?.selecting ||
         this.state.rotateDraft?.selecting ||
         this.state.eraseDraft?.selecting ||
+        this.state.explodeDraft?.selecting ||
         this.state.extendDraft?.phase === 'boundaries' ||
         this.state.selectionSetDraft?.selecting;
       if (recallsSelection) {
@@ -8438,9 +11781,25 @@ class CadController {
       runCommand('erase');
       return;
     }
+    if (
+      event.key.toLowerCase() === 'x' &&
+      !event.metaKey && !event.ctrlKey && !event.altKey &&
+      this.state.tool === 'select' &&
+      !this.state.selectedGrip &&
+      !this.state.distanceInput
+    ) {
+      event.preventDefault();
+      runCommand('explode');
+      return;
+    }
     if (event.key.toLowerCase() === 'g' && !event.metaKey && !event.ctrlKey && !event.altKey) {
       event.preventDefault();
       runCommand('rotate');
+      return;
+    }
+    if (event.key.toLowerCase() === 'f' && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      event.preventDefault();
+      runCommand('fillet');
       return;
     }
     if (event.key.toLowerCase() === 't' && !event.metaKey && !event.ctrlKey && !event.altKey) {
@@ -8481,6 +11840,12 @@ class CadController {
   updateCursorInput() {
     const multiplier = parseCopyMultiplier(this.state.distanceInput);
     const copyMultiplierDraft = this.state.lastCopy && /^x\d*$/i.test(this.state.distanceInput.trim());
+    const dimensionSuggestedDistance = this.state.dimensionDraft?.phase === 'placement' &&
+      this.state.dimensionDraft.suggestionActive &&
+      Number.isFinite(this.state.dimensionDraft.suggestedOffset)
+      ? formatNumber(this.state.dimensionDraft.suggestedOffset)
+      : '';
+    const cursorInputValue = this.state.distanceInput || dimensionSuggestedDistance;
     const visible = Boolean(
       (
         this.state.pendingLineStart ||
@@ -8492,9 +11857,12 @@ class CadController {
         this.state.copyDraft ||
         this.state.moveDraft ||
         this.state.rotateDraft ||
+        this.state.blockCreateDraft?.name ||
+        this.state.blockInsertDraft ||
+        this.state.dimensionDraft?.phase === 'placement' ||
         copyMultiplierDraft
       ) &&
-      this.state.distanceInput &&
+      cursorInputValue &&
       this.state.mouseScreen,
     );
 
@@ -8509,7 +11877,7 @@ class CadController {
       ? `${this.state.distanceInput}°`
       : multiplier || copyMultiplierDraft
       ? this.state.distanceInput
-      : `${this.state.distanceInput} ${UNITS_LABEL}`;
+      : `${cursorInputValue} ${UNITS_LABEL}`;
 
     const parentRect = cursorInput.parentElement.getBoundingClientRect();
     const inputRect = cursorInput.getBoundingClientRect();
@@ -8531,6 +11899,9 @@ class CadController {
   updateUiStatus() {
     this.updateCanvasCursorMode();
     const cursor = resolveCursorPoint(this.state.mouseWorld, this.state);
+    if (this.state.dimensionDraft?.phase === 'placement' && cursor) {
+      dimensionPlacementPoint(this.state.dimensionDraft, cursor, this.state);
+    }
     let toolLabel = 'Seleccion';
     if (this.state.tool === 'line') {
       toolLabel = 'Linea 2P';
@@ -8565,6 +11936,9 @@ class CadController {
     if (this.state.tool === 'trim') {
       toolLabel = 'Recortar';
     }
+    if (this.state.tool === 'fillet') {
+      toolLabel = `Empalme R${formatNumber(activeFilletRadius())}`;
+    }
     if (this.state.tool === 'extend') {
       toolLabel = 'Alargar';
     }
@@ -8583,6 +11957,18 @@ class CadController {
     if (this.state.tool === 'rotate') {
       toolLabel = 'Girar';
     }
+    if (this.state.tool === 'explode') {
+      toolLabel = 'Descomponer';
+    }
+    if (this.state.tool === 'block-create') {
+      toolLabel = 'Crear bloque';
+    }
+    if (this.state.tool === 'block-insert') {
+      toolLabel = 'Insertar bloque';
+    }
+    if (DIMENSION_TOOLS.has(this.state.tool)) {
+      toolLabel = commandLabel(this.state.tool);
+    }
     const inputDistance = parseDistanceInput(this.state.distanceInput);
     const activeGripPoint = this.activeGripPoint();
     const coordinateOrigin = this.state.copyDraft?.basePoint ||
@@ -8593,6 +11979,8 @@ class CadController {
       this.state.rectangleDraft?.firstPoint ||
       this.state.circleDraft?.points[0] ||
       this.state.arcDraft?.points[0] ||
+      (this.state.blockCreateDraft?.name ? { x: 0, y: 0 } : null) ||
+      (this.state.blockInsertDraft ? { x: 0, y: 0 } : null) ||
       null;
     const coordinateTarget = pointFromRelativeCoordinates(coordinateOrigin, this.state.distanceInput);
     const activeGripReferencePoint = this.activeGripReferencePoint();
@@ -8698,6 +12086,12 @@ class CadController {
     else if (this.state.arcDraft?.mode === 'center-radius' && this.state.arcDraft.points.length === 1 && previewLength !== null) {
       this.state.statusText = `Radio pendiente - ${formatNumber(previewLength)} ${UNITS_LABEL}`;
     }
+    else if (this.state.blockCreateDraft?.name) {
+      this.state.statusText = `Bloque ${this.state.blockCreateDraft.name}: indique el punto base`;
+    }
+    else if (this.state.blockInsertDraft?.definition) {
+      this.state.statusText = `Insertar ${this.state.blockInsertDraft.definition.name}: indique el punto de insercion`;
+    }
     if (!this.state.statusText) {
       this.state.statusText = 'Listo';
     }
@@ -8714,17 +12108,33 @@ class CadController {
       : 'Longitud: -';
     statusLayer.textContent = `Capa: ${activeLayerName()} · ${getLineStyle(activeLineStyleId()).label} · ${getLineType(activeLineTypeId()).label} · ${getLineColor(activeLineColorId()).label}`;
     statusMessage.textContent = this.state.statusText || 'Listo';
-    statusDxf.textContent = `${activeDrawingProfile().shortLabel} · DXF`;
+    const editingBlock = this.state.blockEditDraft;
+    blockEditorBar.hidden = !editingBlock;
+    blockEditorName.textContent = editingBlock?.name || 'Bloque';
+    statusDxf.textContent = editingBlock
+      ? `EDITAR BLOQUE · ${editingBlock.name}`
+      : `${activeDrawingProfile().shortLabel} · DXF`;
     statusOrthoButton.classList.toggle('is-active', this.state.orthoEnabled);
     statusOrthoButton.setAttribute('aria-pressed', String(this.state.orthoEnabled));
     statusOrthoButton.title = this.state.orthoEnabled
-      ? 'Modo ortogonal activo'
-      : 'Modo ortogonal';
+      ? 'Modo ortogonal activo (O)'
+      : 'Modo ortogonal (O)';
     statusGridButton.classList.toggle('is-active', this.state.snapEnabled);
     statusGridButton.setAttribute('aria-pressed', String(this.state.snapEnabled));
     statusGridButton.title = this.state.snapEnabled
       ? 'Snap a rejilla activo'
       : 'Snap a rejilla desactivado';
+    statusLineWeightButton.classList.toggle(
+      'is-active',
+      this.state.lineWeightDisplayEnabled,
+    );
+    statusLineWeightButton.setAttribute(
+      'aria-pressed',
+      String(this.state.lineWeightDisplayEnabled),
+    );
+    statusLineWeightButton.title = this.state.lineWeightDisplayEnabled
+      ? 'Grosores de línea visibles'
+      : 'Grosores de línea ocultos';
     undoButton.disabled = !this.doc.canUndo();
     redoButton.disabled = !this.doc.canRedo();
     undoCommandButtons.forEach((button) => {
@@ -8751,6 +12161,35 @@ function loadNavigationDevice() {
   }
 }
 
+function loadBooleanPreference(key, fallback) {
+  try {
+    const storedValue = localStorage.getItem(key);
+    return storedValue === null ? fallback : storedValue === 'true';
+  }
+  catch {
+    return fallback;
+  }
+}
+
+function loadLineStylePreference() {
+  try {
+    const storedStyle = localStorage.getItem('webcad-active-line-style');
+    return storedStyle && LINE_STYLES[storedStyle] ? storedStyle : DEFAULT_LINE_STYLE;
+  }
+  catch {
+    return DEFAULT_LINE_STYLE;
+  }
+}
+
+function storePreference(key, value) {
+  try {
+    localStorage.setItem(key, String(value));
+  }
+  catch {
+    // Preferences remain active for the current session when storage is unavailable.
+  }
+}
+
 const state = {
   tool: 'select',
   pendingLineStart: null,
@@ -8763,9 +12202,24 @@ const state = {
   copyDraft: null,
   moveDraft: null,
   rotateDraft: null,
+  filletDraft: null,
   selectionSetDraft: null,
   eraseDraft: null,
+  explodeDraft: null,
   extendDraft: null,
+  blockCreateDraft: null,
+  blockInsertDraft: null,
+  blockEditDraft: null,
+  dimensionDraft: null,
+  dimensionStyle: 'normal',
+  lastDimensionOffsets: {
+    engineering: null,
+    architecture: null,
+  },
+  filletRadii: {
+    engineering: 10,
+    architecture: 0.25,
+  },
   lastCopy: null,
   drawingProfile: 'engineering',
   navigationDevice: loadNavigationDevice(),
@@ -8775,14 +12229,16 @@ const state = {
   mouseScreen: null,
   viewScale: 1,
   viewOffset: { x: 0, y: 0 },
-  snapEnabled: true,
+  snapEnabled: loadBooleanPreference('webcad-grid-enabled', true),
   orthoEnabled: false,
+  lineWeightDisplayEnabled: loadBooleanPreference('webcad-lineweight-display-enabled', true),
   distanceInput: '',
   selectedGrip: null,
   objectSnapEnabled: true,
   activeObjectSnap: null,
+  hoveredEntity: null,
   snapPixelTolerance: 11,
-  activeLineStyle: DEFAULT_LINE_STYLE,
+  activeLineStyle: loadLineStylePreference(),
   activeLineType: DEFAULT_LINE_TYPE,
   activeLineColor: DEFAULT_LINE_COLOR,
   layers: [{ ...DEFAULT_LAYER }],
@@ -8802,7 +12258,7 @@ state.doc = doc;
 let textDialogEntity = null;
 let hatchDialogEntity = null;
 
-window.webcadDebug = { doc, state, renderer, controller };
+window.webcadDebug = { doc, state, renderer, controller, parseDxf, serializeDocumentToDxf };
 
 function syncNavigationDeviceButtons() {
   const mouseActive = state.navigationDevice === 'mouse';
@@ -8843,7 +12299,34 @@ function setDrawingProfileRuntime(profileId) {
   DEFAULT_DRAWING_SIZE = profile.defaultDrawingSize;
   UNITS_LABEL = profile.unitsLabel;
   state.lastTextHeight = profile.defaultTextHeight;
+  syncFilletRadiusControl();
   return profile;
+}
+
+function activeFilletRadius() {
+  return state.filletRadii[state.drawingProfile] ||
+    (state.drawingProfile === 'architecture' ? 0.25 : 10);
+}
+
+function syncFilletRadiusControl() {
+  if (!filletRadiusInput) {
+    return;
+  }
+  filletRadiusInput.step = state.drawingProfile === 'architecture' ? '0.01' : '1';
+  filletRadiusInput.value = String(activeFilletRadius());
+}
+
+function updateFilletRadiusFromInput() {
+  const radius = Number(String(filletRadiusInput.value).replace(',', '.'));
+  if (!Number.isFinite(radius) || radius <= SNAP_THRESHOLD) {
+    state.statusText = 'El radio de empalme debe ser mayor que cero';
+    controller.updateUiStatus();
+    return false;
+  }
+  state.filletRadii[state.drawingProfile] = radius;
+  state.statusText = `Radio de empalme: ${formatNumber(radius)} ${UNITS_LABEL}`;
+  controller.updateUiStatus();
+  return true;
 }
 
 function applyDrawingProfile(profileId) {
@@ -9018,11 +12501,146 @@ function confirmPolylineWidthDialog() {
   return true;
 }
 
+function suggestedBlockName() {
+  let index = doc.blockDefinitions.size + 1;
+  while (doc.blockDefinitions.has(`bloque ${index}`.toLowerCase())) {
+    index += 1;
+  }
+  return `Bloque ${index}`;
+}
+
+function openBlockCreateDialog() {
+  if (!state.blockCreateDraft?.sourceEntities.length) {
+    return false;
+  }
+  blockNameInput.value = suggestedBlockName();
+  blockCreateError.textContent = '';
+  blockCreateDialog.hidden = false;
+  requestAnimationFrame(() => {
+    blockNameInput.focus();
+    blockNameInput.select();
+  });
+  return true;
+}
+
+function closeBlockCreateDialog(cancelled = true) {
+  const sourceEntities = state.blockCreateDraft?.sourceEntities || [];
+  blockCreateDialog.hidden = true;
+  blockCreateError.textContent = '';
+  if (cancelled) {
+    controller.setTool('select');
+    doc.selectEntities(sourceEntities.filter((entity) => doc.entities.includes(entity)));
+    state.statusText = 'Creacion de bloque cancelada';
+  }
+  controller.updateUiStatus();
+  renderer.draw();
+  requestAnimationFrame(() => canvas.focus({ preventScroll: true }));
+}
+
+function confirmBlockCreateDialog() {
+  const name = blockNameInput.value.trim();
+  if (!name) {
+    blockCreateError.textContent = 'Escriba un nombre para el bloque.';
+    blockNameInput.focus();
+    return false;
+  }
+  if (/[<>\\/:;?*|="']/u.test(name)) {
+    blockCreateError.textContent = 'El nombre contiene caracteres no válidos para DXF.';
+    blockNameInput.focus();
+    return false;
+  }
+  if (doc.blockDefinitions.has(name.toLowerCase())) {
+    blockCreateError.textContent = 'Ya existe un bloque con ese nombre.';
+    blockNameInput.focus();
+    return false;
+  }
+  state.blockCreateDraft.name = name;
+  blockCreateDialog.hidden = true;
+  blockCreateError.textContent = '';
+  state.statusText = `Bloque ${name}: indique el punto base`;
+  controller.updateUiStatus();
+  renderer.draw();
+  requestAnimationFrame(() => canvas.focus({ preventScroll: true }));
+  return true;
+}
+
+function syncBlockInsertOptions() {
+  const selectedName = blockInsertNameInput.value;
+  blockInsertNameInput.replaceChildren();
+  [...doc.blockDefinitions.values()]
+    .filter((definition) =>
+      definition.name.toLowerCase() !== String(doc.editingBlockName || '').toLowerCase())
+    .sort((first, second) => first.name.localeCompare(second.name, 'es'))
+    .forEach((definition) => {
+      const option = document.createElement('option');
+      option.value = definition.name;
+      option.textContent = definition.name;
+      blockInsertNameInput.append(option);
+    });
+  if ([...blockInsertNameInput.options].some((option) => option.value === selectedName)) {
+    blockInsertNameInput.value = selectedName;
+  }
+}
+
+function openBlockInsertDialog() {
+  syncBlockInsertOptions();
+  if (!blockInsertNameInput.options.length) {
+    state.statusText = 'No hay bloques definidos en el dibujo';
+    controller.setTool('select');
+    return false;
+  }
+  blockInsertScaleInput.value = '1';
+  blockInsertRotationInput.value = '0';
+  blockInsertError.textContent = '';
+  blockInsertDialog.hidden = false;
+  requestAnimationFrame(() => blockInsertNameInput.focus());
+  return true;
+}
+
+function closeBlockInsertDialog(cancelled = true) {
+  blockInsertDialog.hidden = true;
+  blockInsertError.textContent = '';
+  if (cancelled) {
+    controller.setTool('select');
+    state.statusText = 'Insercion de bloque cancelada';
+  }
+  controller.updateUiStatus();
+  renderer.draw();
+  requestAnimationFrame(() => canvas.focus({ preventScroll: true }));
+}
+
+function confirmBlockInsertDialog() {
+  const definition = doc.blockDefinitions.get(blockInsertNameInput.value.toLowerCase());
+  const scale = Number(String(blockInsertScaleInput.value).replace(',', '.'));
+  const rotation = Number(String(blockInsertRotationInput.value).replace(',', '.'));
+  if (!definition) {
+    blockInsertError.textContent = 'Seleccione un bloque válido.';
+    return false;
+  }
+  if (!Number.isFinite(scale) || scale <= SNAP_THRESHOLD) {
+    blockInsertError.textContent = 'La escala debe ser mayor que cero.';
+    blockInsertScaleInput.focus();
+    return false;
+  }
+  if (!Number.isFinite(rotation)) {
+    blockInsertError.textContent = 'Indique un ángulo válido.';
+    blockInsertRotationInput.focus();
+    return false;
+  }
+  state.blockInsertDraft = { definition, scale, rotation };
+  blockInsertDialog.hidden = true;
+  blockInsertError.textContent = '';
+  state.statusText = `Insertar ${definition.name}: indique el punto de insercion`;
+  controller.updateUiStatus();
+  renderer.draw();
+  requestAnimationFrame(() => canvas.focus({ preventScroll: true }));
+  return true;
+}
+
 function openHatchDialog(entity = null) {
   hatchDialogEntity = entity?.type === 'HATCH' ? entity : null;
   hatchDialogTitle.textContent = hatchDialogEntity ? 'Editar sombreado' : 'Crear sombreado';
   hatchDialogConfirmButton.textContent = hatchDialogEntity ? 'Aceptar' : 'Continuar';
-  hatchModeChoice.hidden = Boolean(hatchDialogEntity);
   hatchPatternInput.value = hatchDialogEntity?.pattern || 'solid';
   hatchLayerInput.replaceChildren();
   const selectedLayerName = hatchDialogEntity?.layer || state.activeLayer;
@@ -9038,10 +12656,6 @@ function openHatchDialog(entity = null) {
     normalizeLineColorId(hatchDialogEntity.lineColor) !== normalizeLineColorId(selectedLayer?.lineColor)
     ? normalizeLineColorId(hatchDialogEntity.lineColor)
     : 'bylayer';
-  const pointMode = [...hatchModeInputs].find((input) => input.value === 'point');
-  if (pointMode) {
-    pointMode.checked = true;
-  }
   hatchDialogError.textContent = '';
   hatchDialog.hidden = false;
   setLayerPickerOpen(false);
@@ -9067,7 +12681,7 @@ function closeHatchDialog(cancelled = true) {
   requestAnimationFrame(() => canvas.focus({ preventScroll: true }));
 }
 
-function confirmHatchDialog(forcedMode = null) {
+function confirmHatchDialog() {
   const layer = state.layers.find((candidate) => candidate.name === hatchLayerInput.value);
   if (!layer) {
     hatchDialogError.textContent = 'Seleccione una capa de destino válida.';
@@ -9102,21 +12716,14 @@ function confirmHatchDialog(forcedMode = null) {
     return true;
   }
 
-  const selectedMode = forcedMode || [...hatchModeInputs].find((input) => input.checked)?.value;
-  if (!selectedMode) {
-    hatchDialogError.textContent = 'Seleccione cómo definir el contorno.';
-    return false;
-  }
   state.hatchDraft = {
     pattern: hatchPatternInput.value,
-    mode: selectedMode,
+    mode: 'point',
     layer: layer.name,
     lineColor: selectedColor,
   };
   hatchDialog.hidden = true;
-  state.statusText = selectedMode === 'point'
-    ? 'Sombreado solido: indique un punto interior'
-    : 'Sombreado solido: seleccione una polilinea cerrada';
+  state.statusText = 'Sombreado solido: indique un punto interior';
   controller.updateUiStatus();
   renderer.draw();
   requestAnimationFrame(() => canvas.focus({ preventScroll: true }));
@@ -9132,7 +12739,18 @@ function toggleOrthoMode() {
 
 function toggleGridSnap() {
   state.snapEnabled = !state.snapEnabled;
+  storePreference('webcad-grid-enabled', state.snapEnabled);
   state.statusText = state.snapEnabled ? 'Snap a rejilla activo' : 'Snap a rejilla desactivado';
+  controller.updateUiStatus();
+  renderer.draw();
+}
+
+function toggleLineWeightDisplay() {
+  state.lineWeightDisplayEnabled = !state.lineWeightDisplayEnabled;
+  storePreference('webcad-lineweight-display-enabled', state.lineWeightDisplayEnabled);
+  state.statusText = state.lineWeightDisplayEnabled
+    ? 'Grosores de línea visibles'
+    : 'Grosores de línea ocultos';
   controller.updateUiStatus();
   renderer.draw();
 }
@@ -9144,7 +12762,73 @@ function fitView() {
   renderer.draw();
 }
 
+function enterBlockEditor(reference) {
+  if (!reference?.definition || state.blockEditDraft || doc.isEditingBlock()) {
+    return false;
+  }
+  controller.setTool('select');
+  const initialSnapshot = doc.snapshot();
+  const undoStack = [...doc.undoStack];
+  const redoStack = [...doc.redoStack];
+  const savedView = {
+    scale: state.viewScale,
+    offset: { ...state.viewOffset },
+  };
+  if (!doc.beginBlockEdit(reference.definition)) {
+    return false;
+  }
+  doc.redoStack = [];
+  state.blockEditDraft = {
+    name: reference.blockName,
+    initialSnapshot,
+    undoStack,
+    redoStack,
+    savedView,
+  };
+  state.statusText = `Editando bloque ${reference.blockName}`;
+  renderer.fitToDocument();
+  controller.updateUiStatus();
+  renderer.draw();
+  return true;
+}
+
+function finishBlockEditor(saveChanges) {
+  const draft = state.blockEditDraft;
+  if (!draft || !doc.isEditingBlock()) {
+    return false;
+  }
+  controller.setTool('select');
+  if (!saveChanges) {
+    doc.restoreSnapshot(draft.initialSnapshot);
+    doc.undoStack = [...draft.undoStack];
+    doc.redoStack = [...draft.redoStack];
+  }
+  else if (doc.undoStack.length === doc.editHistoryFloor) {
+    doc.redoStack = [...draft.redoStack];
+  }
+  doc.endBlockEdit();
+  state.blockEditDraft = null;
+  state.viewScale = draft.savedView.scale;
+  state.viewOffset = { ...draft.savedView.offset };
+  if (state.mouseScreen) {
+    state.mouseWorld = renderer.screenToWorld(state.mouseScreen);
+  }
+  state.statusText = saveChanges
+    ? `Bloque ${draft.name} guardado`
+    : `Cambios del bloque ${draft.name} descartados`;
+  controller.updateUiStatus();
+  renderer.draw();
+  requestAnimationFrame(() => canvas.focus({ preventScroll: true }));
+  return true;
+}
+
 function newDrawing() {
+  if (state.blockEditDraft) {
+    state.statusText = 'Guarde o descarte la edicion del bloque antes de crear un dibujo';
+    controller.updateUiStatus();
+    renderer.draw();
+    return false;
+  }
   doc.clear();
   state.layers = [{ ...DEFAULT_LAYER }];
   state.activeLayer = DEFAULT_LAYER.name;
@@ -9163,7 +12847,11 @@ function newDrawing() {
   state.rotateDraft = null;
   state.selectionSetDraft = null;
   state.eraseDraft = null;
+  state.explodeDraft = null;
   state.extendDraft = null;
+  state.blockCreateDraft = null;
+  state.blockInsertDraft = null;
+  state.dimensionDraft = null;
   state.lastCopy = null;
   state.lastTextHeight = activeDrawingProfile().defaultTextHeight;
   state.previousSelection = [];
@@ -9188,18 +12876,25 @@ function exportDxf() {
   link.download = 'drawing.dxf';
   link.click();
   URL.revokeObjectURL(url);
-  state.statusText = `Exportadas ${doc.entities.length} entidades DXF`;
+  state.statusText = `Exportadas ${doc.topLevelEntities().length} entidades DXF`;
   renderer.draw();
 }
 
 function importDxf() {
+  if (state.blockEditDraft) {
+    state.statusText = 'Guarde o descarte la edicion del bloque antes de importar';
+    controller.updateUiStatus();
+    renderer.draw();
+    return false;
+  }
   importDxfInput.value = '';
   importDxfInput.click();
+  return true;
 }
 
 function showAbout() {
   aboutDialog.hidden = false;
-  state.statusText = 'webCAD 0.2.0 · Autor: Gonzalo Rodriguez';
+  state.statusText = 'webCAD 0.4.0 · Autor: Gonzalo Rodriguez';
   controller.updateUiStatus();
   renderer.draw();
   requestAnimationFrame(() => aboutDialogCloseButton.focus());
@@ -9223,7 +12918,11 @@ function resetInteractionState() {
   state.rotateDraft = null;
   state.selectionSetDraft = null;
   state.eraseDraft = null;
+  state.explodeDraft = null;
   state.extendDraft = null;
+  state.blockCreateDraft = null;
+  state.blockInsertDraft = null;
+  state.dimensionDraft = null;
   state.distanceInput = '';
   state.selectedGrip = null;
   state.activeObjectSnap = null;
@@ -9265,6 +12964,79 @@ function layerDisplayColor(layer) {
   return getLineColor(layer.lineColor).color || getLineStyle(layer.lineStyle).color;
 }
 
+function layerCreationDisplayColor() {
+  return getLineColor(layerCreationColor).color || getLineStyle(layerStyleInput.value).color;
+}
+
+function ensureLayerColorOption(lineColorId) {
+  const normalized = normalizeLineColorId(lineColorId);
+  const existing = [...layerColorInput.options].find((option) => option.value === normalized);
+  if (existing) {
+    return existing;
+  }
+  const option = document.createElement('option');
+  option.value = normalized;
+  option.textContent = getLineColor(normalized).label;
+  option.dataset.customColor = 'true';
+  const otherOption = [...layerColorInput.options].find((candidate) => candidate.value === 'other');
+  layerColorInput.insertBefore(option, otherOption || null);
+  return option;
+}
+
+function syncLayerCreationColorControl() {
+  ensureLayerColorOption(layerCreationColor);
+  layerColorInput.value = normalizeLineColorId(layerCreationColor);
+  layerColorPreview.style.background = layerCreationDisplayColor();
+  const lineColor = getLineColor(layerCreationColor);
+  layerColorPaletteValue.textContent = lineColor.label;
+  layerColorGrid.querySelectorAll('[data-layer-palette-color]').forEach((button) => {
+    button.classList.toggle(
+      'is-active',
+      normalizeLineColorId(button.dataset.layerPaletteColor) === lineColor.id,
+    );
+  });
+}
+
+function setLayerColorPaletteOpen(open) {
+  layerColorPalette.hidden = !open;
+  layerPicker.classList.toggle('is-palette-open', open);
+  if (open) {
+    syncLayerCreationColorControl();
+  }
+}
+
+function selectLayerCreationColor(lineColorId) {
+  layerCreationColor = normalizeLineColorId(lineColorId);
+  syncLayerCreationColorControl();
+  setLayerColorPaletteOpen(false);
+}
+
+function buildLayerColorPalette() {
+  const paletteIds = [
+    DEFAULT_LINE_COLOR,
+    ...Array.from({ length: 255 }, (_, index) => normalizeLineColorId(String(index + 1))),
+  ];
+  const fragment = document.createDocumentFragment();
+  paletteIds.forEach((lineColorId, index) => {
+    const lineColor = getLineColor(lineColorId);
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'layer-color-cell';
+    button.dataset.layerPaletteColor = lineColor.id;
+    button.setAttribute('role', 'gridcell');
+    button.setAttribute('aria-label', index === 0 ? 'Color por defecto' : `Color ACI ${index}`);
+    button.title = index === 0 ? 'Por defecto' : `ACI ${index}`;
+    button.style.setProperty('--palette-color', lineColor.color || LINE_COLOR);
+    button.addEventListener('pointerdown', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      selectLayerCreationColor(lineColor.id);
+    });
+    fragment.append(button);
+  });
+  layerColorGrid.replaceChildren(fragment);
+}
+
 function setLayerPickerOpen(open) {
   if (open) {
     setLineStylePickerOpen(false);
@@ -9273,13 +13045,20 @@ function setLayerPickerOpen(open) {
   }
   layerPicker.classList.toggle('is-open', open);
   if (!open) {
-    layerPicker.classList.remove('is-creating');
+    layerPicker.classList.remove('is-creating', 'is-palette-open');
+    layerColorPalette.hidden = true;
   }
   layerToggle.setAttribute('aria-expanded', String(open));
 }
 
 function syncLayerPicker() {
+  const activeLayer = activeLayerDefinition();
   layerLabel.textContent = activeLayerName();
+  layerActiveSwatch.style.setProperty('--layer-color', layerDisplayColor(activeLayer));
+  layerToggle.setAttribute(
+    'aria-label',
+    `Capa activa: ${activeLayerName()}, color ${getLineColor(activeLayer.lineColor).label}`,
+  );
   layerList.replaceChildren();
   state.layers.forEach((layer) => {
     const button = document.createElement('button');
@@ -9311,6 +13090,7 @@ function setActiveLayer(layerName) {
 
   state.activeLayer = layer.name;
   state.activeLineStyle = normalizeLineStyleId(layer.lineStyle);
+  storePreference('webcad-active-line-style', state.activeLineStyle);
   state.activeLineType = normalizeLineTypeId(layer.lineType);
   state.activeLineColor = normalizeLineColorId(layer.lineColor);
   const selectedEntities = state.selectedGrip?.entity
@@ -9349,7 +13129,10 @@ function openLayerCreation() {
   layerNameInput.value = nextLayerName();
   layerStyleInput.value = 'normal';
   layerTypeInput.value = 'continuous';
-  layerColorInput.value = 'aci7';
+  layerColorInput.querySelectorAll('[data-custom-color]').forEach((option) => option.remove());
+  layerCreationColor = 'aci7';
+  syncLayerCreationColorControl();
+  setLayerColorPaletteOpen(false);
   layerPicker.classList.add('is-open', 'is-creating');
   layerToggle.setAttribute('aria-expanded', 'true');
   requestAnimationFrame(() => {
@@ -9377,7 +13160,7 @@ function createLayerFromPanel() {
     name,
     lineStyle: normalizeLineStyleId(layerStyleInput.value),
     lineType: normalizeLineTypeId(layerTypeInput.value),
-    lineColor: normalizeLineColorId(layerColorInput.value),
+    lineColor: normalizeLineColorId(layerCreationColor),
   });
   layerPicker.classList.remove('is-creating');
   setActiveLayer(name);
@@ -9491,6 +13274,12 @@ function syncLineTypePicker() {
 function syncLineColorPicker() {
   const lineColor = getLineColor(state.activeLineColor);
   lineColorLabel.className = `line-color-current is-${lineColor.id}`;
+  const predefinedColorIds = new Set([
+    'default', 'red', 'yellow', 'green', 'cyan', 'blue', 'magenta', 'aci7',
+  ]);
+  lineColorLabel.style.background = predefinedColorIds.has(lineColor.id)
+    ? ''
+    : lineColor.color;
   lineColorToggle.title = lineColor.label;
   lineColorToggle.setAttribute('aria-label', `Color de linea: ${lineColor.label}`);
   lineColorOptionButtons.forEach((button) => {
@@ -9501,6 +13290,7 @@ function syncLineColorPicker() {
 function setActiveLineStyle(styleId) {
   const style = getLineStyle(styleId);
   state.activeLineStyle = style.id;
+  storePreference('webcad-active-line-style', state.activeLineStyle);
   syncLineStylePicker();
 
   const selectedEntities = state.selectedGrip?.entity
@@ -9622,13 +13412,23 @@ function commandLabel(command) {
     'arc-center-radius': 'Arco centro-radio',
     'arc-3p': 'Arco 3 puntos',
     'arc-center-start-end': 'Arco centro-inicio-final',
+    'block-create': 'Crear bloque',
+    'block-insert': 'Insertar bloque',
+    'dimension-horizontal': 'Cota horizontal',
+    'dimension-vertical': 'Cota vertical',
+    'dimension-aligned': 'Cota alineada',
+    'dimension-angular': 'Cota angular',
+    'dimension-radius': 'Cota de radio',
+    'dimension-diameter': 'Cota de diametro',
     copy: 'Copiar',
     move: 'Desplazar',
     rotate: 'Girar',
     'select-set': 'Seleccionar conjunto',
     trim: 'Recortar',
     extend: 'Alargar',
+    fillet: 'Empalme',
     erase: 'Borrar',
+    explode: 'Descomponer',
   };
   return labels[command] || 'Comando';
 }
@@ -9646,6 +13446,9 @@ function runCommand(command) {
   if (command === 'rectangle') controller.setTool('rectangle');
   if (command === 'text') controller.startText();
   if (command === 'hatch') controller.startHatch();
+  if (command === 'block-create') controller.startBlockCreate();
+  if (command === 'block-insert') controller.startBlockInsert();
+  if (DIMENSION_TOOLS.has(command)) controller.startDimension(command);
   if (command === 'circle-center' || command === 'circle-3p') {
     state.lastCircleTool = command;
     circleToolButton.dataset.tool = command;
@@ -9664,10 +13467,13 @@ function runCommand(command) {
   if (command === 'move') controller.startMove();
   if (command === 'rotate') controller.startRotate();
   if (command === 'trim') controller.setTool('trim');
+  if (command === 'fillet') controller.setTool('fillet');
   if (command === 'extend') controller.startExtend();
   if (command === 'erase') controller.startErase();
+  if (command === 'explode') controller.startExplode();
   if (command === 'toggle-ortho') toggleOrthoMode();
   if (command === 'toggle-grid') toggleGridSnap();
+  if (command === 'toggle-lineweight') toggleLineWeightDisplay();
   if (command === 'fit') fitView();
   if (command === 'navigation-mouse') setNavigationDevice('mouse');
   if (command === 'navigation-trackpad') setNavigationDevice('trackpad');
@@ -9685,10 +13491,40 @@ menuCommandButtons.forEach((button) => {
   button.addEventListener('click', () => runCommand(button.dataset.command));
 });
 
+dimensionStyleSelect.addEventListener('change', () => {
+  state.dimensionStyle = DIMENSION_STYLES[dimensionStyleSelect.value]?.id || 'normal';
+  state.statusText = `Estilo de cota: ${DIMENSION_STYLES[state.dimensionStyle].label}`;
+  controller.updateUiStatus();
+  renderer.draw();
+});
+
 navigationMouseButton.addEventListener('click', () => runCommand('navigation-mouse'));
 navigationTrackpadButton.addEventListener('click', () => runCommand('navigation-trackpad'));
 statusOrthoButton.addEventListener('click', () => runCommand('toggle-ortho'));
 statusGridButton.addEventListener('click', () => runCommand('toggle-grid'));
+statusLineWeightButton.addEventListener('click', () => runCommand('toggle-lineweight'));
+filletRadiusInput.addEventListener('change', () => {
+  updateFilletRadiusFromInput();
+  renderer.draw();
+});
+filletRadiusInput.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    if (updateFilletRadiusFromInput()) {
+      canvas.focus({ preventScroll: true });
+      renderer.draw();
+    }
+  }
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    controller.cancelCurrentCommand();
+    controller.updateUiStatus();
+    renderer.draw();
+    canvas.focus({ preventScroll: true });
+  }
+});
+blockEditorSaveButton.addEventListener('click', () => finishBlockEditor(true));
+blockEditorDiscardButton.addEventListener('click', () => finishBlockEditor(false));
 selectToolButton.addEventListener('click', () => runCommand('select'));
 lineToolButton.addEventListener('click', () => runCommand('line'));
 polylineToolButton.addEventListener('click', () => runCommand('polyline'));
@@ -9718,6 +13554,14 @@ arcToolMenuButton.addEventListener('click', (event) => {
   event.preventDefault();
   event.stopPropagation();
 });
+blockToolButton.addEventListener('click', () => runCommand('block-insert'));
+blockToolMenuButton.addEventListener('pointerdown', (event) => {
+  toggleToolGroupFromButton(blockToolMenuButton, event);
+});
+blockToolMenuButton.addEventListener('click', (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+});
 toolFlyoutCommandButtons.forEach((button) => {
   button.addEventListener('pointerdown', (event) => {
     event.preventDefault();
@@ -9727,10 +13571,12 @@ toolFlyoutCommandButtons.forEach((button) => {
 });
 trimToolButton.addEventListener('click', () => runCommand('trim'));
 extendToolButton.addEventListener('click', () => runCommand('extend'));
+filletToolButton.addEventListener('click', () => runCommand('fillet'));
 copyToolButton.addEventListener('click', () => runCommand('copy'));
 moveToolButton.addEventListener('click', () => runCommand('move'));
 rotateToolButton.addEventListener('click', () => runCommand('rotate'));
 eraseToolButton.addEventListener('click', () => runCommand('erase'));
+explodeToolButton.addEventListener('click', () => runCommand('explode'));
 fitButton.addEventListener('click', () => runCommand('fit'));
 undoButton.addEventListener('click', () => runCommand('undo'));
 redoButton.addEventListener('click', () => runCommand('redo'));
@@ -9751,7 +13597,8 @@ layerCreateOpenButton.addEventListener('pointerdown', (event) => {
 layerCreateCancelButton.addEventListener('pointerdown', (event) => {
   event.preventDefault();
   event.stopPropagation();
-  layerPicker.classList.remove('is-creating');
+  layerPicker.classList.remove('is-creating', 'is-palette-open');
+  layerColorPalette.hidden = true;
 });
 layerCreateConfirmButton.addEventListener('pointerdown', (event) => {
   event.preventDefault();
@@ -9767,8 +13614,21 @@ layerNameInput.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') {
     event.preventDefault();
     event.stopPropagation();
-    layerPicker.classList.remove('is-creating');
+    layerPicker.classList.remove('is-creating', 'is-palette-open');
+    layerColorPalette.hidden = true;
   }
+});
+layerColorInput.addEventListener('change', () => {
+  if (layerColorInput.value === 'other') {
+    ensureLayerColorOption(layerCreationColor);
+    layerColorInput.value = normalizeLineColorId(layerCreationColor);
+    setLayerColorPaletteOpen(true);
+    return;
+  }
+  selectLayerCreationColor(layerColorInput.value);
+});
+layerStyleInput.addEventListener('change', () => {
+  syncLayerCreationColorControl();
 });
 lineStyleOptionButtons.forEach((button) => {
   button.addEventListener('pointerdown', (event) => {
@@ -9815,14 +13675,39 @@ document.addEventListener('pointerdown', (event) => {
   }
 });
 
+async function readDxfText(file) {
+  const buffer = await file.arrayBuffer();
+  const windowsText = new TextDecoder('windows-1252').decode(buffer);
+  if (/\$DWGCODEPAGE[\s\S]{0,80}ANSI_1252/i.test(windowsText)) {
+    return windowsText;
+  }
+  return new TextDecoder('utf-8').decode(buffer);
+}
+
 importDxfInput.addEventListener('change', async (event) => {
   const [file] = event.target.files || [];
   if (!file) {
     return;
   }
 
-  const text = await file.text();
-  const entities = parseDxf(text);
+  state.statusText = `Analizando ${file.name}...`;
+  controller.updateUiStatus();
+  renderer.draw();
+  await new Promise((resolve) => requestAnimationFrame(resolve));
+
+  let entities;
+  try {
+    const text = await readDxfText(file);
+    entities = parseDxf(text);
+  }
+  catch (error) {
+    console.error('No se pudo importar el DXF', error);
+    state.statusText = `No se pudo importar ${file.name}`;
+    controller.updateUiStatus();
+    renderer.draw();
+    event.target.value = '';
+    return;
+  }
   if (entities.drawingProfile) {
     setDrawingProfileRuntime(entities.drawingProfile);
   }
@@ -9838,17 +13723,37 @@ importDxfInput.addEventListener('change', async (event) => {
   state.copyDraft = null;
   state.moveDraft = null;
   state.rotateDraft = null;
+  state.filletDraft = null;
   state.selectionSetDraft = null;
   state.eraseDraft = null;
+  state.explodeDraft = null;
   state.extendDraft = null;
+  state.blockCreateDraft = null;
+  state.blockInsertDraft = null;
+  state.dimensionDraft = null;
   state.lastCopy = null;
   state.previousSelection = [];
   state.distanceInput = '';
   state.selectedGrip = null;
-  state.statusText = `Importadas ${entities.length} entidades DXF · ${activeDrawingProfile().label} (${UNITS_LABEL})`;
-  renderer.fitToDocument();
+  state.statusText = `Importadas ${entities.length} entidades DXF en ${state.layers.length} capas · ${activeDrawingProfile().label} (${UNITS_LABEL})${
+    entities.drawingProfileDetected ? ' · perfil detectado automaticamente' : ''
+  }${
+    entities.skippedPatternHatchCount
+      ? ` · ${entities.skippedPatternHatchCount} sombreados de patron omitidos`
+      : ''
+  }${
+    entities.skippedHatchCount ? ` · ${entities.skippedHatchCount} sombreados incompatibles omitidos` : ''
+  }`;
+  const headerBounds = entities.drawingExtents;
+  if (headerBounds) {
+    renderer.fitBounds(headerBounds);
+  }
+  else {
+    renderer.fitToDocument();
+  }
   controller.updateUiStatus();
   renderer.draw();
+  event.target.value = '';
 });
 
 drawingProfileConfirmButton.addEventListener('click', confirmDrawingProfileDialog);
@@ -9900,6 +13805,44 @@ polylineWidthDialog.addEventListener('pointerdown', (event) => {
     closePolylineWidthDialog();
   }
 });
+blockCreateConfirmButton.addEventListener('click', confirmBlockCreateDialog);
+blockCreateCancelButton.addEventListener('click', () => closeBlockCreateDialog(true));
+blockCreateCloseButton.addEventListener('click', () => closeBlockCreateDialog(true));
+blockCreateDialog.addEventListener('pointerdown', (event) => {
+  if (event.target === blockCreateDialog) {
+    closeBlockCreateDialog(true);
+  }
+});
+blockNameInput.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    confirmBlockCreateDialog();
+  }
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    closeBlockCreateDialog(true);
+  }
+});
+blockInsertConfirmButton.addEventListener('click', confirmBlockInsertDialog);
+blockInsertCancelButton.addEventListener('click', () => closeBlockInsertDialog(true));
+blockInsertCloseButton.addEventListener('click', () => closeBlockInsertDialog(true));
+blockInsertDialog.addEventListener('pointerdown', (event) => {
+  if (event.target === blockInsertDialog) {
+    closeBlockInsertDialog(true);
+  }
+});
+[blockInsertNameInput, blockInsertScaleInput, blockInsertRotationInput].forEach((input) => {
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      confirmBlockInsertDialog();
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeBlockInsertDialog(true);
+    }
+  });
+});
 [polylineStartWidthInput, polylineEndWidthInput].forEach((input) => {
   input.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') {
@@ -9915,9 +13858,6 @@ polylineWidthDialog.addEventListener('pointerdown', (event) => {
 hatchDialogConfirmButton.addEventListener('click', () => confirmHatchDialog());
 hatchDialogCancelButton.addEventListener('click', () => closeHatchDialog(true));
 hatchDialogCloseButton.addEventListener('click', () => closeHatchDialog(true));
-hatchModeInputs.forEach((input) => {
-  input.addEventListener('click', () => confirmHatchDialog(input.value));
-});
 hatchDialog.addEventListener('pointerdown', (event) => {
   if (event.target === hatchDialog) {
     closeHatchDialog(true);
@@ -9952,6 +13892,7 @@ aboutDialog.addEventListener('keydown', (event) => {
 });
 
 renderer.resize();
+buildLayerColorPalette();
 syncLayerPicker();
 syncLineStylePicker();
 syncLineTypePicker();
