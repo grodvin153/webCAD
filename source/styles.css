@@ -172,6 +172,26 @@ input {
   outline: 2px solid rgba(182, 77, 31, 0.18);
 }
 
+.chamfer-distance-control {
+  gap: 8px;
+}
+
+.chamfer-distance-control[hidden] {
+  display: none;
+}
+
+.chamfer-distance-control label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.chamfer-distance-control input {
+  width: 58px;
+}
+
 .line-style-control {
   display: inline-flex;
   align-items: center;

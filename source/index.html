@@ -55,9 +55,11 @@
             <button class="submenu-item" type="button" data-command="copy">Copiar</button>
             <button class="submenu-item" type="button" data-command="move">Desplazar</button>
             <button class="submenu-item" type="button" data-command="rotate">Girar</button>
+            <button class="submenu-item" type="button" data-command="mirror">Simetria (S)</button>
             <button class="submenu-item" type="button" data-command="trim">Recortar</button>
             <button class="submenu-item" type="button" data-command="extend">Alargar</button>
             <button class="submenu-item" type="button" data-command="fillet">Empalme (F)</button>
+            <button class="submenu-item" type="button" data-command="chamfer">Chaflan</button>
             <button class="submenu-item" type="button" data-command="erase">Borrar</button>
             <button class="submenu-item" type="button" data-command="explode">Descomponer (X)</button>
           </div>
@@ -224,8 +226,13 @@
       </div>
       <label id="fillet-radius-control" class="fillet-radius-control" title="Radio de empalme" hidden>
         <span>Empalme R</span>
-        <input id="fillet-radius-input" type="number" min="0.001" step="1" value="10" inputmode="decimal" aria-label="Radio de empalme">
+        <input id="fillet-radius-input" type="number" min="0" step="1" value="10" inputmode="decimal" aria-label="Radio de empalme">
       </label>
+      <div id="chamfer-distance-control" class="fillet-radius-control chamfer-distance-control" title="Distancias de chaflan" hidden>
+        <span>Chaflan</span>
+        <label>D1 <input id="chamfer-distance-first" type="number" min="0" step="1" value="10" inputmode="decimal" aria-label="Primera distancia de chaflan"></label>
+        <label>D2 <input id="chamfer-distance-second" type="number" min="0" step="1" value="10" inputmode="decimal" aria-label="Segunda distancia de chaflan"></label>
+      </div>
       <div class="navigation-device-control" role="group" aria-label="Periferico de navegacion">
         <button
           id="navigation-mouse"
@@ -574,6 +581,20 @@
         </svg>
       </button>
       <button
+        id="tool-chamfer"
+        class="tool-button"
+        type="button"
+        data-tool="chamfer"
+        title="Chaflan con dos distancias"
+        aria-label="Chaflan"
+      >
+        <svg viewBox="0 0 48 48" aria-hidden="true">
+          <path d="M9 38h12l17-17V9"></path>
+          <path d="M21 38 38 21"></path>
+          <path d="M16 33v5M33 16h5"></path>
+        </svg>
+      </button>
+      <button
         id="tool-copy"
         class="tool-button"
         type="button"
@@ -620,6 +641,20 @@
           <path d="M37 18a15 15 0 1 0 1 15"></path>
           <path d="m36 9 1 9-9-1"></path>
           <circle cx="24" cy="24" r="2.5"></circle>
+        </svg>
+      </button>
+      <button
+        id="tool-mirror"
+        class="tool-button"
+        type="button"
+        data-tool="mirror"
+        title="Simetria (S)"
+        aria-label="Simetria"
+      >
+        <svg viewBox="0 0 48 48" aria-hidden="true">
+          <path d="M24 7v34" stroke-dasharray="3 3"></path>
+          <path d="M19 13 8 24l11 11z"></path>
+          <path d="m29 13 11 11-11 11z"></path>
         </svg>
       </button>
       <button
@@ -939,7 +974,7 @@
         <section class="about-feature-card is-release">
           <h3>Novedades de 0.4.0</h3>
           <ul>
-            <li>Nueva orden Empalme (F) con radio editable, recorte, prolongación y arco DXF tangente.</li>
+            <li>Nueva orden Empalme (F) entre líneas, polilíneas, arcos y círculos, con ghost, radio 0 y arco DXF tangente.</li>
             <li>Cotas mejoradas: pinzamientos coherentes, textos angulares legibles y flechas proporcionadas.</li>
             <li>Importación de sombreados DXF por contornos y huecos, con filtrado de patrones no compatibles.</li>
             <li>Mayor rendimiento en planos grandes mediante nivel de detalle adaptativo y geometría agrupada.</li>

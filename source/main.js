@@ -20,9 +20,11 @@ const blockToolMenuButton = document.getElementById('tool-block-menu');
 const trimToolButton = document.getElementById('tool-trim');
 const extendToolButton = document.getElementById('tool-extend');
 const filletToolButton = document.getElementById('tool-fillet');
+const chamferToolButton = document.getElementById('tool-chamfer');
 const copyToolButton = document.getElementById('tool-copy');
 const moveToolButton = document.getElementById('tool-move');
 const rotateToolButton = document.getElementById('tool-rotate');
+const mirrorToolButton = document.getElementById('tool-mirror');
 const eraseToolButton = document.getElementById('tool-erase');
 const explodeToolButton = document.getElementById('tool-explode');
 const dimensionStyleSelect = document.getElementById('dimension-style-select');
@@ -86,6 +88,9 @@ const statusMessage = document.getElementById('status-message');
 const statusDxf = document.getElementById('status-dxf');
 const filletRadiusControl = document.getElementById('fillet-radius-control');
 const filletRadiusInput = document.getElementById('fillet-radius-input');
+const chamferDistanceControl = document.getElementById('chamfer-distance-control');
+const chamferDistanceFirstInput = document.getElementById('chamfer-distance-first');
+const chamferDistanceSecondInput = document.getElementById('chamfer-distance-second');
 const drawingProfileDialog = document.getElementById('drawing-profile-dialog');
 const drawingProfileCloseButton = document.getElementById('drawing-profile-close');
 const drawingProfileCancelButton = document.getElementById('drawing-profile-cancel');
@@ -162,9 +167,11 @@ const REPEATABLE_COMMANDS = new Set([
   'copy',
   'move',
   'rotate',
+  'mirror',
   'trim',
   'extend',
   'fillet',
+  'chamfer',
   'erase',
   'explode',
 ]);
@@ -963,6 +970,9 @@ function activeDraftOrigin(state) {
   }
   if (state.rotateDraft?.basePoint) {
     return state.rotateDraft.basePoint;
+  }
+  if (state.mirrorDraft?.firstPoint) {
+    return state.mirrorDraft.firstPoint;
   }
   return null;
 }
@@ -2755,7 +2765,7 @@ function dimensionRadialGeometry(entity, metrics) {
   );
   const radialLine = placementDistance < radius
     ? { start: center, end: extendedPositiveEdge }
-    : { start: center, end: entity.placement };
+    : { start: positiveEdge, end: entity.placement };
   return {
     lines: [radialLine],
     arcs: [],
@@ -2804,12 +2814,12 @@ function dimensionAngularGeometry(entity, metrics) {
     }],
     arrows: externalArrows
       ? [
-        dimensionArrow(start, { x: -tangentStart.x, y: -tangentStart.y }, metrics.arrowSize),
-        dimensionArrow(end, { x: -tangentEnd.x, y: -tangentEnd.y }, metrics.arrowSize),
-      ]
-      : [
         dimensionArrow(start, tangentStart, metrics.arrowSize),
         dimensionArrow(end, tangentEnd, metrics.arrowSize),
+      ]
+      : [
+        dimensionArrow(start, { x: -tangentStart.x, y: -tangentStart.y }, metrics.arrowSize),
+        dimensionArrow(end, { x: -tangentEnd.x, y: -tangentEnd.y }, metrics.arrowSize),
       ],
     text: {
       point: {
@@ -3427,6 +3437,97 @@ function rotateEntityByAngle(entity, basePoint, angleDegrees) {
   return false;
 }
 
+function mirrorPointAcrossAxis(point, firstPoint, secondPoint) {
+  const axis = normalizedVector(firstPoint, secondPoint);
+  if (!axis) {
+    return null;
+  }
+  const delta = { x: point.x - firstPoint.x, y: point.y - firstPoint.y };
+  const projection = dotProduct(delta, axis);
+  const foot = {
+    x: firstPoint.x + axis.x * projection,
+    y: firstPoint.y + axis.y * projection,
+  };
+  return { x: foot.x * 2 - point.x, y: foot.y * 2 - point.y };
+}
+
+function mirrorAngleAcrossAxis(angle, firstPoint, secondPoint) {
+  const origin = mirrorPointAcrossAxis({ x: 0, y: 0 }, firstPoint, secondPoint);
+  const directionPoint = mirrorPointAcrossAxis(
+    { x: Math.cos(angle), y: Math.sin(angle) },
+    firstPoint,
+    secondPoint,
+  );
+  return origin && directionPoint ? angleOfPoint(origin, directionPoint) : angle;
+}
+
+function mirrorEntityAcrossAxis(entity, firstPoint, secondPoint) {
+  const mirrorPoint = (point) => mirrorPointAcrossAxis(point, firstPoint, secondPoint);
+  if (!mirrorPoint(firstPoint)) {
+    return false;
+  }
+  if (entity.type === 'LINE') {
+    entity.start = mirrorPoint(entity.start);
+    entity.end = mirrorPoint(entity.end);
+  }
+  else if (entity.type === 'CIRCLE' || entity.type === 'ARC') {
+    entity.center = mirrorPoint(entity.center);
+    if (entity.type === 'ARC') {
+      entity.startAngle = mirrorAngleAcrossAxis(entity.startAngle, firstPoint, secondPoint);
+      entity.endAngle = mirrorAngleAcrossAxis(entity.endAngle, firstPoint, secondPoint);
+      entity.clockwise = entity.clockwise === false;
+    }
+  }
+  else if (entity.type === 'POLYLINE') {
+    entity.vertices = entity.vertices.map(mirrorPoint);
+    entity.segments.forEach((segment) => {
+      if (segment.center) {
+        segment.center = mirrorPoint(segment.center);
+        segment.clockwise = segment.clockwise === false;
+      }
+    });
+  }
+  else if (entity.type === 'TEXT') {
+    const angle = -entity.angle * Math.PI / 180;
+    entity.insertionPoint = mirrorPoint(entity.insertionPoint);
+    const mirroredAngle = mirrorAngleAcrossAxis(angle, firstPoint, secondPoint);
+    entity.angle = -mirroredAngle * 180 / Math.PI;
+  }
+  else if (entity.type === 'HATCH') {
+    entity.loops = (entity.loops || [entity.boundary]).map((loop) => loop.map(mirrorPoint));
+    entity.boundary = entity.loops[0];
+  }
+  else if (entity.type === 'DIMENSION') {
+    entity.points = entity.points.map(mirrorPoint);
+    entity.placement = mirrorPoint(entity.placement);
+    if (entity.textPosition) {
+      entity.textPosition = mirrorPoint(entity.textPosition);
+    }
+    if (entity.kind === 'horizontal' || entity.kind === 'vertical') {
+      const direction = normalizedVector(entity.points[0], entity.points[1]);
+      entity.kind = Math.abs(direction?.x || 0) <= SNAP_THRESHOLD
+        ? 'vertical'
+        : Math.abs(direction?.y || 0) <= SNAP_THRESHOLD ? 'horizontal' : 'aligned';
+    }
+  }
+  else if (entity.type === 'INSERT') {
+    const oldInsertion = { ...entity.insertionPoint };
+    const angle = -entity.rotation * Math.PI / 180;
+    const oldXAxis = {
+      x: oldInsertion.x + Math.cos(angle),
+      y: oldInsertion.y + Math.sin(angle),
+    };
+    entity.insertionPoint = mirrorPoint(oldInsertion);
+    const mirroredXAxis = mirrorPoint(oldXAxis);
+    entity.rotation = -angleOfPoint(entity.insertionPoint, mirroredXAxis) * 180 / Math.PI;
+    entity.scaleY *= -1;
+  }
+  else {
+    return false;
+  }
+  return true;
+}
+
 function rotationAngleFromPoint(basePoint, point, orthoEnabled = false) {
   if (!basePoint || !point || distance(basePoint, point) <= SNAP_THRESHOLD) {
     return 0;
@@ -3992,6 +4093,509 @@ function applyLineFillet(doc, firstLine, firstPick, secondLine, secondPick, radi
   doc.clearSelection();
   doc.markDirty();
   return { ...geometry, arc };
+}
+
+function filletOperandAt(entity, pickPoint) {
+  if (!entity || !pickPoint) {
+    return null;
+  }
+  if (entity.type === 'LINE' || entity.type === 'CIRCLE' || entity.type === 'ARC') {
+    return { entity, primitive: entity, segmentIndex: null, pickPoint: { ...pickPoint } };
+  }
+  if (entity.type !== 'POLYLINE') {
+    return null;
+  }
+  let nearest = null;
+  entity.segments.forEach((_, segmentIndex) => {
+    const primitive = polylineSegmentEntity(entity, segmentIndex);
+    if (!primitive) {
+      return;
+    }
+    const candidateDistance = entityDistanceToPoint(primitive, pickPoint);
+    if (!nearest || candidateDistance < nearest.distance) {
+      nearest = { primitive, segmentIndex, distance: candidateDistance };
+    }
+  });
+  return nearest
+    ? {
+      entity,
+      primitive: nearest.primitive,
+      segmentIndex: nearest.segmentIndex,
+      pickPoint: { ...pickPoint },
+    }
+    : null;
+}
+
+function filletCenterLoci(operand, radius) {
+  const primitive = operand?.primitive;
+  if (!primitive || !(radius > SNAP_THRESHOLD)) {
+    return [];
+  }
+  if (primitive.type === 'LINE') {
+    const direction = normalizedVector(primitive.start, primitive.end);
+    if (!direction) {
+      return [];
+    }
+    const normal = { x: -direction.y, y: direction.x };
+    return [-1, 1].map((side) => ({
+      type: 'line',
+      point: {
+        x: primitive.start.x + normal.x * radius * side,
+        y: primitive.start.y + normal.y * radius * side,
+      },
+      direction,
+      side,
+    }));
+  }
+  if (!isCircularEntity(primitive)) {
+    return [];
+  }
+  const loci = [{
+    type: 'circle',
+    center: primitive.center,
+    radius: primitive.radius + radius,
+    mode: 'sum',
+  }];
+  const differenceRadius = Math.abs(primitive.radius - radius);
+  if (differenceRadius > SNAP_THRESHOLD) {
+    loci.push({
+      type: 'circle',
+      center: primitive.center,
+      radius: differenceRadius,
+      mode: 'difference',
+    });
+  }
+  return loci;
+}
+
+function filletLocusIntersections(first, second) {
+  if (first.type === 'line' && second.type === 'line') {
+    const point = infiniteLineLineIntersection(
+      first.point,
+      first.direction,
+      second.point,
+      second.direction,
+    );
+    return point ? [point] : [];
+  }
+  if (first.type === 'line' && second.type === 'circle') {
+    return infiniteLineCircularIntersectionPoints(
+      first.point,
+      first.direction,
+      { type: 'CIRCLE', center: second.center, radius: second.radius },
+      false,
+    );
+  }
+  if (first.type === 'circle' && second.type === 'line') {
+    return infiniteLineCircularIntersectionPoints(
+      second.point,
+      second.direction,
+      { type: 'CIRCLE', center: first.center, radius: first.radius },
+      false,
+    );
+  }
+  if (first.type === 'circle' && second.type === 'circle') {
+    return circleCircleIntersectionPoints(first, second);
+  }
+  return [];
+}
+
+function filletTangentPoint(operand, locus, center, radius) {
+  const primitive = operand.primitive;
+  if (primitive.type === 'LINE') {
+    return projectPointToLine(center, primitive.start, {
+      x: primitive.end.x - primitive.start.x,
+      y: primitive.end.y - primitive.start.y,
+    });
+  }
+  const direction = normalizedVector(primitive.center, center);
+  if (!direction) {
+    return null;
+  }
+  const tangentDirection = locus.mode === 'difference' && radius > primitive.radius
+    ? { x: -direction.x, y: -direction.y }
+    : direction;
+  return {
+    x: primitive.center.x + tangentDirection.x * primitive.radius,
+    y: primitive.center.y + tangentDirection.y * primitive.radius,
+  };
+}
+
+function filletPrimitiveIntersections(firstPrimitive, secondPrimitive) {
+  if (firstPrimitive.type === 'LINE' && secondPrimitive.type === 'LINE') {
+    const firstDirection = normalizedVector(firstPrimitive.start, firstPrimitive.end);
+    const secondDirection = normalizedVector(secondPrimitive.start, secondPrimitive.end);
+    if (!firstDirection || !secondDirection) {
+      return [];
+    }
+    const point = infiniteLineLineIntersection(
+      firstPrimitive.start,
+      firstDirection,
+      secondPrimitive.start,
+      secondDirection,
+    );
+    return point ? [point] : [];
+  }
+  if (firstPrimitive.type === 'LINE' && isCircularEntity(secondPrimitive)) {
+    const direction = normalizedVector(firstPrimitive.start, firstPrimitive.end);
+    return direction
+      ? infiniteLineCircularIntersectionPoints(firstPrimitive.start, direction, secondPrimitive, false)
+      : [];
+  }
+  if (isCircularEntity(firstPrimitive) && secondPrimitive.type === 'LINE') {
+    return filletPrimitiveIntersections(secondPrimitive, firstPrimitive);
+  }
+  if (isCircularEntity(firstPrimitive) && isCircularEntity(secondPrimitive)) {
+    return circleCircleIntersectionPoints(firstPrimitive, secondPrimitive);
+  }
+  return [];
+}
+
+function filletSolutionScore(solution, firstOperand, secondOperand) {
+  let score = distance(solution.firstTangent, firstOperand.pickPoint) +
+    distance(solution.secondTangent, secondOperand.pickPoint);
+  if (
+    firstOperand.primitive.type === 'ARC' &&
+    !pointOnCircularEntity(solution.firstTangent, firstOperand.primitive)
+  ) {
+    score += firstOperand.primitive.radius * 2;
+  }
+  if (
+    secondOperand.primitive.type === 'ARC' &&
+    !pointOnCircularEntity(solution.secondTangent, secondOperand.primitive)
+  ) {
+    score += secondOperand.primitive.radius * 2;
+  }
+  return score;
+}
+
+function filletSolutions(firstOperand, secondOperand, radius) {
+  if (!firstOperand || !secondOperand || firstOperand.entity === secondOperand.entity &&
+      firstOperand.segmentIndex === secondOperand.segmentIndex) {
+    return [];
+  }
+  if (radius <= SNAP_THRESHOLD) {
+    return filletPrimitiveIntersections(firstOperand.primitive, secondOperand.primitive)
+      .map((point) => ({
+        valid: true,
+        radius: 0,
+        firstTangent: point,
+        secondTangent: point,
+        center: point,
+        score: distance(point, firstOperand.pickPoint) + distance(point, secondOperand.pickPoint),
+      }))
+      .sort((first, second) => first.score - second.score);
+  }
+
+  const solutions = [];
+  for (const firstLocus of filletCenterLoci(firstOperand, radius)) {
+    for (const secondLocus of filletCenterLoci(secondOperand, radius)) {
+      for (const center of filletLocusIntersections(firstLocus, secondLocus)) {
+        const firstTangent = filletTangentPoint(firstOperand, firstLocus, center, radius);
+        const secondTangent = filletTangentPoint(secondOperand, secondLocus, center, radius);
+        if (
+          !firstTangent || !secondTangent ||
+          distance(firstTangent, secondTangent) <= SNAP_THRESHOLD
+        ) {
+          continue;
+        }
+        const startAngle = angleOfPoint(center, firstTangent);
+        const endAngle = angleOfPoint(center, secondTangent);
+        const clockwise = normalizeAngle(endAngle - startAngle) <= Math.PI;
+        const solution = {
+          valid: true,
+          radius,
+          center,
+          firstTangent,
+          secondTangent,
+          startAngle,
+          endAngle,
+          clockwise,
+        };
+        solution.score = filletSolutionScore(solution, firstOperand, secondOperand);
+        if (!solutions.some((candidate) =>
+          distance(candidate.center, center) <= SNAP_THRESHOLD * 10)) {
+          solutions.push(solution);
+        }
+      }
+    }
+  }
+  return solutions.sort((first, second) => first.score - second.score);
+}
+
+function filletEndpointKey(primitive, tangentPoint, pickPoint) {
+  if (primitive.type === 'LINE') {
+    const direction = normalizedVector(primitive.start, primitive.end);
+    if (!direction) {
+      return null;
+    }
+    const tangentParameter = rawLineParameter(primitive, tangentPoint);
+    const pickParameter = rawLineParameter(primitive, closestPointOnLineSegment(primitive, pickPoint));
+    if (Math.abs(pickParameter - tangentParameter) > SNAP_THRESHOLD) {
+      return pickParameter < tangentParameter ? 'end' : 'start';
+    }
+    return distance(primitive.start, tangentPoint) <= distance(primitive.end, tangentPoint)
+      ? 'start'
+      : 'end';
+  }
+  if (primitive.type === 'ARC') {
+    const tangentOnArc = pointOnCircularEntity(tangentPoint, primitive);
+    if (tangentOnArc) {
+      const tangentParameter = circularParameter(primitive, tangentPoint);
+      const pickParameter = circularParameter(primitive, pickPoint);
+      return pickParameter < tangentParameter ? 'end' : 'start';
+    }
+    const start = pointAtCircleAngle(primitive, primitive.startAngle);
+    const end = pointAtCircleAngle(primitive, primitive.endAngle);
+    return distance(start, tangentPoint) <= distance(end, tangentPoint) ? 'start' : 'end';
+  }
+  return null;
+}
+
+function setFilletOperandTangent(operand, tangentPoint) {
+  const primitive = operand.primitive;
+  if (primitive.type === 'CIRCLE') {
+    return false;
+  }
+  const endpointKey = filletEndpointKey(primitive, tangentPoint, operand.pickPoint);
+  if (!endpointKey) {
+    return false;
+  }
+  if (operand.entity.type === 'LINE') {
+    operand.entity[endpointKey] = { ...tangentPoint };
+    return true;
+  }
+  if (operand.entity.type === 'ARC') {
+    operand.entity[endpointKey === 'start' ? 'startAngle' : 'endAngle'] =
+      angleOfPoint(operand.entity.center, tangentPoint);
+    return true;
+  }
+  if (operand.entity.type === 'POLYLINE') {
+    const vertexIndex = endpointKey === 'start'
+      ? operand.segmentIndex
+      : (operand.segmentIndex + 1) % operand.entity.vertices.length;
+    operand.entity.vertices[vertexIndex] = { ...tangentPoint };
+    return true;
+  }
+  return false;
+}
+
+function rotateClosedPolylineToSegment(polyline, segmentIndex) {
+  if (!polyline.closed || segmentIndex <= 0) {
+    return segmentIndex;
+  }
+  polyline.vertices = [
+    ...polyline.vertices.slice(segmentIndex),
+    ...polyline.vertices.slice(0, segmentIndex),
+  ];
+  polyline.segments = [
+    ...polyline.segments.slice(segmentIndex),
+    ...polyline.segments.slice(0, segmentIndex),
+  ];
+  return 0;
+}
+
+function applyAdjacentPolylineFillet(firstOperand, secondOperand, solution) {
+  const polyline = firstOperand.entity;
+  if (polyline !== secondOperand.entity || solution.radius <= SNAP_THRESHOLD) {
+    return false;
+  }
+  const segmentCount = polyline.segments.length;
+  let firstIndex = firstOperand.segmentIndex;
+  let secondIndex = secondOperand.segmentIndex;
+  let firstTangent = solution.firstTangent;
+  let secondTangent = solution.secondTangent;
+  let arcClockwise = solution.clockwise;
+  const forwardAdjacent = polyline.closed
+    ? secondIndex === (firstIndex + 1) % segmentCount
+    : secondIndex === firstIndex + 1;
+  if (!forwardAdjacent) {
+    const reverseAdjacent = polyline.closed
+      ? firstIndex === (secondIndex + 1) % segmentCount
+      : firstIndex === secondIndex + 1;
+    if (!reverseAdjacent) {
+      return false;
+    }
+    [firstIndex, secondIndex] = [secondIndex, firstIndex];
+    [firstTangent, secondTangent] = [secondTangent, firstTangent];
+    arcClockwise = !arcClockwise;
+  }
+  if (!polyline.closed && secondIndex !== firstIndex + 1) {
+    return false;
+  }
+  if (polyline.closed && firstIndex === segmentCount - 1) {
+    firstIndex = rotateClosedPolylineToSegment(polyline, firstIndex);
+    secondIndex = 1;
+  }
+  const cornerIndex = firstIndex + 1;
+  polyline.vertices.splice(cornerIndex, 1, { ...firstTangent }, { ...secondTangent });
+  polyline.segments.splice(cornerIndex, 0, {
+    type: 'ARC',
+    center: { ...solution.center },
+    clockwise: arcClockwise,
+    startWidth: 0,
+    endWidth: 0,
+  });
+  return true;
+}
+
+function applyFilletSolution(doc, firstOperand, secondOperand, solution) {
+  if (!solution?.valid) {
+    return { valid: false, reason: 'No se encontro una solucion de empalme' };
+  }
+  if (
+    solution.radius <= SNAP_THRESHOLD &&
+    firstOperand.primitive.type === 'CIRCLE' &&
+    secondOperand.primitive.type === 'CIRCLE'
+  ) {
+    return { valid: false, reason: 'El radio 0 no modifica dos circulos completos' };
+  }
+  doc.recordHistory();
+  let firstChanged = false;
+  let secondChanged = false;
+  const adjacentPolyline = applyAdjacentPolylineFillet(firstOperand, secondOperand, solution);
+  if (!adjacentPolyline) {
+    firstChanged = setFilletOperandTangent(firstOperand, solution.firstTangent);
+    secondChanged = setFilletOperandTangent(secondOperand, solution.secondTangent);
+  }
+  let arc = null;
+  if (solution.radius > SNAP_THRESHOLD && !adjacentPolyline) {
+    const styleEntity = firstOperand.entity;
+    arc = new ArcEntity(
+      solution.center,
+      solution.radius,
+      solution.startAngle,
+      solution.endAngle,
+      {
+        clockwise: solution.clockwise,
+        layer: styleEntity.layer,
+        lineStyle: styleEntity.lineStyle,
+        lineType: styleEntity.lineType,
+        lineColor: styleEntity.lineColor,
+      },
+    );
+    doc.addEntity(arc, { recordHistory: false });
+  }
+  if (!adjacentPolyline && !firstChanged && !secondChanged && !arc) {
+    doc.undoStack.pop();
+    return { valid: false, reason: 'Las entidades seleccionadas no necesitan modificacion' };
+  }
+  doc.clearSelection();
+  doc.markDirty();
+  return { ...solution, valid: true, arc, adjacentPolyline };
+}
+
+function chamferSolution(firstOperand, secondOperand, firstDistance, secondDistance) {
+  if (
+    firstOperand?.primitive.type !== 'LINE' || secondOperand?.primitive.type !== 'LINE' ||
+    firstOperand.entity === secondOperand.entity && firstOperand.segmentIndex === secondOperand.segmentIndex
+  ) {
+    return { valid: false, reason: 'Seleccione dos lineas o tramos rectos distintos' };
+  }
+  const firstDirection = normalizedVector(firstOperand.primitive.start, firstOperand.primitive.end);
+  const secondDirection = normalizedVector(secondOperand.primitive.start, secondOperand.primitive.end);
+  const intersection = firstDirection && secondDirection
+    ? infiniteLineLineIntersection(
+      firstOperand.primitive.start,
+      firstDirection,
+      secondOperand.primitive.start,
+      secondDirection,
+    )
+    : null;
+  if (!intersection) {
+    return { valid: false, reason: 'Las entidades son paralelas o no tienen longitud' };
+  }
+  const firstRay = filletRayDirection(firstOperand.primitive, intersection, firstOperand.pickPoint);
+  const secondRay = filletRayDirection(secondOperand.primitive, intersection, secondOperand.pickPoint);
+  if (!firstRay || !secondRay) {
+    return { valid: false, reason: 'No se pudo determinar el lado del chaflan' };
+  }
+  const firstTangent = {
+    x: intersection.x + firstRay.x * firstDistance,
+    y: intersection.y + firstRay.y * firstDistance,
+  };
+  const secondTangent = {
+    x: intersection.x + secondRay.x * secondDistance,
+    y: intersection.y + secondRay.y * secondDistance,
+  };
+  return {
+    valid: true,
+    firstTangent,
+    secondTangent,
+    intersection,
+    firstDistance,
+    secondDistance,
+  };
+}
+
+function applyAdjacentPolylineChamfer(firstOperand, secondOperand, solution) {
+  const polyline = firstOperand.entity;
+  if (polyline !== secondOperand.entity) {
+    return false;
+  }
+  const segmentCount = polyline.segments.length;
+  let firstIndex = firstOperand.segmentIndex;
+  let secondIndex = secondOperand.segmentIndex;
+  let firstTangent = solution.firstTangent;
+  let secondTangent = solution.secondTangent;
+  const forwardAdjacent = polyline.closed
+    ? secondIndex === (firstIndex + 1) % segmentCount
+    : secondIndex === firstIndex + 1;
+  if (!forwardAdjacent) {
+    const reverseAdjacent = polyline.closed
+      ? firstIndex === (secondIndex + 1) % segmentCount
+      : firstIndex === secondIndex + 1;
+    if (!reverseAdjacent) {
+      return false;
+    }
+    [firstIndex, secondIndex] = [secondIndex, firstIndex];
+    [firstTangent, secondTangent] = [secondTangent, firstTangent];
+  }
+  if (polyline.closed && firstIndex === segmentCount - 1) {
+    firstIndex = rotateClosedPolylineToSegment(polyline, firstIndex);
+  }
+  const cornerIndex = firstIndex + 1;
+  polyline.vertices.splice(cornerIndex, 1, { ...firstTangent }, { ...secondTangent });
+  polyline.segments.splice(cornerIndex, 0, {
+    type: 'LINE',
+    center: null,
+    clockwise: true,
+    startWidth: 0,
+    endWidth: 0,
+  });
+  return true;
+}
+
+function applyChamferSolution(doc, firstOperand, secondOperand, solution) {
+  if (!solution?.valid) {
+    return solution || { valid: false, reason: 'No se encontro una solucion de chaflan' };
+  }
+  doc.recordHistory();
+  const adjacentPolyline = applyAdjacentPolylineChamfer(firstOperand, secondOperand, solution);
+  let firstChanged = false;
+  let secondChanged = false;
+  if (!adjacentPolyline) {
+    firstChanged = setFilletOperandTangent(firstOperand, solution.firstTangent);
+    secondChanged = setFilletOperandTangent(secondOperand, solution.secondTangent);
+  }
+  let chamfer = null;
+  if (!adjacentPolyline && distance(solution.firstTangent, solution.secondTangent) > SNAP_THRESHOLD) {
+    const styleEntity = firstOperand.entity;
+    chamfer = new LineEntity(solution.firstTangent, solution.secondTangent, {
+      layer: styleEntity.layer,
+      lineStyle: styleEntity.lineStyle,
+      lineType: styleEntity.lineType,
+      lineColor: styleEntity.lineColor,
+    });
+    doc.addEntity(chamfer, { recordHistory: false });
+  }
+  if (!adjacentPolyline && !firstChanged && !secondChanged && !chamfer) {
+    doc.undoStack.pop();
+    return { valid: false, reason: 'No se pudieron modificar las entidades' };
+  }
+  doc.clearSelection();
+  doc.markDirty();
+  return { ...solution, valid: true, adjacentPolyline, chamfer };
 }
 
 function trimLineEntityAtPoint(doc, entity, pickPoint) {
@@ -7317,6 +7921,81 @@ class CadRenderer {
     ctx.restore();
   }
 
+  drawFilletPreview(ctx) {
+    const firstOperand = this.state.filletDraft?.firstOperand;
+    const secondEntity = this.state.hoveredEntity;
+    if (!firstOperand || !secondEntity || !this.state.mouseWorld) {
+      return;
+    }
+    const secondOperand = filletOperandAt(secondEntity, this.state.mouseWorld);
+    if (
+      !secondOperand ||
+      secondOperand.entity === firstOperand.entity &&
+        secondOperand.segmentIndex === firstOperand.segmentIndex
+    ) {
+      return;
+    }
+    const solution = filletSolutions(firstOperand, secondOperand, activeFilletRadius())[0];
+    if (!solution) {
+      return;
+    }
+    ctx.save();
+    ctx.strokeStyle = PREVIEW_COLOR;
+    ctx.fillStyle = PREVIEW_COLOR;
+    ctx.lineWidth = 2 / this.state.viewScale;
+    ctx.setLineDash([6 / this.state.viewScale, 5 / this.state.viewScale]);
+    if (solution.radius > SNAP_THRESHOLD) {
+      ctx.beginPath();
+      ctx.arc(
+        solution.center.x,
+        solution.center.y,
+        solution.radius,
+        solution.startAngle,
+        solution.endAngle,
+        solution.clockwise === false,
+      );
+      ctx.stroke();
+    }
+    else {
+      const markerRadius = 4 / this.state.viewScale;
+      ctx.setLineDash([]);
+      ctx.beginPath();
+      ctx.arc(solution.center.x, solution.center.y, markerRadius, 0, TWO_PI);
+      ctx.fill();
+    }
+    ctx.setLineDash([]);
+    const tangentRadius = 3.5 / this.state.viewScale;
+    for (const tangent of [solution.firstTangent, solution.secondTangent]) {
+      ctx.beginPath();
+      ctx.arc(tangent.x, tangent.y, tangentRadius, 0, TWO_PI);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  drawChamferPreview(ctx) {
+    const firstOperand = this.state.chamferDraft?.firstOperand;
+    const secondEntity = this.state.hoveredEntity;
+    if (!firstOperand || !secondEntity || !this.state.mouseWorld) {
+      return;
+    }
+    const secondOperand = filletOperandAt(secondEntity, this.state.mouseWorld);
+    const distances = activeChamferDistances();
+    const solution = chamferSolution(firstOperand, secondOperand, distances.first, distances.second);
+    if (!solution.valid) {
+      return;
+    }
+    ctx.save();
+    ctx.strokeStyle = PREVIEW_COLOR;
+    ctx.lineWidth = 2 / this.state.viewScale;
+    ctx.setLineDash([7 / this.state.viewScale, 5 / this.state.viewScale]);
+    ctx.beginPath();
+    ctx.moveTo(solution.firstTangent.x, solution.firstTangent.y);
+    ctx.lineTo(solution.secondTangent.x, solution.secondTangent.y);
+    ctx.stroke();
+    ctx.restore();
+  }
+
   drawEntities(ctx) {
     const viewBounds = this.visibleWorldBounds(18 / this.state.viewScale);
     const visibleEntities = this.doc.queryBounds(viewBounds);
@@ -7408,9 +8087,13 @@ class CadRenderer {
       }
     }
 
-    const filletFirstEntity = this.state.filletDraft?.firstEntity;
+    const filletFirstEntity = this.state.filletDraft?.firstOperand?.entity;
     if (filletFirstEntity && boundsIntersectsBounds(filletFirstEntity.bounds(), viewBounds)) {
       this.drawHighlightedEntity(ctx, filletFirstEntity, PREVIEW_COLOR, 2);
+    }
+    const chamferFirstEntity = this.state.chamferDraft?.firstOperand?.entity;
+    if (chamferFirstEntity && boundsIntersectsBounds(chamferFirstEntity.bounds(), viewBounds)) {
+      this.drawHighlightedEntity(ctx, chamferFirstEntity, PREVIEW_COLOR, 2);
     }
 
     const hoveredEntity = this.state.hoveredEntity;
@@ -8266,6 +8949,34 @@ class CadRenderer {
     ctx.restore();
   }
 
+  drawMirrorPreview(ctx) {
+    const draft = this.state.mirrorDraft;
+    if (!draft?.firstPoint || !this.state.mouseWorld) {
+      return;
+    }
+    const secondPoint = resolveCursorPoint(this.state.mouseWorld, this.state);
+    if (!secondPoint || distance(draft.firstPoint, secondPoint) <= SNAP_THRESHOLD) {
+      return;
+    }
+    ctx.save();
+    for (const source of draft.sourceEntities) {
+      const preview = cloneEntity(source);
+      if (preview && mirrorEntityAcrossAxis(preview, draft.firstPoint, secondPoint)) {
+        this.drawHighlightedEntity(ctx, preview, PREVIEW_COLOR, 0);
+      }
+    }
+    const axis = normalizedVector(draft.firstPoint, secondPoint);
+    const extent = Math.max(this.visibleWorldWidth(), this.visibleWorldHeight()) * 1.5;
+    ctx.strokeStyle = PREVIEW_COLOR;
+    ctx.lineWidth = 1.5 / this.state.viewScale;
+    ctx.setLineDash([8 / this.state.viewScale, 6 / this.state.viewScale]);
+    ctx.beginPath();
+    ctx.moveTo(draft.firstPoint.x - axis.x * extent, draft.firstPoint.y - axis.y * extent);
+    ctx.lineTo(draft.firstPoint.x + axis.x * extent, draft.firstPoint.y + axis.y * extent);
+    ctx.stroke();
+    ctx.restore();
+  }
+
   drawSelectionWindow(ctx) {
     const selectionWindow = this.state.selectionWindow;
     if (!selectionWindow?.currentWorld) {
@@ -8306,6 +9017,7 @@ class CadRenderer {
       (this.state.tool === 'copy' && this.state.copyDraft?.selecting) ||
       (this.state.tool === 'move' && this.state.moveDraft?.selecting) ||
       (this.state.tool === 'rotate' && this.state.rotateDraft?.selecting) ||
+      (this.state.tool === 'mirror' && this.state.mirrorDraft?.selecting) ||
       (this.state.dimensionDraft &&
         (this.state.dimensionDraft.phase === 'reference' || this.state.dimensionDraft.phase === 'second-line'))
     ) {
@@ -8350,10 +9062,13 @@ class CadRenderer {
     }
     this.drawCrosshair(ctx);
     this.drawEntities(ctx);
+    this.drawFilletPreview(ctx);
+    this.drawChamferPreview(ctx);
     this.drawPreview(ctx);
     this.drawGripMovePreview(ctx);
     this.drawCopyPreview(ctx);
     this.drawRotatePreview(ctx);
+    this.drawMirrorPreview(ctx);
     this.drawSelectionWindow(ctx);
     this.drawObjectSnapMarker(ctx);
   }
@@ -8522,8 +9237,12 @@ class CadController {
     this.state.copyDraft = null;
     this.state.moveDraft = null;
     this.state.rotateDraft = null;
+    this.state.mirrorDraft = null;
     this.state.filletDraft = tool === 'fillet'
-      ? { firstEntity: null, firstPick: null }
+      ? { firstOperand: null }
+      : null;
+    this.state.chamferDraft = tool === 'chamfer'
+      ? { firstOperand: null }
       : null;
     this.state.selectionSetDraft = null;
     this.state.eraseDraft = null;
@@ -8555,20 +9274,26 @@ class CadController {
       tool === 'copy' ||
       tool === 'move' ||
       tool === 'rotate' ||
+      tool === 'mirror' ||
       tool === 'select-set' ||
       tool === 'trim' ||
       tool === 'fillet' ||
+      tool === 'chamfer' ||
       tool === 'extend' ||
       tool === 'erase' ||
       tool === 'explode'
     ) {
-      if (tool !== 'copy' && tool !== 'move' && tool !== 'rotate' && tool !== 'select-set' && tool !== 'erase' && tool !== 'explode' && tool !== 'extend' && tool !== 'block-create') {
+      if (tool !== 'copy' && tool !== 'move' && tool !== 'rotate' && tool !== 'mirror' && tool !== 'select-set' && tool !== 'erase' && tool !== 'explode' && tool !== 'extend' && tool !== 'block-create') {
         this.doc.selectEntity(null);
       }
     }
     filletRadiusControl.hidden = tool !== 'fillet';
+    chamferDistanceControl.hidden = tool !== 'chamfer';
     if (tool === 'fillet') {
       syncFilletRadiusControl();
+    }
+    if (tool === 'chamfer') {
+      syncChamferDistanceControl();
     }
     this.state.statusText = tool === 'select'
       ? 'Seleccionar entidad'
@@ -8576,6 +9301,8 @@ class CadController {
         ? 'Recortar: pique el tramo a eliminar'
         : tool === 'fillet'
           ? `Empalme R${formatNumber(activeFilletRadius())}: seleccione la primera linea`
+        : tool === 'chamfer'
+          ? `Chaflan ${formatChamferDistances()}: seleccione la primera linea o tramo`
         : tool === 'extend'
           ? 'Alargar: seleccione limites'
         : tool === 'erase'
@@ -8588,6 +9315,8 @@ class CadController {
               ? 'Desplazar: indique punto origen'
                 : tool === 'rotate'
                   ? 'Girar: indique punto base'
+                : tool === 'mirror'
+                  ? 'Simetria: indique primer punto del eje'
                 : tool === 'block-create'
                   ? 'Crear bloque: seleccione objetos'
                 : tool === 'block-insert'
@@ -8627,10 +9356,12 @@ class CadController {
     blockToolButton.classList.toggle('is-active', tool === 'block-create' || tool === 'block-insert');
     trimToolButton.classList.toggle('is-active', tool === 'trim');
     filletToolButton.classList.toggle('is-active', tool === 'fillet');
+    chamferToolButton.classList.toggle('is-active', tool === 'chamfer');
     extendToolButton.classList.toggle('is-active', tool === 'extend');
     copyToolButton.classList.toggle('is-active', tool === 'copy');
     moveToolButton.classList.toggle('is-active', tool === 'move');
     rotateToolButton.classList.toggle('is-active', tool === 'rotate');
+    mirrorToolButton.classList.toggle('is-active', tool === 'mirror');
     eraseToolButton.classList.toggle('is-active', tool === 'erase');
     explodeToolButton.classList.toggle('is-active', tool === 'explode');
     dimensionToolButtons.forEach((button) => {
@@ -8651,11 +9382,13 @@ class CadController {
       'is-arc-tool',
       tool === 'arc-center-radius' || tool === 'arc-3p' || tool === 'arc-center-start-end',
     );
-    this.canvas.classList.toggle('is-trim-tool', tool === 'trim' || tool === 'fillet');
+    this.canvas.classList.toggle('is-trim-tool', tool === 'trim' || tool === 'fillet' || tool === 'chamfer');
     this.canvas.classList.toggle('is-extend-tool', tool === 'extend');
     this.canvas.classList.toggle('is-copy-tool', tool === 'copy' && this.state.copyDraft?.selecting);
     this.canvas.classList.toggle('is-move-tool', tool === 'move' && this.state.moveDraft?.selecting);
-    this.canvas.classList.toggle('is-rotate-tool', tool === 'rotate' && this.state.rotateDraft?.selecting);
+    this.canvas.classList.toggle('is-rotate-tool',
+      tool === 'rotate' && this.state.rotateDraft?.selecting ||
+      tool === 'mirror' && this.state.mirrorDraft?.selecting);
     this.canvas.classList.toggle('is-selection-set-tool', tool === 'select-set');
     this.canvas.classList.toggle(
       'is-dimension-select-tool',
@@ -8667,6 +9400,7 @@ class CadController {
       (tool === 'copy' && this.state.copyDraft && !this.state.copyDraft.selecting) ||
         (tool === 'move' && this.state.moveDraft && !this.state.moveDraft.selecting) ||
         (tool === 'rotate' && this.state.rotateDraft && !this.state.rotateDraft.selecting) ||
+        (tool === 'mirror' && this.state.mirrorDraft && !this.state.mirrorDraft.selecting) ||
         (tool === 'block-create' && this.state.blockCreateDraft && !this.state.blockCreateDraft.selecting) ||
         (tool === 'block-insert' && this.state.blockInsertDraft),
     );
@@ -8728,6 +9462,9 @@ class CadController {
     if (this.state.tool === 'fillet') {
       return true;
     }
+    if (this.state.tool === 'chamfer') {
+      return true;
+    }
     if (this.state.tool === 'select-set') {
       return Boolean(this.state.selectionSetDraft?.selecting);
     }
@@ -8742,6 +9479,9 @@ class CadController {
     }
     if (this.state.tool === 'rotate') {
       return Boolean(this.state.rotateDraft?.selecting);
+    }
+    if (this.state.tool === 'mirror') {
+      return Boolean(this.state.mirrorDraft?.selecting);
     }
     if (this.state.tool === 'erase') {
       return Boolean(this.state.eraseDraft?.selecting);
@@ -8770,6 +9510,7 @@ class CadController {
     if (!this.state.hoveredEntity) {
       return;
     }
+
     this.state.hoveredEntity = null;
     this.renderer.draw();
   }
@@ -8777,7 +9518,9 @@ class CadController {
   updateCanvasCursorMode() {
     this.canvas.classList.toggle('is-copy-tool', this.state.tool === 'copy' && this.state.copyDraft?.selecting);
     this.canvas.classList.toggle('is-move-tool', this.state.tool === 'move' && this.state.moveDraft?.selecting);
-    this.canvas.classList.toggle('is-rotate-tool', this.state.tool === 'rotate' && this.state.rotateDraft?.selecting);
+    this.canvas.classList.toggle('is-rotate-tool',
+      this.state.tool === 'rotate' && this.state.rotateDraft?.selecting ||
+      this.state.tool === 'mirror' && this.state.mirrorDraft?.selecting);
     this.canvas.classList.toggle('is-explode-tool', this.state.tool === 'explode');
     this.canvas.classList.toggle(
       'is-dimension-select-tool',
@@ -8789,6 +9532,7 @@ class CadController {
       (this.state.tool === 'copy' && this.state.copyDraft && !this.state.copyDraft.selecting) ||
         (this.state.tool === 'move' && this.state.moveDraft && !this.state.moveDraft.selecting) ||
         (this.state.tool === 'rotate' && this.state.rotateDraft && !this.state.rotateDraft.selecting) ||
+        (this.state.tool === 'mirror' && this.state.mirrorDraft && !this.state.mirrorDraft.selecting) ||
         (this.state.tool === 'block-create' && this.state.blockCreateDraft && !this.state.blockCreateDraft.selecting) ||
         (this.state.tool === 'block-insert' && this.state.blockInsertDraft),
     );
@@ -8831,7 +9575,9 @@ class CadController {
   }
 
   cancelCurrentCommand() {
-    const clearCommandSelection = this.state.tool === 'copy' || this.state.tool === 'select-set';
+    const clearCommandSelection = this.state.tool === 'copy' ||
+      this.state.tool === 'mirror' ||
+      this.state.tool === 'select-set';
     if (
       this.state.tool === 'line' ||
       this.state.tool === 'polyline' ||
@@ -8848,9 +9594,11 @@ class CadController {
       this.state.tool === 'copy' ||
       this.state.tool === 'move' ||
       this.state.tool === 'rotate' ||
+      this.state.tool === 'mirror' ||
       this.state.tool === 'select-set' ||
       this.state.tool === 'trim' ||
       this.state.tool === 'fillet' ||
+      this.state.tool === 'chamfer' ||
       this.state.tool === 'extend' ||
       this.state.tool === 'erase' ||
       this.state.tool === 'explode' ||
@@ -8864,7 +9612,9 @@ class CadController {
       this.state.copyDraft ||
       this.state.moveDraft ||
       this.state.rotateDraft ||
+      this.state.mirrorDraft ||
       this.state.filletDraft ||
+      this.state.chamferDraft ||
       this.state.selectionSetDraft ||
       this.state.eraseDraft ||
       this.state.explodeDraft ||
@@ -8907,6 +9657,16 @@ class CadController {
     }
     if (this.state.tool === 'rotate' && this.state.rotateDraft?.selecting) {
       return this.confirmRotateSelection();
+    }
+    if (this.state.tool === 'mirror' && this.state.mirrorDraft?.selecting) {
+      return this.confirmMirrorSelection();
+    }
+    if (this.state.mirrorDraft?.firstPoint) {
+      if (this.state.distanceInput) {
+        return this.handleDistanceInputKey({ key: 'Enter' });
+      }
+      const secondPoint = resolveCursorPoint(this.state.mouseWorld, this.state);
+      return this.mirrorSelectionAcross(secondPoint);
     }
     if (this.state.tool === 'select-set' && this.state.selectionSetDraft?.selecting) {
       return this.confirmSelectionSet();
@@ -8965,9 +9725,11 @@ class CadController {
       this.state.tool === 'copy' ||
       this.state.tool === 'move' ||
       this.state.tool === 'rotate' ||
+      this.state.tool === 'mirror' ||
       this.state.tool === 'select-set' ||
       this.state.tool === 'trim' ||
       this.state.tool === 'fillet' ||
+      this.state.tool === 'chamfer' ||
       this.state.tool === 'extend' ||
       this.state.tool === 'erase' ||
       this.state.tool === 'explode' ||
@@ -8980,7 +9742,9 @@ class CadController {
       this.state.copyDraft ||
       this.state.moveDraft ||
       this.state.rotateDraft ||
+      this.state.mirrorDraft ||
       this.state.filletDraft ||
+      this.state.chamferDraft ||
       this.state.selectionSetDraft ||
       this.state.eraseDraft ||
       this.state.explodeDraft ||
@@ -9499,6 +10263,25 @@ class CadController {
     return true;
   }
 
+  startMirror() {
+    const sourceEntities = [...this.doc.selectedEntities];
+    if (sourceEntities.length) {
+      this.rememberSelectionSet(sourceEntities);
+    }
+    this.setTool('mirror');
+    this.state.mirrorDraft = {
+      sourceEntities,
+      firstPoint: null,
+      selecting: !sourceEntities.length,
+    };
+    this.state.statusText = sourceEntities.length
+      ? `Simetria de ${sourceEntities.length} entidad${sourceEntities.length === 1 ? '' : 'es'} - indique primer punto del eje`
+      : 'Simetria: seleccione objetos y confirme con Enter, Espacio o clic derecho';
+    this.updateUiStatus();
+    this.renderer.draw();
+    return true;
+  }
+
   startErase() {
     const selectedCount = this.doc.selectedEntities.size;
     if (selectedCount) {
@@ -9626,6 +10409,22 @@ class CadController {
     this.updateCanvasCursorMode();
     this.updateUiStatus();
     this.renderer.draw();
+    return true;
+  }
+
+  confirmMirrorSelection() {
+    if (!this.state.mirrorDraft?.selecting) {
+      return false;
+    }
+    const sourceEntities = [...this.doc.selectedEntities];
+    if (!sourceEntities.length) {
+      this.state.statusText = 'Seleccione entidades para crear la simetria';
+      return false;
+    }
+    this.rememberSelectionSet(sourceEntities);
+    this.state.mirrorDraft = { sourceEntities, firstPoint: null, selecting: false };
+    this.state.statusText = `Simetria de ${sourceEntities.length} entidad${sourceEntities.length === 1 ? '' : 'es'} - indique primer punto del eje`;
+    this.updateCanvasCursorMode();
     return true;
   }
 
@@ -9893,6 +10692,28 @@ class CadController {
     this.setTool('select');
     this.doc.clearSelection();
     this.state.statusText = `${count} entidad${count === 1 ? '' : 'es'} girada${count === 1 ? '' : 's'} ${formatNumber(angleDegrees)}°`;
+    return true;
+  }
+
+  mirrorSelectionAcross(secondPoint) {
+    const draft = this.state.mirrorDraft;
+    if (!draft?.firstPoint || !secondPoint || distance(draft.firstPoint, secondPoint) <= SNAP_THRESHOLD) {
+      this.state.statusText = 'El eje de simetria necesita dos puntos distintos';
+      return false;
+    }
+    const copies = cloneEntitiesWithOffset(draft.sourceEntities, { x: 0, y: 0 }, { remapGroups: true });
+    const mirrored = copies.filter((entity) =>
+      mirrorEntityAcrossAxis(entity, draft.firstPoint, secondPoint));
+    if (!mirrored.length) {
+      this.state.statusText = 'No se pudieron reflejar las entidades seleccionadas';
+      return false;
+    }
+    this.doc.addEntities(mirrored);
+    const count = mirrored.length;
+    this.state.mirrorDraft = null;
+    this.setTool('select');
+    this.doc.clearSelection();
+    this.state.statusText = `${count} entidad${count === 1 ? '' : 'es'} creada${count === 1 ? '' : 's'} por simetria`;
     return true;
   }
 
@@ -10371,40 +11192,81 @@ class CadController {
   }
 
   handleFilletPoint(worldPoint) {
-    const draft = this.state.filletDraft || { firstEntity: null, firstPick: null };
+    const draft = this.state.filletDraft || { firstOperand: null };
     const entity = this.findEntityAt(worldPoint);
-    if (!entity || entity.type !== 'LINE' || entity.groupId) {
+    const operand = filletOperandAt(entity, worldPoint);
+    if (!operand || entity.groupId) {
       this.state.statusText = entity?.groupId
         ? 'Descomponga la polilinea agrupada antes de empalmar'
-        : 'Empalme: seleccione una entidad de linea';
+        : 'Empalme: seleccione linea, arco, circulo o tramo de polilinea';
       return false;
     }
-    if (!draft.firstEntity) {
-      draft.firstEntity = entity;
-      draft.firstPick = { ...worldPoint };
+    if (!draft.firstOperand) {
+      draft.firstOperand = operand;
       this.state.filletDraft = draft;
-      this.state.statusText = `Primera linea indicada · R${formatNumber(activeFilletRadius())} · seleccione la segunda`;
+      this.state.statusText = `Primera entidad indicada · R${formatNumber(activeFilletRadius())} · seleccione la segunda`;
       return true;
     }
-    if (entity === draft.firstEntity) {
-      this.state.statusText = 'Seleccione una segunda linea distinta';
+    if (
+      operand.entity === draft.firstOperand.entity &&
+      operand.segmentIndex === draft.firstOperand.segmentIndex
+    ) {
+      this.state.statusText = 'Seleccione otra entidad o un tramo diferente de la polilinea';
       return false;
     }
-    const result = applyLineFillet(
-      this.doc,
-      draft.firstEntity,
-      draft.firstPick,
-      entity,
-      worldPoint,
-      activeFilletRadius(),
-    );
+    const solution = filletSolutions(draft.firstOperand, operand, activeFilletRadius())[0];
+    const result = solution
+      ? applyFilletSolution(this.doc, draft.firstOperand, operand, solution)
+      : { valid: false, reason: 'No se encontro una solucion tangente para esas entidades' };
     if (!result.valid) {
       this.state.statusText = result.reason;
       return false;
     }
-    this.state.filletDraft = { firstEntity: null, firstPick: null };
+    this.state.filletDraft = { firstOperand: null };
     this.state.hoveredEntity = null;
-    this.state.statusText = `Empalme creado · R${formatNumber(result.radius)} ${UNITS_LABEL} · seleccione otra primera linea`;
+    this.state.statusText = result.radius <= SNAP_THRESHOLD
+      ? 'Entidades prolongadas hasta su interseccion · seleccione otra primera entidad'
+      : `Empalme creado · R${formatNumber(result.radius)} ${UNITS_LABEL} · seleccione otra primera entidad`;
+    return true;
+  }
+
+  handleChamferPoint(worldPoint) {
+    const draft = this.state.chamferDraft || { firstOperand: null };
+    const entity = this.findEntityAt(worldPoint);
+    const operand = filletOperandAt(entity, worldPoint);
+    if (!operand || operand.primitive.type !== 'LINE' || entity.groupId) {
+      this.state.statusText = entity?.groupId
+        ? 'Descomponga la polilinea agrupada antes de achaflanar'
+        : 'Chaflan: seleccione una linea o un tramo recto de polilinea';
+      return false;
+    }
+    if (!draft.firstOperand) {
+      draft.firstOperand = operand;
+      this.state.chamferDraft = draft;
+      this.state.statusText = `Primera entidad indicada · ${formatChamferDistances()} · seleccione la segunda`;
+      return true;
+    }
+    if (operand.entity === draft.firstOperand.entity && operand.segmentIndex === draft.firstOperand.segmentIndex) {
+      this.state.statusText = 'Seleccione otra linea o un tramo diferente';
+      return false;
+    }
+    const distances = activeChamferDistances();
+    const solution = chamferSolution(
+      draft.firstOperand,
+      operand,
+      distances.first,
+      distances.second,
+    );
+    const result = solution.valid
+      ? applyChamferSolution(this.doc, draft.firstOperand, operand, solution)
+      : solution;
+    if (!result.valid) {
+      this.state.statusText = result.reason;
+      return false;
+    }
+    this.state.chamferDraft = { firstOperand: null };
+    this.state.hoveredEntity = null;
+    this.state.statusText = `Chaflan creado · ${formatChamferDistances()} · seleccione otra primera entidad`;
     return true;
   }
 
@@ -10618,6 +11480,7 @@ class CadController {
       const activeGripPoint = this.activeGripPoint();
       const coordinateOrigin = this.state.copyDraft?.basePoint ||
         this.state.moveDraft?.basePoint ||
+        this.state.mirrorDraft?.firstPoint ||
         activeGripPoint ||
         this.state.pendingLineStart ||
         activeDraftOrigin(this.state) ||
@@ -10692,6 +11555,21 @@ class CadController {
         }
         else {
           this.state.statusText = 'Destino de desplazamiento no valido';
+        }
+        return true;
+      }
+
+      if (this.state.mirrorDraft?.firstPoint) {
+        const cursor = resolveCursorPoint(this.state.mouseWorld, this.state);
+        const targetPoint = coordinateTarget ||
+          (inputDistance !== null && cursor
+            ? pointFromDistance(this.state.mirrorDraft.firstPoint, cursor, inputDistance)
+            : null);
+        if (targetPoint && this.mirrorSelectionAcross(targetPoint)) {
+          this.state.distanceInput = '';
+        }
+        else {
+          this.state.statusText = 'Segundo punto del eje no valido';
         }
         return true;
       }
@@ -11181,6 +12059,46 @@ class CadController {
       return;
     }
 
+    if (this.state.tool === 'mirror') {
+      if (!this.state.mirrorDraft) {
+        this.startMirror();
+        return;
+      }
+      if (this.state.mirrorDraft.selecting) {
+        const entity = this.findEntityAt(worldPoint);
+        if (entity) {
+          this.doc.addSelectedEntities([entity]);
+          this.state.statusText = `${this.doc.selectedEntities.size} entidad${this.doc.selectedEntities.size === 1 ? '' : 'es'} para simetria`;
+        }
+        else {
+          this.state.selectionWindow = {
+            startWorld: { ...worldPoint },
+            currentWorld: { ...worldPoint },
+            startScreen: { ...this.state.mouseScreen },
+            dragging: false,
+            purpose: 'mirror',
+          };
+          this.state.statusText = 'Ventana de seleccion para simetria';
+        }
+        this.updateUiStatus();
+        this.renderer.draw();
+        return;
+      }
+      const point = this.resolveInputPoint(worldPoint);
+      if (!this.state.mirrorDraft.firstPoint) {
+        this.state.mirrorDraft.firstPoint = point;
+        this.state.statusText = 'Primer punto del eje indicado - indique segundo punto';
+      }
+      else {
+        this.mirrorSelectionAcross(point);
+      }
+      this.state.distanceInput = '';
+      this.updateCanvasCursorMode();
+      this.updateUiStatus();
+      this.renderer.draw();
+      return;
+    }
+
     if (this.state.tool === 'trim') {
       const entity = this.findEntityAt(worldPoint);
       if (!entity) {
@@ -11209,6 +12127,13 @@ class CadController {
 
     if (this.state.tool === 'fillet') {
       this.handleFilletPoint(worldPoint);
+      this.updateUiStatus();
+      this.renderer.draw();
+      return;
+    }
+
+    if (this.state.tool === 'chamfer') {
+      this.handleChamferPoint(worldPoint);
       this.updateUiStatus();
       this.renderer.draw();
       return;
@@ -11433,6 +12358,8 @@ class CadController {
           ? `Seleccion para desplazar por ${mode}`
           : this.state.selectionWindow.purpose === 'rotate'
             ? `Seleccion para girar por ${mode}`
+          : this.state.selectionWindow.purpose === 'mirror'
+            ? `Seleccion para simetria por ${mode}`
         : this.state.selectionWindow.purpose === 'erase'
           ? `Seleccion para borrar por ${mode}`
         : this.state.selectionWindow.purpose === 'explode'
@@ -11499,6 +12426,7 @@ class CadController {
           selectionWindow.purpose !== 'select-set' &&
           selectionWindow.purpose !== 'move' &&
           selectionWindow.purpose !== 'rotate' &&
+          selectionWindow.purpose !== 'mirror' &&
           selectionWindow.purpose !== 'erase' &&
           selectionWindow.purpose !== 'explode' &&
           selectionWindow.purpose !== 'extend-boundaries' &&
@@ -11516,6 +12444,8 @@ class CadController {
             ? 'Seleccione objetos para desplazar'
             : selectionWindow.purpose === 'rotate'
               ? 'Seleccione objetos para girar'
+            : selectionWindow.purpose === 'mirror'
+              ? 'Seleccione objetos para simetria'
             : selectionWindow.purpose === 'erase'
               ? 'Seleccione objetos para borrar'
             : selectionWindow.purpose === 'explode'
@@ -11534,6 +12464,7 @@ class CadController {
           selectionWindow.purpose === 'select-set' ||
           selectionWindow.purpose === 'move' ||
           selectionWindow.purpose === 'rotate' ||
+          selectionWindow.purpose === 'mirror' ||
           selectionWindow.purpose === 'erase' ||
           selectionWindow.purpose === 'explode' ||
           selectionWindow.purpose === 'extend-boundaries'
@@ -11561,6 +12492,8 @@ class CadController {
             ? this.doc.selectedEntities.size
             : selectionWindow.purpose === 'rotate'
               ? this.doc.selectedEntities.size
+            : selectionWindow.purpose === 'mirror'
+              ? this.doc.selectedEntities.size
             : selectionWindow.purpose === 'erase'
               ? this.doc.selectedEntities.size
             : selectionWindow.purpose === 'explode'
@@ -11580,6 +12513,8 @@ class CadController {
                   ? ' para desplazar'
                   : selectionWindow.purpose === 'rotate'
                     ? ' para girar'
+                  : selectionWindow.purpose === 'mirror'
+                    ? ' para simetria'
                   : selectionWindow.purpose === 'erase'
                     ? ' para borrar'
                   : selectionWindow.purpose === 'explode'
@@ -11752,6 +12687,7 @@ class CadController {
         this.state.copyDraft?.selecting ||
         this.state.moveDraft?.selecting ||
         this.state.rotateDraft?.selecting ||
+        this.state.mirrorDraft?.selecting ||
         this.state.eraseDraft?.selecting ||
         this.state.explodeDraft?.selecting ||
         this.state.extendDraft?.phase === 'boundaries' ||
@@ -11795,6 +12731,11 @@ class CadController {
     if (event.key.toLowerCase() === 'g' && !event.metaKey && !event.ctrlKey && !event.altKey) {
       event.preventDefault();
       runCommand('rotate');
+      return;
+    }
+    if (event.key.toLowerCase() === 's' && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      event.preventDefault();
+      runCommand('mirror');
       return;
     }
     if (event.key.toLowerCase() === 'f' && !event.metaKey && !event.ctrlKey && !event.altKey) {
@@ -11857,6 +12798,7 @@ class CadController {
         this.state.copyDraft ||
         this.state.moveDraft ||
         this.state.rotateDraft ||
+        this.state.mirrorDraft ||
         this.state.blockCreateDraft?.name ||
         this.state.blockInsertDraft ||
         this.state.dimensionDraft?.phase === 'placement' ||
@@ -11939,6 +12881,9 @@ class CadController {
     if (this.state.tool === 'fillet') {
       toolLabel = `Empalme R${formatNumber(activeFilletRadius())}`;
     }
+    if (this.state.tool === 'chamfer') {
+      toolLabel = `Chaflan ${formatChamferDistances()}`;
+    }
     if (this.state.tool === 'extend') {
       toolLabel = 'Alargar';
     }
@@ -11957,6 +12902,9 @@ class CadController {
     if (this.state.tool === 'rotate') {
       toolLabel = 'Girar';
     }
+    if (this.state.tool === 'mirror') {
+      toolLabel = 'Simetria';
+    }
     if (this.state.tool === 'explode') {
       toolLabel = 'Descomponer';
     }
@@ -11973,6 +12921,7 @@ class CadController {
     const activeGripPoint = this.activeGripPoint();
     const coordinateOrigin = this.state.copyDraft?.basePoint ||
       this.state.moveDraft?.basePoint ||
+      this.state.mirrorDraft?.firstPoint ||
       activeGripPoint ||
       this.state.pendingLineStart ||
       activeDraftOrigin(this.state) ||
@@ -12202,7 +13151,9 @@ const state = {
   copyDraft: null,
   moveDraft: null,
   rotateDraft: null,
+  mirrorDraft: null,
   filletDraft: null,
+  chamferDraft: null,
   selectionSetDraft: null,
   eraseDraft: null,
   explodeDraft: null,
@@ -12219,6 +13170,10 @@ const state = {
   filletRadii: {
     engineering: 10,
     architecture: 0.25,
+  },
+  chamferDistances: {
+    engineering: { first: 10, second: 10 },
+    architecture: { first: 0.25, second: 0.25 },
   },
   lastCopy: null,
   drawingProfile: 'engineering',
@@ -12300,12 +13255,15 @@ function setDrawingProfileRuntime(profileId) {
   UNITS_LABEL = profile.unitsLabel;
   state.lastTextHeight = profile.defaultTextHeight;
   syncFilletRadiusControl();
+  syncChamferDistanceControl();
   return profile;
 }
 
 function activeFilletRadius() {
-  return state.filletRadii[state.drawingProfile] ||
-    (state.drawingProfile === 'architecture' ? 0.25 : 10);
+  const radius = state.filletRadii[state.drawingProfile];
+  return Number.isFinite(radius)
+    ? radius
+    : state.drawingProfile === 'architecture' ? 0.25 : 10;
 }
 
 function syncFilletRadiusControl() {
@@ -12318,13 +13276,48 @@ function syncFilletRadiusControl() {
 
 function updateFilletRadiusFromInput() {
   const radius = Number(String(filletRadiusInput.value).replace(',', '.'));
-  if (!Number.isFinite(radius) || radius <= SNAP_THRESHOLD) {
-    state.statusText = 'El radio de empalme debe ser mayor que cero';
+  if (!Number.isFinite(radius) || radius < 0) {
+    state.statusText = 'El radio de empalme no puede ser negativo';
     controller.updateUiStatus();
     return false;
   }
   state.filletRadii[state.drawingProfile] = radius;
   state.statusText = `Radio de empalme: ${formatNumber(radius)} ${UNITS_LABEL}`;
+  controller.updateUiStatus();
+  return true;
+}
+
+function activeChamferDistances() {
+  return state.chamferDistances[state.drawingProfile] || { first: 10, second: 10 };
+}
+
+function formatChamferDistances() {
+  const distances = activeChamferDistances();
+  return `D1 ${formatNumber(distances.first)} · D2 ${formatNumber(distances.second)}`;
+}
+
+function syncChamferDistanceControl() {
+  if (!chamferDistanceFirstInput || !chamferDistanceSecondInput) {
+    return;
+  }
+  const distances = activeChamferDistances();
+  const step = state.drawingProfile === 'architecture' ? '0.01' : '1';
+  chamferDistanceFirstInput.step = step;
+  chamferDistanceSecondInput.step = step;
+  chamferDistanceFirstInput.value = String(distances.first);
+  chamferDistanceSecondInput.value = String(distances.second);
+}
+
+function updateChamferDistancesFromInput() {
+  const first = Number(String(chamferDistanceFirstInput.value).replace(',', '.'));
+  const second = Number(String(chamferDistanceSecondInput.value).replace(',', '.'));
+  if (!Number.isFinite(first) || !Number.isFinite(second) || first < 0 || second < 0) {
+    state.statusText = 'Las distancias de chaflan no pueden ser negativas';
+    controller.updateUiStatus();
+    return false;
+  }
+  state.chamferDistances[state.drawingProfile] = { first, second };
+  state.statusText = `Chaflan: ${formatChamferDistances()} ${UNITS_LABEL}`;
   controller.updateUiStatus();
   return true;
 }
@@ -12845,6 +13838,9 @@ function newDrawing() {
   state.copyDraft = null;
   state.moveDraft = null;
   state.rotateDraft = null;
+  state.mirrorDraft = null;
+  state.filletDraft = null;
+  state.chamferDraft = null;
   state.selectionSetDraft = null;
   state.eraseDraft = null;
   state.explodeDraft = null;
@@ -12916,6 +13912,9 @@ function resetInteractionState() {
   state.copyDraft = null;
   state.moveDraft = null;
   state.rotateDraft = null;
+  state.mirrorDraft = null;
+  state.filletDraft = null;
+  state.chamferDraft = null;
   state.selectionSetDraft = null;
   state.eraseDraft = null;
   state.explodeDraft = null;
@@ -13423,10 +14422,12 @@ function commandLabel(command) {
     copy: 'Copiar',
     move: 'Desplazar',
     rotate: 'Girar',
+    mirror: 'Simetria',
     'select-set': 'Seleccionar conjunto',
     trim: 'Recortar',
     extend: 'Alargar',
     fillet: 'Empalme',
+    chamfer: 'Chaflan',
     erase: 'Borrar',
     explode: 'Descomponer',
   };
@@ -13466,8 +14467,10 @@ function runCommand(command) {
   if (command === 'copy') controller.startCopy();
   if (command === 'move') controller.startMove();
   if (command === 'rotate') controller.startRotate();
+  if (command === 'mirror') controller.startMirror();
   if (command === 'trim') controller.setTool('trim');
   if (command === 'fillet') controller.setTool('fillet');
+  if (command === 'chamfer') controller.setTool('chamfer');
   if (command === 'extend') controller.startExtend();
   if (command === 'erase') controller.startErase();
   if (command === 'explode') controller.startExplode();
@@ -13523,6 +14526,27 @@ filletRadiusInput.addEventListener('keydown', (event) => {
     canvas.focus({ preventScroll: true });
   }
 });
+[chamferDistanceFirstInput, chamferDistanceSecondInput].forEach((input) => {
+  input.addEventListener('change', () => {
+    updateChamferDistancesFromInput();
+    renderer.draw();
+  });
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      if (updateChamferDistancesFromInput()) {
+        canvas.focus({ preventScroll: true });
+        renderer.draw();
+      }
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      controller.cancelCurrentCommand();
+      renderer.draw();
+      canvas.focus({ preventScroll: true });
+    }
+  });
+});
 blockEditorSaveButton.addEventListener('click', () => finishBlockEditor(true));
 blockEditorDiscardButton.addEventListener('click', () => finishBlockEditor(false));
 selectToolButton.addEventListener('click', () => runCommand('select'));
@@ -13572,9 +14596,11 @@ toolFlyoutCommandButtons.forEach((button) => {
 trimToolButton.addEventListener('click', () => runCommand('trim'));
 extendToolButton.addEventListener('click', () => runCommand('extend'));
 filletToolButton.addEventListener('click', () => runCommand('fillet'));
+chamferToolButton.addEventListener('click', () => runCommand('chamfer'));
 copyToolButton.addEventListener('click', () => runCommand('copy'));
 moveToolButton.addEventListener('click', () => runCommand('move'));
 rotateToolButton.addEventListener('click', () => runCommand('rotate'));
+mirrorToolButton.addEventListener('click', () => runCommand('mirror'));
 eraseToolButton.addEventListener('click', () => runCommand('erase'));
 explodeToolButton.addEventListener('click', () => runCommand('explode'));
 fitButton.addEventListener('click', () => runCommand('fit'));
@@ -13723,7 +14749,9 @@ importDxfInput.addEventListener('change', async (event) => {
   state.copyDraft = null;
   state.moveDraft = null;
   state.rotateDraft = null;
+  state.mirrorDraft = null;
   state.filletDraft = null;
+  state.chamferDraft = null;
   state.selectionSetDraft = null;
   state.eraseDraft = null;
   state.explodeDraft = null;
