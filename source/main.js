@@ -2797,14 +2797,20 @@ function dimensionAngularGeometry(entity, metrics) {
     [startAngle, endAngle] = [endAngle, startAngle];
     sweep = TWO_PI - sweep;
   }
-  const radius = Math.max(distance(vertex, entity.placement), metrics.arrowSize * 2);
+  const radius = Math.max(distance(vertex, entity.placement), SNAP_THRESHOLD * 10);
   const start = { x: vertex.x + Math.cos(startAngle) * radius, y: vertex.y + Math.sin(startAngle) * radius };
   const end = { x: vertex.x + Math.cos(endAngle) * radius, y: vertex.y + Math.sin(endAngle) * radius };
   const midAngle = startAngle + sweep * 0.5;
   const tangentStart = { x: -Math.sin(startAngle), y: Math.cos(startAngle) };
   const tangentEnd = { x: Math.sin(endAngle), y: -Math.cos(endAngle) };
   const externalArrows = radius * sweep < metrics.arrowSize * 2.5;
-  const arrowArcExtension = metrics.arrowSize * (externalArrows ? 1.35 : 0.7) / radius;
+  const startArrowDirection = externalArrows
+    ? tangentStart
+    : { x: -tangentStart.x, y: -tangentStart.y };
+  const endArrowDirection = externalArrows
+    ? tangentEnd
+    : { x: -tangentEnd.x, y: -tangentEnd.y };
+  const tailLength = metrics.arrowSize * 0.78 + metrics.extensionOvershoot;
   let textAngle = Math.atan2(
     Math.sin(midAngle + Math.PI * 0.5),
     Math.cos(midAngle + Math.PI * 0.5),
@@ -2813,23 +2819,33 @@ function dimensionAngularGeometry(entity, metrics) {
     textAngle += Math.PI;
   }
   return {
-    lines: [],
+    lines: [
+      {
+        start,
+        end: offsetPoint(start, {
+          x: startArrowDirection.x * tailLength,
+          y: startArrowDirection.y * tailLength,
+        }),
+      },
+      {
+        start: end,
+        end: offsetPoint(end, {
+          x: endArrowDirection.x * tailLength,
+          y: endArrowDirection.y * tailLength,
+        }),
+      },
+    ],
     arcs: [{
       center: vertex,
       radius,
-      startAngle: startAngle - arrowArcExtension,
-      endAngle: endAngle + arrowArcExtension,
+      startAngle,
+      endAngle,
       counterclockwise: false,
     }],
-    arrows: externalArrows
-      ? [
-        dimensionArrow(start, tangentStart, metrics.arrowSize),
-        dimensionArrow(end, tangentEnd, metrics.arrowSize),
-      ]
-      : [
-        dimensionArrow(start, { x: -tangentStart.x, y: -tangentStart.y }, metrics.arrowSize),
-        dimensionArrow(end, { x: -tangentEnd.x, y: -tangentEnd.y }, metrics.arrowSize),
-      ],
+    arrows: [
+      dimensionArrow(start, startArrowDirection, metrics.arrowSize),
+      dimensionArrow(end, endArrowDirection, metrics.arrowSize),
+    ],
     text: {
       point: {
         x: vertex.x + Math.cos(midAngle) * (radius + metrics.textGap + metrics.textHeight * 0.6),
