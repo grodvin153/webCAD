@@ -2749,7 +2749,7 @@ function dimensionRadialGeometry(entity, metrics) {
     const extendToCenter = placementDistance < radius;
     return {
       lines: [extendToCenter
-        ? { start: extendedNegativeEdge, end: extendedPositiveEdge }
+        ? { start: negativeEdge, end: positiveEdge }
         : { start: negativeEdge, end: entity.placement }],
       arcs: [],
       arrows: [
@@ -2765,7 +2765,7 @@ function dimensionRadialGeometry(entity, metrics) {
   );
   const radialLine = placementDistance < radius
     ? { start: center, end: extendedPositiveEdge }
-    : { start: positiveEdge, end: entity.placement };
+    : { start: center, end: entity.placement };
   return {
     lines: [radialLine],
     arcs: [],
