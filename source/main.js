@@ -35,6 +35,7 @@ import {
   Y_AXIS_COLOR,
 } from './cad-styles.js';
 import { commandLabel, REPEATABLE_COMMANDS } from './commands.js';
+import { entityMidpoint, orthoPoint } from './geometry.js';
 
 const canvas = document.getElementById('cad-canvas');
 const selectToolButton = document.getElementById('tool-select');
@@ -217,22 +218,6 @@ function offsetPoint(point, vector) {
   return {
     x: point.x + vector.x,
     y: point.y + vector.y,
-  };
-}
-
-function orthoPoint(start, point) {
-  const deltaX = point.x - start.x;
-  const deltaY = point.y - start.y;
-  if (Math.abs(deltaX) >= Math.abs(deltaY)) {
-    return { x: point.x, y: start.y };
-  }
-  return { x: start.x, y: point.y };
-}
-
-function entityMidpoint(entity) {
-  return {
-    x: (entity.start.x + entity.end.x) * 0.5,
-    y: (entity.start.y + entity.end.y) * 0.5,
   };
 }
 
