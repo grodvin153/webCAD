@@ -4,6 +4,19 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+import {
+  CANVAS_SCALE,
+  DRAWING_PROFILES,
+  FIT_PADDING,
+  HISTORY_LIMIT,
+  REPEATABLE_COMMANDS,
+  SNAP_THRESHOLD,
+  SPATIAL_CELL_SIZE,
+  SPATIAL_MAX_ENTITY_CELLS,
+  SPATIAL_MAX_QUERY_CELLS,
+  VIEW_SCALE_FACTOR,
+} from './config.js';
+
 const canvas = document.getElementById('cad-canvas');
 const selectToolButton = document.getElementById('tool-select');
 const lineToolButton = document.getElementById('tool-line');
@@ -145,89 +158,6 @@ const aboutDialog = document.getElementById('about-dialog');
 const aboutDialogCloseButton = document.getElementById('about-dialog-close');
 const aboutDialogConfirmButton = document.getElementById('about-dialog-confirm');
 
-const CANVAS_SCALE = 2;
-const VIEW_SCALE_FACTOR = 1.15;
-const SNAP_THRESHOLD = 0.001;
-const FIT_PADDING = 48;
-const SPATIAL_CELL_SIZE = 100;
-const SPATIAL_MAX_ENTITY_CELLS = 256;
-const SPATIAL_MAX_QUERY_CELLS = 12000;
-const HISTORY_LIMIT = 50;
-const REPEATABLE_COMMANDS = new Set([
-  'line',
-  'polyline',
-  'rectangle',
-  'text',
-  'hatch',
-  'circle-center',
-  'circle-3p',
-  'arc-center-radius',
-  'arc-3p',
-  'arc-center-start-end',
-  'dimension-horizontal',
-  'dimension-vertical',
-  'dimension-aligned',
-  'dimension-angular',
-  'dimension-radius',
-  'dimension-diameter',
-  'block-insert',
-  'copy',
-  'move',
-  'rotate',
-  'mirror',
-  'trim',
-  'extend',
-  'fillet',
-  'chamfer',
-  'erase',
-  'explode',
-]);
-const DRAWING_PROFILES = {
-  engineering: {
-    id: 'engineering',
-    label: 'Ingeniería',
-    shortLabel: 'ING · mm',
-    unitsLabel: 'mm',
-    dxfInsUnits: 4,
-    gridBase: 10,
-    defaultDrawingSize: 200,
-    defaultTextHeight: 5,
-    minViewScale: 0.05,
-    maxViewScale: 24,
-    lineTypeScale: 1,
-    dxfLineTypeScale: 1,
-    hatchOpacity: 0.32,
-    dimensionMetrics: {
-      textHeight: 3,
-      arrowSize: 3.75,
-      textGap: 0.625,
-      extensionOffset: 0.9375,
-      extensionOvershoot: 1.875,
-    },
-  },
-  architecture: {
-    id: 'architecture',
-    label: 'Arquitectura',
-    shortLabel: 'ARQ · m',
-    unitsLabel: 'm',
-    dxfInsUnits: 6,
-    gridBase: 0.5,
-    defaultDrawingSize: 20,
-    defaultTextHeight: 0.25,
-    minViewScale: 0.01,
-    maxViewScale: 2400,
-    lineTypeScale: 0.85,
-    dxfLineTypeScale: 0.1,
-    hatchOpacity: 0.27,
-    dimensionMetrics: {
-      textHeight: 0.25,
-      arrowSize: 0.3125,
-      textGap: 0.05,
-      extensionOffset: 0.075,
-      extensionOvershoot: 0.15,
-    },
-  },
-};
 let GRID_BASE = DRAWING_PROFILES.engineering.gridBase;
 let MIN_VIEW_SCALE = DRAWING_PROFILES.engineering.minViewScale;
 let MAX_VIEW_SCALE = DRAWING_PROFILES.engineering.maxViewScale;
