@@ -99,6 +99,20 @@ import {
   pointFromRelativeCoordinates,
   pointOnRadiusFromAngle,
 } from './input.js';
+import {
+  createEntityTransformations,
+  entityCanExplode,
+} from './transformations/clone.js';
+import { moveEntityByVector } from './transformations/move.js';
+import {
+  dotProduct,
+  mirrorEntityAcrossAxis,
+} from './transformations/mirror.js';
+import {
+  rotateEntityByAngle,
+  rotatePointAround,
+  rotationAngleFromPoint,
+} from './transformations/rotate.js';
 
 const canvas = document.getElementById('cad-canvas');
 const selectToolButton = document.getElementById('tool-select');
@@ -1922,473 +1936,24 @@ class BlockReferenceEntity {
   }
 }
 
-function cloneBlockDefinition(definition, definitionMap = null) {
-  const clone = {
-    name: definition.name,
-    revision: definition.revision || 0,
-    entities: [],
-  };
-  clone.entities = definition.entities
-    .map((entity) => cloneEntity(entity, {
-      definition: entity.type === 'INSERT'
-        ? definitionMap?.get(entity.blockName.toLowerCase()) || entity.definition
-        : undefined,
-    }))
-    .filter(Boolean);
-  return clone;
-}
-
-function scalePointFromOrigin(point, scaleX, scaleY) {
-  return { x: point.x * scaleX, y: point.y * scaleY };
-}
-
-function scaleEntityByFactors(entity, scaleX, scaleY) {
-  const uniformScale = (Math.abs(scaleX) + Math.abs(scaleY)) * 0.5;
-  if (entity.type === 'LINE') {
-    entity.start = scalePointFromOrigin(entity.start, scaleX, scaleY);
-    entity.end = scalePointFromOrigin(entity.end, scaleX, scaleY);
-    return true;
-  }
-  if (entity.type === 'DIMENSION') {
-    entity.points = entity.points.map((point) => scalePointFromOrigin(point, scaleX, scaleY));
-    entity.placement = scalePointFromOrigin(entity.placement, scaleX, scaleY);
-    if (entity.textPosition) {
-      entity.textPosition = scalePointFromOrigin(entity.textPosition, scaleX, scaleY);
-    }
-    return true;
-  }
-  if (entity.type === 'CIRCLE' || entity.type === 'ARC') {
-    entity.center = scalePointFromOrigin(entity.center, scaleX, scaleY);
-    entity.radius *= uniformScale;
-    return true;
-  }
-  if (entity.type === 'TEXT') {
-    entity.insertionPoint = scalePointFromOrigin(entity.insertionPoint, scaleX, scaleY);
-    entity.height *= uniformScale;
-    return true;
-  }
-  if (entity.type === 'HATCH') {
-    entity.loops = (entity.loops || [entity.boundary]).map((loop) =>
-      loop.map((point) => scalePointFromOrigin(point, scaleX, scaleY)));
-    entity.boundary = entity.loops[0];
-    return true;
-  }
-  if (entity.type === 'POLYLINE') {
-    entity.vertices = entity.vertices.map((point) => scalePointFromOrigin(point, scaleX, scaleY));
-    entity.segments.forEach((segment) => {
-      if (segment.center) {
-        segment.center = scalePointFromOrigin(segment.center, scaleX, scaleY);
-      }
-      segment.startWidth *= uniformScale;
-      segment.endWidth *= uniformScale;
-    });
-    return true;
-  }
-  if (entity.type === 'INSERT') {
-    entity.insertionPoint = scalePointFromOrigin(entity.insertionPoint, scaleX, scaleY);
-    entity.scaleX *= scaleX;
-    entity.scaleY *= scaleY;
-    return true;
-  }
-  return false;
-}
-
-function expandBlockReferenceEntities(reference, depth = 0, visited = new Set()) {
-  const definition = reference?.definition;
-  const definitionKey = String(reference?.blockName || '').toLowerCase();
-  if (!definition || depth > 8 || visited.has(definitionKey)) {
-    return [];
-  }
-  const nextVisited = new Set(visited);
-  nextVisited.add(definitionKey);
-  const expanded = [];
-  for (const source of definition.entities) {
-    const transformed = cloneEntity(source);
-    if (!transformed || !scaleEntityByFactors(transformed, reference.scaleX, reference.scaleY)) {
-      continue;
-    }
-    rotateEntityByAngle(transformed, { x: 0, y: 0 }, reference.rotation);
-    moveEntityByVector(transformed, reference.insertionPoint);
-    if (transformed.type === 'INSERT') {
-      expanded.push(...expandBlockReferenceEntities(transformed, depth + 1, nextVisited));
-    }
-    else {
-      expanded.push(transformed);
-    }
-  }
-  return expanded;
-}
-
-function transformedBlockContents(reference) {
-  if (!reference?.definition) {
-    return [];
-  }
-  return reference.definition.entities.map((source) => {
-    const transformed = cloneEntity(source);
-    if (!transformed || !scaleEntityByFactors(transformed, reference.scaleX, reference.scaleY)) {
-      return null;
-    }
-    rotateEntityByAngle(transformed, { x: 0, y: 0 }, reference.rotation);
-    moveEntityByVector(transformed, reference.insertionPoint);
-    return transformed;
-  }).filter(Boolean);
-}
-
-function entityCanExplode(entity) {
-  return entity?.type === 'INSERT' || entity?.type === 'POLYLINE' || Boolean(entity?.groupId);
-}
-
-function cloneEntityWithOffset(entity, vector, options = {}) {
-  const groupId = Object.prototype.hasOwnProperty.call(options, 'groupId') ? options.groupId : entity.groupId;
-  if (entity.type === 'LINE') {
-    return new LineEntity(
-      offsetPoint(entity.start, vector),
-      offsetPoint(entity.end, vector),
-      { layer: entity.layer, lineStyle: entity.lineStyle, lineType: entity.lineType, lineColor: entity.lineColor, groupId },
-    );
-  }
-
-  if (entity.type === 'CIRCLE') {
-    return new CircleEntity(
-      offsetPoint(entity.center, vector),
-      entity.radius,
-      { layer: entity.layer, lineStyle: entity.lineStyle, lineType: entity.lineType, lineColor: entity.lineColor, groupId },
-    );
-  }
-
-  if (entity.type === 'ARC') {
-    return new ArcEntity(
-      offsetPoint(entity.center, vector),
-      entity.radius,
-      entity.startAngle,
-      entity.endAngle,
-      {
-        layer: entity.layer,
-        lineStyle: entity.lineStyle,
-        lineType: entity.lineType,
-        lineColor: entity.lineColor,
-        groupId,
-        clockwise: entity.clockwise !== false,
-      },
-    );
-  }
-
-  if (entity.type === 'POLYLINE') {
-    return new PolylineEntity(
-      entity.vertices.map((point) => offsetPoint(point, vector)),
-      entity.segments.map((segment) => ({
-        ...segment,
-        center: segment.center ? offsetPoint(segment.center, vector) : null,
-      })),
-      {
-        closed: entity.closed,
-        layer: entity.layer,
-        lineStyle: entity.lineStyle,
-        lineType: entity.lineType,
-        lineColor: entity.lineColor,
-      },
-    );
-  }
-
-  if (entity.type === 'TEXT') {
-    return new TextEntity(
-      offsetPoint(entity.insertionPoint, vector),
-      entity.text,
-      entity.height,
-      {
-        layer: entity.layer,
-        lineStyle: entity.lineStyle,
-        lineType: entity.lineType,
-        lineColor: entity.lineColor,
-        angle: entity.angle,
-        groupId,
-      },
-    );
-  }
-  if (entity.type === 'HATCH') {
-    return new HatchEntity(
-      entity.boundary.map((point) => offsetPoint(point, vector)),
-      {
-        layer: entity.layer,
-        lineStyle: entity.lineStyle,
-        lineType: entity.lineType,
-        lineColor: entity.lineColor,
-        gripIndices: entity.gripIndices,
-        curveGroups: entity.curveGroups,
-        loops: (entity.loops || [entity.boundary]).map((loop) =>
-          loop.map((point) => offsetPoint(point, vector))),
-      },
-    );
-  }
-
-  if (entity.type === 'DIMENSION') {
-    return new DimensionEntity(
-      entity.kind,
-      entity.points.map((point) => offsetPoint(point, vector)),
-      offsetPoint(entity.placement, vector),
-      {
-        layer: entity.layer,
-        lineColor: entity.lineColor,
-        dimensionStyle: entity.dimensionStyle,
-        textPosition: entity.textPosition ? offsetPoint(entity.textPosition, vector) : null,
-      },
-    );
-  }
-
-  if (entity.type === 'INSERT') {
-    return new BlockReferenceEntity(
-      options.definition || entity.definition,
-      offsetPoint(entity.insertionPoint, vector),
-      {
-        blockName: entity.blockName,
-        layer: entity.layer,
-        lineStyle: entity.lineStyle,
-        lineType: entity.lineType,
-        lineColor: entity.lineColor,
-        rotation: entity.rotation,
-        scaleX: entity.scaleX,
-        scaleY: entity.scaleY,
-      },
-    );
-  }
-
-  return null;
-}
-
-function cloneEntity(entity, options = {}) {
-  return cloneEntityWithOffset(entity, { x: 0, y: 0 }, options);
-}
-
-function cloneEntitiesWithOffset(entities, vector, options = {}) {
-  const groupMap = new Map();
-  return entities
-    .map((entity) => {
-      let groupId = entity.groupId || null;
-      if (options.remapGroups && groupId) {
-        if (!groupMap.has(groupId)) {
-          groupMap.set(groupId, createEntityGroupId('polyline'));
-        }
-        groupId = groupMap.get(groupId);
-      }
-      return cloneEntityWithOffset(entity, vector, { groupId });
-    })
-    .filter(Boolean);
-}
-
-function moveEntityByVector(entity, vector) {
-  if (entity.type === 'LINE') {
-    entity.start = offsetPoint(entity.start, vector);
-    entity.end = offsetPoint(entity.end, vector);
-    return true;
-  }
-
-  if (entity.type === 'CIRCLE' || entity.type === 'ARC') {
-    entity.center = offsetPoint(entity.center, vector);
-    return true;
-  }
-
-  if (entity.type === 'TEXT') {
-    entity.insertionPoint = offsetPoint(entity.insertionPoint, vector);
-    return true;
-  }
-  if (entity.type === 'HATCH') {
-    entity.loops = (entity.loops || [entity.boundary]).map((loop) =>
-      loop.map((point) => offsetPoint(point, vector)));
-    entity.boundary = entity.loops[0];
-    return true;
-  }
-  if (entity.type === 'POLYLINE') {
-    entity.vertices = entity.vertices.map((point) => offsetPoint(point, vector));
-    entity.segments.forEach((segment) => {
-      if (segment.center) {
-        segment.center = offsetPoint(segment.center, vector);
-      }
-    });
-    return true;
-  }
-  if (entity.type === 'DIMENSION') {
-    entity.points = entity.points.map((point) => offsetPoint(point, vector));
-    entity.placement = offsetPoint(entity.placement, vector);
-    if (entity.textPosition) {
-      entity.textPosition = offsetPoint(entity.textPosition, vector);
-    }
-    return true;
-  }
-  if (entity.type === 'INSERT') {
-    entity.insertionPoint = offsetPoint(entity.insertionPoint, vector);
-    return true;
-  }
-
-  return false;
-}
-
-function rotatePointAround(point, basePoint, angleDegrees) {
-  const angle = -angleDegrees * Math.PI / 180;
-  const cosine = Math.cos(angle);
-  const sine = Math.sin(angle);
-  const deltaX = point.x - basePoint.x;
-  const deltaY = point.y - basePoint.y;
-  return {
-    x: basePoint.x + deltaX * cosine - deltaY * sine,
-    y: basePoint.y + deltaX * sine + deltaY * cosine,
-  };
-}
-
-function rotateEntityByAngle(entity, basePoint, angleDegrees) {
-  if (entity.type === 'LINE') {
-    entity.start = rotatePointAround(entity.start, basePoint, angleDegrees);
-    entity.end = rotatePointAround(entity.end, basePoint, angleDegrees);
-    return true;
-  }
-
-  if (entity.type === 'CIRCLE' || entity.type === 'ARC') {
-    entity.center = rotatePointAround(entity.center, basePoint, angleDegrees);
-    if (entity.type === 'ARC') {
-      const canvasAngle = -angleDegrees * Math.PI / 180;
-      entity.startAngle = normalizeAngle(entity.startAngle + canvasAngle);
-      entity.endAngle = normalizeAngle(entity.endAngle + canvasAngle);
-    }
-    return true;
-  }
-
-  if (entity.type === 'TEXT') {
-    entity.insertionPoint = rotatePointAround(entity.insertionPoint, basePoint, angleDegrees);
-    entity.angle += angleDegrees;
-    return true;
-  }
-  if (entity.type === 'HATCH') {
-    entity.loops = (entity.loops || [entity.boundary]).map((loop) => loop.map((point) =>
-      rotatePointAround(point, basePoint, angleDegrees)));
-    entity.boundary = entity.loops[0];
-    return true;
-  }
-  if (entity.type === 'POLYLINE') {
-    entity.vertices = entity.vertices.map((point) => rotatePointAround(point, basePoint, angleDegrees));
-    entity.segments.forEach((segment) => {
-      if (segment.center) {
-        segment.center = rotatePointAround(segment.center, basePoint, angleDegrees);
-      }
-    });
-    return true;
-  }
-  if (entity.type === 'DIMENSION') {
-    entity.points = entity.points.map((point) => rotatePointAround(point, basePoint, angleDegrees));
-    entity.placement = rotatePointAround(entity.placement, basePoint, angleDegrees);
-    if (entity.textPosition) {
-      entity.textPosition = rotatePointAround(entity.textPosition, basePoint, angleDegrees);
-    }
-    if (entity.kind === 'horizontal' || entity.kind === 'vertical') {
-      entity.kind = 'aligned';
-    }
-    return true;
-  }
-  if (entity.type === 'INSERT') {
-    entity.insertionPoint = rotatePointAround(entity.insertionPoint, basePoint, angleDegrees);
-    entity.rotation += angleDegrees;
-    return true;
-  }
-
-  return false;
-}
-
-function mirrorPointAcrossAxis(point, firstPoint, secondPoint) {
-  const axis = normalizedVector(firstPoint, secondPoint);
-  if (!axis) {
-    return null;
-  }
-  const delta = { x: point.x - firstPoint.x, y: point.y - firstPoint.y };
-  const projection = dotProduct(delta, axis);
-  const foot = {
-    x: firstPoint.x + axis.x * projection,
-    y: firstPoint.y + axis.y * projection,
-  };
-  return { x: foot.x * 2 - point.x, y: foot.y * 2 - point.y };
-}
-
-function mirrorAngleAcrossAxis(angle, firstPoint, secondPoint) {
-  const origin = mirrorPointAcrossAxis({ x: 0, y: 0 }, firstPoint, secondPoint);
-  const directionPoint = mirrorPointAcrossAxis(
-    { x: Math.cos(angle), y: Math.sin(angle) },
-    firstPoint,
-    secondPoint,
-  );
-  return origin && directionPoint ? angleOfPoint(origin, directionPoint) : angle;
-}
-
-function mirrorEntityAcrossAxis(entity, firstPoint, secondPoint) {
-  const mirrorPoint = (point) => mirrorPointAcrossAxis(point, firstPoint, secondPoint);
-  if (!mirrorPoint(firstPoint)) {
-    return false;
-  }
-  if (entity.type === 'LINE') {
-    entity.start = mirrorPoint(entity.start);
-    entity.end = mirrorPoint(entity.end);
-  }
-  else if (entity.type === 'CIRCLE' || entity.type === 'ARC') {
-    entity.center = mirrorPoint(entity.center);
-    if (entity.type === 'ARC') {
-      entity.startAngle = mirrorAngleAcrossAxis(entity.startAngle, firstPoint, secondPoint);
-      entity.endAngle = mirrorAngleAcrossAxis(entity.endAngle, firstPoint, secondPoint);
-      entity.clockwise = entity.clockwise === false;
-    }
-  }
-  else if (entity.type === 'POLYLINE') {
-    entity.vertices = entity.vertices.map(mirrorPoint);
-    entity.segments.forEach((segment) => {
-      if (segment.center) {
-        segment.center = mirrorPoint(segment.center);
-        segment.clockwise = segment.clockwise === false;
-      }
-    });
-  }
-  else if (entity.type === 'TEXT') {
-    const angle = -entity.angle * Math.PI / 180;
-    entity.insertionPoint = mirrorPoint(entity.insertionPoint);
-    const mirroredAngle = mirrorAngleAcrossAxis(angle, firstPoint, secondPoint);
-    entity.angle = -mirroredAngle * 180 / Math.PI;
-  }
-  else if (entity.type === 'HATCH') {
-    entity.loops = (entity.loops || [entity.boundary]).map((loop) => loop.map(mirrorPoint));
-    entity.boundary = entity.loops[0];
-  }
-  else if (entity.type === 'DIMENSION') {
-    entity.points = entity.points.map(mirrorPoint);
-    entity.placement = mirrorPoint(entity.placement);
-    if (entity.textPosition) {
-      entity.textPosition = mirrorPoint(entity.textPosition);
-    }
-    if (entity.kind === 'horizontal' || entity.kind === 'vertical') {
-      const direction = normalizedVector(entity.points[0], entity.points[1]);
-      entity.kind = Math.abs(direction?.x || 0) <= SNAP_THRESHOLD
-        ? 'vertical'
-        : Math.abs(direction?.y || 0) <= SNAP_THRESHOLD ? 'horizontal' : 'aligned';
-    }
-  }
-  else if (entity.type === 'INSERT') {
-    const oldInsertion = { ...entity.insertionPoint };
-    const angle = -entity.rotation * Math.PI / 180;
-    const oldXAxis = {
-      x: oldInsertion.x + Math.cos(angle),
-      y: oldInsertion.y + Math.sin(angle),
-    };
-    entity.insertionPoint = mirrorPoint(oldInsertion);
-    const mirroredXAxis = mirrorPoint(oldXAxis);
-    entity.rotation = -angleOfPoint(entity.insertionPoint, mirroredXAxis) * 180 / Math.PI;
-    entity.scaleY *= -1;
-  }
-  else {
-    return false;
-  }
-  return true;
-}
-
-function rotationAngleFromPoint(basePoint, point, orthoEnabled = false) {
-  if (!basePoint || !point || distance(basePoint, point) <= SNAP_THRESHOLD) {
-    return 0;
-  }
-  const angle = -Math.atan2(point.y - basePoint.y, point.x - basePoint.x) * 180 / Math.PI;
-  return orthoEnabled ? Math.round(angle / 90) * 90 : angle;
-}
+const {
+  cloneBlockDefinition,
+  cloneEntitiesWithOffset,
+  cloneEntity,
+  cloneEntityWithOffset,
+  expandBlockReferenceEntities,
+  transformedBlockContents,
+} = createEntityTransformations({
+  ArcEntity,
+  BlockReferenceEntity,
+  CircleEntity,
+  DimensionEntity,
+  HatchEntity,
+  LineEntity,
+  PolylineEntity,
+  TextEntity,
+  createEntityGroupId,
+});
 
 class CadDocument {
   constructor() {
@@ -2816,10 +2381,6 @@ class CadDocument {
   isSelected(entity) {
     return this.selectedEntities.has(entity);
   }
-}
-
-function dotProduct(first, second) {
-  return first.x * second.x + first.y * second.y;
 }
 
 function filletRayDirection(line, intersection, pickPoint) {
