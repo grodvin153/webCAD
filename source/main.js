@@ -56,10 +56,7 @@ import {
   entityArcSweep,
   entityMidpoint,
   expandBounds,
-  infiniteLineLineIntersection,
-  infiniteLineSegmentIntersection,
   lineParameter,
-  lineSegmentIntersection,
   mergeBounds,
   normalizeAngle,
   normalizeBoundsFromPoints,
@@ -78,6 +75,17 @@ import {
   TWO_PI,
   uniqueSortedParameters,
 } from './geometry.js';
+import {
+  circleCircleIntersectionPoints,
+  entityIntersectionPoints as intersectEntities,
+  fullCircleBoundaryIntersectionPoints as intersectFullCircleBoundary,
+  infiniteLineCircularIntersectionPoints,
+  infiniteLineLineIntersection,
+  infiniteLineSegmentIntersection,
+  isCircularEntity,
+  lineSegmentIntersection,
+  pointOnCircularEntity,
+} from './intersections.js';
 
 const canvas = document.getElementById('cad-canvas');
 const selectToolButton = document.getElementById('tool-select');
@@ -249,45 +257,6 @@ function snapPoint(point, step = GRID_BASE) {
     x: snap(point.x, step),
     y: snap(point.y, step),
   };
-}
-
-function infiniteLineCircularIntersectionPoints(axisPoint, axisDirection, entity, respectArc = true) {
-  if (!axisPoint || !axisDirection || !isCircularEntity(entity)) {
-    return [];
-  }
-
-  const a = axisDirection.x * axisDirection.x + axisDirection.y * axisDirection.y;
-  if (a <= SNAP_THRESHOLD) {
-    return [];
-  }
-
-  const fromCenterX = axisPoint.x - entity.center.x;
-  const fromCenterY = axisPoint.y - entity.center.y;
-  const b = 2 * (fromCenterX * axisDirection.x + fromCenterY * axisDirection.y);
-  const c = fromCenterX * fromCenterX + fromCenterY * fromCenterY - entity.radius * entity.radius;
-  const discriminant = b * b - 4 * a * c;
-  if (discriminant < -SNAP_THRESHOLD) {
-    return [];
-  }
-
-  if (Math.abs(discriminant) <= SNAP_THRESHOLD) {
-    const factor = -b / (2 * a);
-    return [{
-      x: axisPoint.x + axisDirection.x * factor,
-      y: axisPoint.y + axisDirection.y * factor,
-    }].filter((point) => !respectArc || pointOnCircularEntity(point, entity));
-  }
-
-  const root = Math.sqrt(discriminant);
-  return [
-    (-b - root) / (2 * a),
-    (-b + root) / (2 * a),
-  ]
-    .map((factor) => ({
-      x: axisPoint.x + axisDirection.x * factor,
-      y: axisPoint.y + axisDirection.y * factor,
-    }))
-    .filter((point) => !respectArc || pointOnCircularEntity(point, entity));
 }
 
 function addSnapCandidate(point, candidate, tolerance, currentBest) {
@@ -1599,144 +1568,12 @@ function polylineReferencePoints(entity) {
   return candidates;
 }
 
-function lineCircleIntersectionPoints(line, circle) {
-  const deltaX = line.end.x - line.start.x;
-  const deltaY = line.end.y - line.start.y;
-  const fromCenterX = line.start.x - circle.center.x;
-  const fromCenterY = line.start.y - circle.center.y;
-  const a = deltaX * deltaX + deltaY * deltaY;
-  const b = 2 * (fromCenterX * deltaX + fromCenterY * deltaY);
-  const c = fromCenterX * fromCenterX + fromCenterY * fromCenterY - circle.radius * circle.radius;
-  const discriminant = b * b - 4 * a * c;
-
-  if (a <= SNAP_THRESHOLD || discriminant < -SNAP_THRESHOLD) {
-    return [];
-  }
-
-  if (Math.abs(discriminant) <= SNAP_THRESHOLD) {
-    const parameter = -b / (2 * a);
-    if (parameter < -SNAP_THRESHOLD || parameter > 1 + SNAP_THRESHOLD) {
-      return [];
-    }
-    return [pointAtLineParameter(line, clamp(parameter, 0, 1))];
-  }
-
-  const root = Math.sqrt(discriminant);
-  return [
-    (-b - root) / (2 * a),
-    (-b + root) / (2 * a),
-  ]
-    .filter((parameter) => parameter >= -SNAP_THRESHOLD && parameter <= 1 + SNAP_THRESHOLD)
-    .map((parameter) => pointAtLineParameter(line, clamp(parameter, 0, 1)));
-}
-
-function circleCircleIntersectionPoints(first, second) {
-  const centerDistance = distance(first.center, second.center);
-  if (
-    centerDistance <= SNAP_THRESHOLD ||
-    centerDistance > first.radius + second.radius + SNAP_THRESHOLD ||
-    centerDistance < Math.abs(first.radius - second.radius) - SNAP_THRESHOLD
-  ) {
-    return [];
-  }
-
-  const a = (
-    first.radius * first.radius -
-    second.radius * second.radius +
-    centerDistance * centerDistance
-  ) / (2 * centerDistance);
-  const heightSquared = first.radius * first.radius - a * a;
-  if (heightSquared < -SNAP_THRESHOLD) {
-    return [];
-  }
-
-  const baseX = first.center.x + a * (second.center.x - first.center.x) / centerDistance;
-  const baseY = first.center.y + a * (second.center.y - first.center.y) / centerDistance;
-  if (Math.abs(heightSquared) <= SNAP_THRESHOLD) {
-    return [{ x: baseX, y: baseY }];
-  }
-
-  const height = Math.sqrt(heightSquared);
-  const offsetX = -(second.center.y - first.center.y) * height / centerDistance;
-  const offsetY = (second.center.x - first.center.x) * height / centerDistance;
-  return [
-    { x: baseX + offsetX, y: baseY + offsetY },
-    { x: baseX - offsetX, y: baseY - offsetY },
-  ];
-}
-
-function isCircularEntity(entity) {
-  return entity?.type === 'CIRCLE' || entity?.type === 'ARC';
-}
-
-function pointOnCircularEntity(point, entity) {
-  return entity.type === 'CIRCLE' || angleOnArc(angleOfPoint(entity.center, point), entity);
-}
-
-function lineFullCircleIntersectionPoints(line, circularEntity) {
-  const direction = {
-    x: line.end.x - line.start.x,
-    y: line.end.y - line.start.y,
-  };
-  return infiniteLineCircularIntersectionPoints(line.start, direction, circularEntity, false);
-}
-
 function fullCircleBoundaryIntersectionPoints(circularEntity, boundary) {
-  if (!isCircularEntity(circularEntity) || !boundary || boundary === circularEntity) {
-    return [];
-  }
-
-  if (boundary.type === 'POLYLINE') {
-    return primitiveEntityParts(boundary)
-      .flatMap((part) => fullCircleBoundaryIntersectionPoints(circularEntity, part));
-  }
-
-  if (boundary.type === 'LINE') {
-    return lineFullCircleIntersectionPoints(boundary, circularEntity);
-  }
-
-  if (isCircularEntity(boundary)) {
-    return circleCircleIntersectionPoints(circularEntity, boundary);
-  }
-
-  return [];
+  return intersectFullCircleBoundary(circularEntity, boundary, primitiveEntityParts);
 }
 
 function entityIntersectionPoints(first, second) {
-  if (first?.type === 'POLYLINE' || second?.type === 'POLYLINE') {
-    const intersections = [];
-    for (const firstPart of primitiveEntityParts(first)) {
-      for (const secondPart of primitiveEntityParts(second)) {
-        if (firstPart === first && secondPart === second) {
-          continue;
-        }
-        intersections.push(...entityIntersectionPoints(firstPart, secondPart));
-      }
-    }
-    return intersections.filter((point, index, points) =>
-      points.findIndex((candidate) => distance(candidate, point) <= SNAP_THRESHOLD) === index);
-  }
-  if (first.type === 'LINE' && second.type === 'LINE') {
-    const intersection = lineSegmentIntersection(first, second);
-    return intersection ? [intersection] : [];
-  }
-
-  if (first.type === 'LINE' && isCircularEntity(second)) {
-    return lineCircleIntersectionPoints(first, second)
-      .filter((point) => pointOnCircularEntity(point, second));
-  }
-
-  if (isCircularEntity(first) && second.type === 'LINE') {
-    return lineCircleIntersectionPoints(second, first)
-      .filter((point) => pointOnCircularEntity(point, first));
-  }
-
-  if (isCircularEntity(first) && isCircularEntity(second)) {
-    return circleCircleIntersectionPoints(first, second)
-      .filter((point) => pointOnCircularEntity(point, first) && pointOnCircularEntity(point, second));
-  }
-
-  return [];
+  return intersectEntities(first, second, primitiveEntityParts);
 }
 
 function entityDistanceToPoint(entity, point) {

@@ -47,35 +47,6 @@ export function normalizedVector(start, end) {
     : null;
 }
 
-export function lineSegmentIntersection(first, second) {
-  const firstDeltaX = first.end.x - first.start.x;
-  const firstDeltaY = first.end.y - first.start.y;
-  const secondDeltaX = second.end.x - second.start.x;
-  const secondDeltaY = second.end.y - second.start.y;
-  const denominator = firstDeltaX * secondDeltaY - firstDeltaY * secondDeltaX;
-  if (Math.abs(denominator) <= SNAP_THRESHOLD) {
-    return null;
-  }
-
-  const startDeltaX = second.start.x - first.start.x;
-  const startDeltaY = second.start.y - first.start.y;
-  const firstFactor = (startDeltaX * secondDeltaY - startDeltaY * secondDeltaX) / denominator;
-  const secondFactor = (startDeltaX * firstDeltaY - startDeltaY * firstDeltaX) / denominator;
-  if (
-    firstFactor < -SNAP_THRESHOLD ||
-    firstFactor > 1 + SNAP_THRESHOLD ||
-    secondFactor < -SNAP_THRESHOLD ||
-    secondFactor > 1 + SNAP_THRESHOLD
-  ) {
-    return null;
-  }
-
-  return {
-    x: first.start.x + firstFactor * firstDeltaX,
-    y: first.start.y + firstFactor * firstDeltaY,
-  };
-}
-
 export function lineParameter(entity, point) {
   const deltaX = entity.end.x - entity.start.x;
   const deltaY = entity.end.y - entity.start.y;
@@ -223,50 +194,6 @@ export function perpendicularFootOnSegment(origin, entity) {
   return {
     x: entity.start.x + clampedFactor * segmentX,
     y: entity.start.y + clampedFactor * segmentY,
-  };
-}
-
-export function infiniteLineSegmentIntersection(axisPoint, axisDirection, entity) {
-  if (!axisPoint || !axisDirection) {
-    return null;
-  }
-
-  const segmentX = entity.end.x - entity.start.x;
-  const segmentY = entity.end.y - entity.start.y;
-  const denominator = axisDirection.x * segmentY - axisDirection.y * segmentX;
-  if (Math.abs(denominator) <= SNAP_THRESHOLD) {
-    return null;
-  }
-
-  const startDeltaX = entity.start.x - axisPoint.x;
-  const startDeltaY = entity.start.y - axisPoint.y;
-  const segmentFactor = (startDeltaX * axisDirection.y - startDeltaY * axisDirection.x) / denominator;
-  if (segmentFactor < -SNAP_THRESHOLD || segmentFactor > 1 + SNAP_THRESHOLD) {
-    return null;
-  }
-
-  return {
-    x: entity.start.x + segmentFactor * segmentX,
-    y: entity.start.y + segmentFactor * segmentY,
-  };
-}
-
-export function infiniteLineLineIntersection(firstPoint, firstDirection, secondPoint, secondDirection) {
-  if (!firstPoint || !firstDirection || !secondPoint || !secondDirection) {
-    return null;
-  }
-
-  const denominator = firstDirection.x * secondDirection.y - firstDirection.y * secondDirection.x;
-  if (Math.abs(denominator) <= SNAP_THRESHOLD) {
-    return null;
-  }
-
-  const startDeltaX = secondPoint.x - firstPoint.x;
-  const startDeltaY = secondPoint.y - firstPoint.y;
-  const firstFactor = (startDeltaX * secondDirection.y - startDeltaY * secondDirection.x) / denominator;
-  return {
-    x: firstPoint.x + firstDirection.x * firstFactor,
-    y: firstPoint.y + firstDirection.y * firstFactor,
   };
 }
 
