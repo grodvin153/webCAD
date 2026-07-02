@@ -35,7 +35,37 @@ import {
   Y_AXIS_COLOR,
 } from './cad-styles.js';
 import { commandLabel, REPEATABLE_COMMANDS } from './commands.js';
-import { entityMidpoint, orthoPoint } from './geometry.js';
+import {
+  angleInSweep,
+  angleOfPoint,
+  angleOnArc,
+  angleParameter,
+  arcMidAngle,
+  arcSweep,
+  circularParameter,
+  clamp,
+  closestPointOnLineSegment,
+  directedArcSweep,
+  distance,
+  distancePointToInfiniteLine,
+  entityArcSweep,
+  entityMidpoint,
+  infiniteLineLineIntersection,
+  infiniteLineSegmentIntersection,
+  lineParameter,
+  lineSegmentIntersection,
+  normalizeAngle,
+  normalizedVector,
+  offsetPoint,
+  orthoPoint,
+  perpendicularFootOnSegment,
+  pointAtCircleAngle,
+  pointAtCircularParameter,
+  pointAtLineParameter,
+  rawLineParameter,
+  TWO_PI,
+  uniqueSortedParameters,
+} from './geometry.js';
 
 const canvas = document.getElementById('cad-canvas');
 const selectToolButton = document.getElementById('tool-select');
@@ -183,7 +213,6 @@ let MIN_VIEW_SCALE = DRAWING_PROFILES.engineering.minViewScale;
 let MAX_VIEW_SCALE = DRAWING_PROFILES.engineering.maxViewScale;
 let DEFAULT_DRAWING_SIZE = DRAWING_PROFILES.engineering.defaultDrawingSize;
 let UNITS_LABEL = DRAWING_PROFILES.engineering.unitsLabel;
-const TWO_PI = Math.PI * 2;
 const DEFAULT_LAYER = {
   name: 'Normal',
   lineStyle: 'normal',
@@ -199,10 +228,6 @@ function createEntityGroupId(prefix = 'group') {
   return id;
 }
 
-function clamp(value, min, max) {
-  return Math.min(max, Math.max(min, value));
-}
-
 function snap(value, step = GRID_BASE) {
   return Math.round(value / step) * step;
 }
@@ -211,236 +236,6 @@ function snapPoint(point, step = GRID_BASE) {
   return {
     x: snap(point.x, step),
     y: snap(point.y, step),
-  };
-}
-
-function offsetPoint(point, vector) {
-  return {
-    x: point.x + vector.x,
-    y: point.y + vector.y,
-  };
-}
-
-function lineSegmentIntersection(first, second) {
-  const firstDeltaX = first.end.x - first.start.x;
-  const firstDeltaY = first.end.y - first.start.y;
-  const secondDeltaX = second.end.x - second.start.x;
-  const secondDeltaY = second.end.y - second.start.y;
-  const denominator = firstDeltaX * secondDeltaY - firstDeltaY * secondDeltaX;
-  if (Math.abs(denominator) <= SNAP_THRESHOLD) {
-    return null;
-  }
-
-  const startDeltaX = second.start.x - first.start.x;
-  const startDeltaY = second.start.y - first.start.y;
-  const firstFactor = (startDeltaX * secondDeltaY - startDeltaY * secondDeltaX) / denominator;
-  const secondFactor = (startDeltaX * firstDeltaY - startDeltaY * firstDeltaX) / denominator;
-  if (
-    firstFactor < -SNAP_THRESHOLD ||
-    firstFactor > 1 + SNAP_THRESHOLD ||
-    secondFactor < -SNAP_THRESHOLD ||
-    secondFactor > 1 + SNAP_THRESHOLD
-  ) {
-    return null;
-  }
-
-  return {
-    x: first.start.x + firstFactor * firstDeltaX,
-    y: first.start.y + firstFactor * firstDeltaY,
-  };
-}
-
-function lineParameter(entity, point) {
-  const deltaX = entity.end.x - entity.start.x;
-  const deltaY = entity.end.y - entity.start.y;
-  const lengthSquared = deltaX * deltaX + deltaY * deltaY;
-  if (lengthSquared <= SNAP_THRESHOLD) {
-    return 0;
-  }
-  return clamp(
-    ((point.x - entity.start.x) * deltaX + (point.y - entity.start.y) * deltaY) / lengthSquared,
-    0,
-    1,
-  );
-}
-
-function rawLineParameter(entity, point) {
-  const deltaX = entity.end.x - entity.start.x;
-  const deltaY = entity.end.y - entity.start.y;
-  const lengthSquared = deltaX * deltaX + deltaY * deltaY;
-  if (lengthSquared <= SNAP_THRESHOLD) {
-    return 0;
-  }
-  return ((point.x - entity.start.x) * deltaX + (point.y - entity.start.y) * deltaY) / lengthSquared;
-}
-
-function pointAtLineParameter(entity, parameter) {
-  return {
-    x: entity.start.x + (entity.end.x - entity.start.x) * parameter,
-    y: entity.start.y + (entity.end.y - entity.start.y) * parameter,
-  };
-}
-
-function closestPointOnLineSegment(entity, point) {
-  return pointAtLineParameter(entity, lineParameter(entity, point));
-}
-
-function circularParameter(entity, point) {
-  const angle = angleOfPoint(entity.center, point);
-  if (entity.type === 'CIRCLE') {
-    return angleParameter(angle);
-  }
-
-  const sweep = entityArcSweep(entity);
-  if (sweep <= SNAP_THRESHOLD) {
-    return 0;
-  }
-  const angleDistance = entity.clockwise === false
-    ? normalizeAngle(entity.startAngle - angle)
-    : normalizeAngle(angle - entity.startAngle);
-  return clamp(angleDistance / sweep, 0, 1);
-}
-
-function pointAtCircularParameter(entity, parameter) {
-  const angle = entity.type === 'CIRCLE'
-    ? parameter * TWO_PI
-    : entity.startAngle + (entity.clockwise === false ? -1 : 1) * entityArcSweep(entity) * parameter;
-  return pointAtCircleAngle(entity, angle);
-}
-
-function uniqueSortedParameters(parameters) {
-  const sorted = parameters
-    .map((parameter) => clamp(parameter, 0, 1))
-    .sort((first, second) => first - second);
-  const unique = [];
-  for (const parameter of sorted) {
-    if (!unique.length || Math.abs(parameter - unique[unique.length - 1]) > SNAP_THRESHOLD) {
-      unique.push(parameter);
-    }
-  }
-  return unique;
-}
-
-function normalizeAngle(angle) {
-  const normalized = angle % TWO_PI;
-  return normalized < 0 ? normalized + TWO_PI : normalized;
-}
-
-function angleParameter(angle) {
-  return normalizeAngle(angle) / TWO_PI;
-}
-
-function pointAtCircleAngle(entity, angle) {
-  return {
-    x: entity.center.x + Math.cos(angle) * entity.radius,
-    y: entity.center.y + Math.sin(angle) * entity.radius,
-  };
-}
-
-function angleOfPoint(center, point) {
-  return normalizeAngle(Math.atan2(point.y - center.y, point.x - center.x));
-}
-
-function arcSweep(startAngle, endAngle) {
-  return normalizeAngle(endAngle - startAngle);
-}
-
-function directedArcSweep(startAngle, endAngle, clockwise = true) {
-  return clockwise
-    ? arcSweep(startAngle, endAngle)
-    : normalizeAngle(startAngle - endAngle);
-}
-
-function entityArcSweep(entity) {
-  return directedArcSweep(entity.startAngle, entity.endAngle, entity.clockwise !== false);
-}
-
-function angleInSweep(angle, startAngle, endAngle) {
-  return normalizeAngle(angle - startAngle) <= arcSweep(startAngle, endAngle) + SNAP_THRESHOLD;
-}
-
-function angleOnArc(angle, entity) {
-  if (entity.type === 'CIRCLE') {
-    return true;
-  }
-  return entity.clockwise === false
-    ? normalizeAngle(entity.startAngle - angle) <= entityArcSweep(entity) + SNAP_THRESHOLD
-    : angleInSweep(angle, entity.startAngle, entity.endAngle);
-}
-
-function arcMidAngle(entity) {
-  const direction = entity.clockwise === false ? -1 : 1;
-  return normalizeAngle(entity.startAngle + direction * entityArcSweep(entity) * 0.5);
-}
-
-function perpendicularFootOnSegment(origin, entity) {
-  if (!origin) {
-    return null;
-  }
-
-  const segmentX = entity.end.x - entity.start.x;
-  const segmentY = entity.end.y - entity.start.y;
-  const lengthSquared = segmentX * segmentX + segmentY * segmentY;
-  if (lengthSquared <= SNAP_THRESHOLD) {
-    return null;
-  }
-
-  const factor = (
-    (origin.x - entity.start.x) * segmentX +
-    (origin.y - entity.start.y) * segmentY
-  ) / lengthSquared;
-  if (factor < -SNAP_THRESHOLD || factor > 1 + SNAP_THRESHOLD) {
-    return null;
-  }
-
-  const clampedFactor = clamp(factor, 0, 1);
-  return {
-    x: entity.start.x + clampedFactor * segmentX,
-    y: entity.start.y + clampedFactor * segmentY,
-  };
-}
-
-function infiniteLineSegmentIntersection(axisPoint, axisDirection, entity) {
-  if (!axisPoint || !axisDirection) {
-    return null;
-  }
-
-  const segmentX = entity.end.x - entity.start.x;
-  const segmentY = entity.end.y - entity.start.y;
-  const denominator = axisDirection.x * segmentY - axisDirection.y * segmentX;
-  if (Math.abs(denominator) <= SNAP_THRESHOLD) {
-    return null;
-  }
-
-  const startDeltaX = entity.start.x - axisPoint.x;
-  const startDeltaY = entity.start.y - axisPoint.y;
-  const segmentFactor = (startDeltaX * axisDirection.y - startDeltaY * axisDirection.x) / denominator;
-  if (segmentFactor < -SNAP_THRESHOLD || segmentFactor > 1 + SNAP_THRESHOLD) {
-    return null;
-  }
-
-  return {
-    x: entity.start.x + segmentFactor * segmentX,
-    y: entity.start.y + segmentFactor * segmentY,
-  };
-}
-
-function infiniteLineLineIntersection(firstPoint, firstDirection, secondPoint, secondDirection) {
-  if (!firstPoint || !firstDirection || !secondPoint || !secondDirection) {
-    return null;
-  }
-
-  const denominator = firstDirection.x * secondDirection.y - firstDirection.y * secondDirection.x;
-  if (Math.abs(denominator) <= SNAP_THRESHOLD) {
-    return null;
-  }
-
-  const startDeltaX = secondPoint.x - firstPoint.x;
-  const startDeltaY = secondPoint.y - firstPoint.y;
-  const firstFactor = (startDeltaX * secondDirection.y - startDeltaY * secondDirection.x) / denominator;
-  return {
-    x: firstPoint.x + firstDirection.x * firstFactor,
-    y: firstPoint.y + firstDirection.y * firstFactor,
   };
 }
 
@@ -481,17 +276,6 @@ function infiniteLineCircularIntersectionPoints(axisPoint, axisDirection, entity
       y: axisPoint.y + axisDirection.y * factor,
     }))
     .filter((point) => !respectArc || pointOnCircularEntity(point, entity));
-}
-
-function distancePointToInfiniteLine(point, linePoint, direction) {
-  const length = Math.hypot(direction.x, direction.y);
-  if (length <= SNAP_THRESHOLD) {
-    return Infinity;
-  }
-  return Math.abs(
-    (point.x - linePoint.x) * direction.y -
-    (point.y - linePoint.y) * direction.x
-  ) / length;
 }
 
 function addSnapCandidate(point, candidate, tolerance, currentBest) {
@@ -988,10 +772,6 @@ function formatSnapType(type) {
   return 'Snap';
 }
 
-function distance(a, b) {
-  return Math.hypot(b.x - a.x, b.y - a.y);
-}
-
 function normalizeLineStyleId(value) {
   const normalized = String(value || '').toLowerCase();
   const byLayer = Object.values(LINE_STYLES).find(
@@ -1410,14 +1190,6 @@ function projectCenterToChordBisector(start, end, point) {
     x: midpoint.x + normal.x * offset,
     y: midpoint.y + normal.y * offset,
   };
-}
-
-function normalizedVector(start, end) {
-  const vector = { x: end.x - start.x, y: end.y - start.y };
-  const length = Math.hypot(vector.x, vector.y);
-  return length > SNAP_THRESHOLD
-    ? { x: vector.x / length, y: vector.y / length }
-    : null;
 }
 
 function polylineIncomingTangent(draft) {
