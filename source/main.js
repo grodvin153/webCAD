@@ -16,6 +16,24 @@ import {
   SPATIAL_MAX_QUERY_CELLS,
   VIEW_SCALE_FACTOR,
 } from './config.js';
+import {
+  BACKGROUND_COLOR,
+  CAD_TEXT_FONT,
+  DEFAULT_LINE_COLOR,
+  DEFAULT_LINE_STYLE,
+  DEFAULT_LINE_TYPE,
+  DIMENSION_STYLES,
+  DIMENSION_TOOLS,
+  LINE_COLOR,
+  LINE_STYLES,
+  LINE_TYPES,
+  PREVIEW_COLOR,
+  SELECTED_COLOR,
+  SNAP_COLOR,
+  SNAP_MARKER_SIZE,
+  X_AXIS_COLOR,
+  Y_AXIS_COLOR,
+} from './cad-styles.js';
 
 const canvas = document.getElementById('cad-canvas');
 const selectToolButton = document.getElementById('tool-select');
@@ -163,80 +181,7 @@ let MIN_VIEW_SCALE = DRAWING_PROFILES.engineering.minViewScale;
 let MAX_VIEW_SCALE = DRAWING_PROFILES.engineering.maxViewScale;
 let DEFAULT_DRAWING_SIZE = DRAWING_PROFILES.engineering.defaultDrawingSize;
 let UNITS_LABEL = DRAWING_PROFILES.engineering.unitsLabel;
-const BACKGROUND_COLOR = '#f8f7f2';
-const LINE_COLOR = '#18262a';
-const PREVIEW_COLOR = '#b64d1f';
-const SELECTED_COLOR = '#0f5d8c';
-const SNAP_COLOR = '#d05a1f';
-const SNAP_MARKER_SIZE = 16;
-const X_AXIS_COLOR = 'rgba(205, 55, 55, 0.62)';
-const Y_AXIS_COLOR = 'rgba(34, 145, 82, 0.62)';
-const DEFAULT_LINE_STYLE = 'normal';
-const DEFAULT_LINE_TYPE = 'continuous';
-const DEFAULT_LINE_COLOR = 'default';
 const TWO_PI = Math.PI * 2;
-const CAD_TEXT_FONT = '"Arial Narrow", "Liberation Sans Narrow", "Nimbus Sans Narrow", sans-serif';
-const LINE_STYLES = {
-  auxiliar: {
-    id: 'auxiliar',
-    label: 'Fino',
-    layer: 'AUXILIAR',
-    color: '#6f8085',
-    width: 2,
-    dxfLineWeight: 25,
-  },
-  normal: {
-    id: 'normal',
-    label: 'Medio',
-    layer: 'NORMAL',
-    color: LINE_COLOR,
-    width: 4,
-    dxfLineWeight: 50,
-  },
-  gruesa: {
-    id: 'gruesa',
-    label: 'Gruesa',
-    layer: 'GRUESA',
-    color: '#111f24',
-    width: 7,
-    dxfLineWeight: 80,
-  },
-};
-const DIMENSION_STYLES = {
-  normal: { id: 'normal', label: 'Normal', scale: 1.5 },
-  large: { id: 'large', label: 'Grande', scale: 2 },
-  xlarge: { id: 'xlarge', label: 'Muy grande', scale: 2.5 },
-  small: { id: 'small', label: 'Pequeño', scale: 1 },
-  tiny: { id: 'tiny', label: 'Muy pequeño', scale: 0.75 },
-};
-const DIMENSION_TOOLS = new Set([
-  'dimension-horizontal',
-  'dimension-vertical',
-  'dimension-aligned',
-  'dimension-angular',
-  'dimension-radius',
-  'dimension-diameter',
-]);
-const LINE_TYPES = {
-  continuous: {
-    id: 'continuous',
-    label: 'Continua',
-    dxfName: 'CONTINUOUS',
-    dash: [],
-  },
-  hidden: {
-    id: 'hidden',
-    label: 'Oculta',
-    dxfName: 'HIDDEN',
-    dash: [12, 7],
-  },
-  center: {
-    id: 'center',
-    label: 'Trazo y punto',
-    dxfName: 'CENTER',
-    dash: [18, 6, 2, 6],
-  },
-};
 const LINE_COLORS = {
   default: { id: 'default', label: 'Por defecto', color: null, aci: null },
   red: { id: 'red', label: 'Rojo', color: '#e53935', aci: 1 },
