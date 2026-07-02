@@ -1,13 +1,10 @@
 /*
- * webCAD - Entrada, coordenadas y resolucion de snaps
+ * webCAD - Captura y resolucion de snaps
  * Copyright (C) 2026 Gonzalo Rodriguez
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-import { SNAP_THRESHOLD } from './config.js';
 import {
-  angleInSweep,
-  angleOfPoint,
   arcMidAngle,
   boundsContainsPoint,
   boundsIntersectsBounds,
@@ -19,23 +16,13 @@ import {
   orthoPoint,
   perpendicularFootOnSegment,
   pointAtCircleAngle,
-} from './geometry.js';
+} from '../geometry.js';
 import {
   infiniteLineSegmentIntersection,
   isCircularEntity,
   pointOnCircularEntity,
-} from './intersections.js';
-
-export function snap(value, step) {
-  return Math.round(value / step) * step;
-}
-
-export function snapPoint(point, step) {
-  return {
-    x: snap(point.x, step),
-    y: snap(point.y, step),
-  };
-}
+} from '../intersections.js';
+import { snapPoint } from './coordinates.js';
 
 export function addSnapCandidate(point, candidate, tolerance, currentBest) {
   const snapDistance = distance(point, candidate.point);
@@ -390,162 +377,4 @@ export function createInputResolvers({
     resolveCursorPoint,
     resolvePointForState,
   };
-}
-
-export function parseDistanceInput(value) {
-  const normalized = value.replace(',', '.');
-  const distanceValue = Number(normalized);
-  return Number.isFinite(distanceValue) && distanceValue > 0 ? distanceValue : null;
-}
-
-export function parseAngleInput(value) {
-  const normalized = value.trim().replace(',', '.');
-  if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(normalized)) {
-    return null;
-  }
-  const angle = Number(normalized);
-  return Number.isFinite(angle) ? angle : null;
-}
-
-export function parseRelativeCoordinateInput(value) {
-  const match = value.trim().match(/^([+-]?(?:\d+(?:\.\d+)?|\.\d+))\s*,\s*([+-]?(?:\d+(?:\.\d+)?|\.\d+))$/);
-  if (!match) {
-    return null;
-  }
-
-  const x = Number(match[1]);
-  const y = Number(match[2]);
-  return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null;
-}
-
-export function pointFromRelativeCoordinates(origin, value) {
-  const relative = parseRelativeCoordinateInput(value);
-  return relative && origin
-    ? { x: origin.x + relative.x, y: origin.y + relative.y }
-    : null;
-}
-
-export function parseCopyMultiplier(value) {
-  const match = value.trim().match(/^x(\d+)$/i);
-  if (!match) {
-    return null;
-  }
-
-  const count = Number(match[1]);
-  return Number.isInteger(count) && count >= 2 ? count : null;
-}
-
-export function pointFromDistance(start, directionPoint, distanceValue) {
-  const deltaX = directionPoint.x - start.x;
-  const deltaY = directionPoint.y - start.y;
-  const directionLength = Math.hypot(deltaX, deltaY);
-  if (directionLength <= SNAP_THRESHOLD) {
-    return null;
-  }
-
-  return {
-    x: start.x + (deltaX / directionLength) * distanceValue,
-    y: start.y + (deltaY / directionLength) * distanceValue,
-  };
-}
-
-export function circleFromThreePoints(first, second, third) {
-  const determinant = 2 * (
-    first.x * (second.y - third.y) +
-    second.x * (third.y - first.y) +
-    third.x * (first.y - second.y)
-  );
-
-  if (Math.abs(determinant) <= SNAP_THRESHOLD) {
-    return null;
-  }
-
-  const firstSquared = first.x * first.x + first.y * first.y;
-  const secondSquared = second.x * second.x + second.y * second.y;
-  const thirdSquared = third.x * third.x + third.y * third.y;
-  const center = {
-    x: (
-      firstSquared * (second.y - third.y) +
-      secondSquared * (third.y - first.y) +
-      thirdSquared * (first.y - second.y)
-    ) / determinant,
-    y: (
-      firstSquared * (third.x - second.x) +
-      secondSquared * (first.x - third.x) +
-      thirdSquared * (second.x - first.x)
-    ) / determinant,
-  };
-  const radius = distance(center, first);
-
-  if (!Number.isFinite(radius) || radius <= SNAP_THRESHOLD) {
-    return null;
-  }
-
-  return { center, radius };
-}
-
-export function arcFromThreePoints(start, mid, end) {
-  const circle = circleFromThreePoints(start, mid, end);
-  if (!circle) {
-    return null;
-  }
-
-  const startAngle = angleOfPoint(circle.center, start);
-  const midAngle = angleOfPoint(circle.center, mid);
-  const endAngle = angleOfPoint(circle.center, end);
-  if (angleInSweep(midAngle, startAngle, endAngle)) {
-    return { ...circle, startAngle, endAngle };
-  }
-
-  return { ...circle, startAngle: endAngle, endAngle: startAngle };
-}
-
-export function arcFromCenterStartEnd(center, startPoint, endPoint) {
-  const radius = distance(center, startPoint);
-  if (radius <= SNAP_THRESHOLD) {
-    return null;
-  }
-
-  return {
-    center,
-    radius,
-    startAngle: angleOfPoint(center, startPoint),
-    endAngle: angleOfPoint(center, endPoint),
-  };
-}
-
-export function pointOnRadiusFromAngle(center, radius, anglePoint) {
-  const angle = angleOfPoint(center, anglePoint);
-  return pointAtCircleAngle({ center, radius }, angle);
-}
-
-export function formatNumber(value) {
-  if (!Number.isFinite(value)) {
-    return '0';
-  }
-  return Math.abs(value) >= 1000
-    ? value.toFixed(0)
-    : value.toFixed(2).replace(/\.00$/, '');
-}
-
-export function formatSnapType(type) {
-  if (type === 'endpoint') {
-    return 'Punto final';
-  }
-  if (type === 'midpoint') {
-    return 'Punto medio';
-  }
-  if (type === 'intersection') {
-    return 'Interseccion';
-  }
-  if (type === 'perpendicular') {
-    return 'Perpendicular';
-  }
-  if (type === 'center') {
-    return 'Centro';
-  }
-  if (type === 'quadrant') {
-    return 'Cuadrante';
-  }
-  return 'Snap';
 }

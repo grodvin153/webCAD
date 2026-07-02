@@ -84,21 +84,25 @@ import {
   pointOnCircularEntity,
 } from './intersections.js';
 import {
-  arcFromCenterStartEnd,
-  arcFromThreePoints,
-  circleFromThreePoints,
-  circularReferencePoints,
-  createInputResolvers,
   formatNumber,
   formatSnapType,
   parseAngleInput,
   parseCopyMultiplier,
   parseDistanceInput,
   parseRelativeCoordinateInput,
+} from './input/entry.js';
+import {
+  arcFromCenterStartEnd,
+  arcFromThreePoints,
+  circleFromThreePoints,
   pointFromDistance,
   pointFromRelativeCoordinates,
   pointOnRadiusFromAngle,
-} from './input.js';
+} from './input/coordinates.js';
+import {
+  circularReferencePoints,
+  createInputResolvers,
+} from './input/snaps.js';
 import {
   createEntityTransformations,
   entityCanExplode,
