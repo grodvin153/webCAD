@@ -9,7 +9,6 @@ import {
   DRAWING_PROFILES,
   FIT_PADDING,
   HISTORY_LIMIT,
-  REPEATABLE_COMMANDS,
   SNAP_THRESHOLD,
   SPATIAL_CELL_SIZE,
   SPATIAL_MAX_ENTITY_CELLS,
@@ -35,6 +34,7 @@ import {
   X_AXIS_COLOR,
   Y_AXIS_COLOR,
 } from './cad-styles.js';
+import { commandLabel, REPEATABLE_COMMANDS } from './commands.js';
 
 const canvas = document.getElementById('cad-canvas');
 const selectToolButton = document.getElementById('tool-select');
@@ -14323,41 +14323,6 @@ function setToolGroupOpen(groupElement, open) {
 
 function closeToolGroups() {
   setToolGroupOpen(null, false);
-}
-
-function commandLabel(command) {
-  const labels = {
-    line: 'Linea',
-    polyline: 'Polilinea',
-    rectangle: 'Rectangulo',
-    text: 'Texto',
-    hatch: 'Sombreado',
-    'circle-center': 'Circulo centro-radio',
-    'circle-3p': 'Circulo 3 puntos',
-    'arc-center-radius': 'Arco centro-radio',
-    'arc-3p': 'Arco 3 puntos',
-    'arc-center-start-end': 'Arco centro-inicio-final',
-    'block-create': 'Crear bloque',
-    'block-insert': 'Insertar bloque',
-    'dimension-horizontal': 'Cota horizontal',
-    'dimension-vertical': 'Cota vertical',
-    'dimension-aligned': 'Cota alineada',
-    'dimension-angular': 'Cota angular',
-    'dimension-radius': 'Cota de radio',
-    'dimension-diameter': 'Cota de diametro',
-    copy: 'Copiar',
-    move: 'Desplazar',
-    rotate: 'Girar',
-    mirror: 'Simetria',
-    'select-set': 'Seleccionar conjunto',
-    trim: 'Recortar',
-    extend: 'Alargar',
-    fillet: 'Empalme',
-    chamfer: 'Chaflan',
-    erase: 'Borrar',
-    explode: 'Descomponer',
-  };
-  return labels[command] || 'Comando';
 }
 
 function runCommand(command) {

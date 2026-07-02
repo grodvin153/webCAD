@@ -13,36 +13,6 @@ export const SPATIAL_MAX_ENTITY_CELLS = 256;
 export const SPATIAL_MAX_QUERY_CELLS = 12000;
 export const HISTORY_LIMIT = 50;
 
-export const REPEATABLE_COMMANDS = new Set([
-  'line',
-  'polyline',
-  'rectangle',
-  'text',
-  'hatch',
-  'circle-center',
-  'circle-3p',
-  'arc-center-radius',
-  'arc-3p',
-  'arc-center-start-end',
-  'dimension-horizontal',
-  'dimension-vertical',
-  'dimension-aligned',
-  'dimension-angular',
-  'dimension-radius',
-  'dimension-diameter',
-  'block-insert',
-  'copy',
-  'move',
-  'rotate',
-  'mirror',
-  'trim',
-  'extend',
-  'fillet',
-  'chamfer',
-  'erase',
-  'explode',
-]);
-
 export const DRAWING_PROFILES = {
   engineering: {
     id: 'engineering',
