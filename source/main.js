@@ -42,26 +42,38 @@ import {
   angleParameter,
   arcMidAngle,
   arcSweep,
+  boundsContainsBounds,
+  boundsContainsPoint,
+  boundsIntersectsBounds,
   circularParameter,
   clamp,
   closestPointOnLineSegment,
+  createBounds,
   directedArcSweep,
   distance,
   distancePointToInfiniteLine,
+  distancePointToSegment,
   entityArcSweep,
   entityMidpoint,
+  expandBounds,
   infiniteLineLineIntersection,
   infiniteLineSegmentIntersection,
   lineParameter,
   lineSegmentIntersection,
+  mergeBounds,
   normalizeAngle,
+  normalizeBoundsFromPoints,
   normalizedVector,
+  offsetBounds,
   offsetPoint,
   orthoPoint,
   perpendicularFootOnSegment,
+  pointInPolygon,
   pointAtCircleAngle,
   pointAtCircularParameter,
   pointAtLineParameter,
+  polygonDistanceToPoint,
+  polygonSignedArea,
   rawLineParameter,
   TWO_PI,
   uniqueSortedParameters,
@@ -1447,26 +1459,6 @@ function projectPointToLine(point, linePoint, direction) {
   };
 }
 
-function distancePointToSegment(point, start, end) {
-  const segmentX = end.x - start.x;
-  const segmentY = end.y - start.y;
-  const lengthSquared = segmentX * segmentX + segmentY * segmentY;
-  if (lengthSquared <= SNAP_THRESHOLD) {
-    return distance(point, start);
-  }
-
-  const projection = clamp(
-    ((point.x - start.x) * segmentX + (point.y - start.y) * segmentY) / lengthSquared,
-    0,
-    1,
-  );
-  const projectedPoint = {
-    x: start.x + projection * segmentX,
-    y: start.y + projection * segmentY,
-  };
-  return distance(point, projectedPoint);
-}
-
 function distancePointToCircle(point, entity) {
   return Math.abs(distance(point, entity.center) - entity.radius);
 }
@@ -1747,73 +1739,6 @@ function entityIntersectionPoints(first, second) {
   return [];
 }
 
-function createBounds(minX, minY, maxX, maxY) {
-  return { minX, minY, maxX, maxY };
-}
-
-function mergeBounds(current, next) {
-  if (!next) {
-    return current;
-  }
-  if (!current) {
-    return { ...next };
-  }
-  return createBounds(
-    Math.min(current.minX, next.minX),
-    Math.min(current.minY, next.minY),
-    Math.max(current.maxX, next.maxX),
-    Math.max(current.maxY, next.maxY),
-  );
-}
-
-function normalizeBoundsFromPoints(first, second) {
-  return createBounds(
-    Math.min(first.x, second.x),
-    Math.min(first.y, second.y),
-    Math.max(first.x, second.x),
-    Math.max(first.y, second.y),
-  );
-}
-
-function boundsContainsBounds(container, candidate) {
-  return candidate.minX >= container.minX - SNAP_THRESHOLD &&
-    candidate.maxX <= container.maxX + SNAP_THRESHOLD &&
-    candidate.minY >= container.minY - SNAP_THRESHOLD &&
-    candidate.maxY <= container.maxY + SNAP_THRESHOLD;
-}
-
-function boundsIntersectsBounds(first, second) {
-  return first.minX <= second.maxX + SNAP_THRESHOLD &&
-    first.maxX >= second.minX - SNAP_THRESHOLD &&
-    first.minY <= second.maxY + SNAP_THRESHOLD &&
-    first.maxY >= second.minY - SNAP_THRESHOLD;
-}
-
-function expandBounds(bounds, padding) {
-  return createBounds(
-    bounds.minX - padding,
-    bounds.minY - padding,
-    bounds.maxX + padding,
-    bounds.maxY + padding,
-  );
-}
-
-function offsetBounds(bounds, vector) {
-  return createBounds(
-    bounds.minX + vector.x,
-    bounds.minY + vector.y,
-    bounds.maxX + vector.x,
-    bounds.maxY + vector.y,
-  );
-}
-
-function boundsContainsPoint(bounds, point) {
-  return point.x >= bounds.minX - SNAP_THRESHOLD &&
-    point.x <= bounds.maxX + SNAP_THRESHOLD &&
-    point.y >= bounds.minY - SNAP_THRESHOLD &&
-    point.y <= bounds.maxY + SNAP_THRESHOLD;
-}
-
 function entityDistanceToPoint(entity, point) {
   if (entity.type === 'LINE') {
     return distancePointToSegment(point, entity.start, entity.end);
@@ -1891,45 +1816,6 @@ function entityIsNearPoint(entity, point, tolerance) {
 
 function selectionWindowMode(selectionWindow) {
   return selectionWindow.currentWorld.x >= selectionWindow.startWorld.x ? 'window' : 'capture';
-}
-
-function polygonSignedArea(points) {
-  let area = 0;
-  for (let index = 0; index < points.length; index += 1) {
-    const current = points[index];
-    const next = points[(index + 1) % points.length];
-    area += current.x * next.y - next.x * current.y;
-  }
-  return area * 0.5;
-}
-
-function pointInPolygon(point, polygon) {
-  let inside = false;
-  for (let index = 0, previous = polygon.length - 1; index < polygon.length; previous = index, index += 1) {
-    const first = polygon[index];
-    const second = polygon[previous];
-    const intersects = (first.y > point.y) !== (second.y > point.y) &&
-      point.x < (second.x - first.x) * (point.y - first.y) /
-        ((second.y - first.y) || Number.EPSILON) + first.x;
-    if (intersects) {
-      inside = !inside;
-    }
-  }
-  return inside;
-}
-
-function polygonDistanceToPoint(point, polygon) {
-  if (pointInPolygon(point, polygon)) {
-    return 0;
-  }
-  let nearest = Infinity;
-  for (let index = 0; index < polygon.length; index += 1) {
-    nearest = Math.min(
-      nearest,
-      distancePointToSegment(point, polygon[index], polygon[(index + 1) % polygon.length]),
-    );
-  }
-  return nearest;
 }
 
 class LineEntity {
