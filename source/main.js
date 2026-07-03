@@ -47,6 +47,12 @@ import { createHatchEntityClass } from './entities/hatch.js';
 import { createLineEntityClass } from './entities/line.js';
 import { createPolylineEntityClass } from './entities/polyline.js';
 import { createTextEntityClass } from './entities/text.js';
+import { createDimensionStyles } from './dimensions/styles.js';
+import { createLinearDimensionGeometry } from './dimensions/geometry/linear.js';
+import { createRadialDimensionGeometry } from './dimensions/geometry/radial.js';
+import { createAngularDimensionGeometry } from './dimensions/geometry/angular.js';
+import { createDimensionEntityServices } from './dimensions/entity.js';
+import { createDimensionPlacement } from './dimensions/placement.js';
 import { commandLabel, REPEATABLE_COMMANDS } from './commands.js';
 import {
   angleInSweep,
@@ -362,7 +368,7 @@ const {
   resolveCursorPoint,
   resolvePointForState,
 } = createInputResolvers({
-  dimensionPlacementOrigin,
+  dimensionPlacementOrigin: (...args) => dimensionPlacementOrigin(...args),
   dimensionReferencePoints,
   entityIntersectionPoints,
   entityIsNearPoint,
@@ -432,6 +438,84 @@ const PolylineEntity = createPolylineEntityClass({
 });
 const TextEntity = createTextEntityClass(styleServices);
 const HatchEntity = createHatchEntityClass(styleServices);
+
+const dimensionStyles = createDimensionStyles({
+  DIMENSION_STYLES,
+  activeDrawingProfile,
+  getState: () => state,
+  normalizedVector,
+});
+const {
+  dimensionArrow,
+  dimensionExtensionLine,
+  dimensionStyleMetrics,
+  dimensionTextValue,
+  naturalDimensionTextNormal,
+} = dimensionStyles;
+const { dimensionLinearGeometry } = createLinearDimensionGeometry({
+  dimensionArrow,
+  dimensionExtensionLine,
+  dimensionTextValue,
+  distance,
+  entityMidpoint,
+  naturalDimensionTextNormal,
+  normalizedVector,
+});
+const { dimensionRadialGeometry } = createRadialDimensionGeometry({
+  dimensionArrow,
+  dimensionTextValue,
+  distance,
+  naturalDimensionTextNormal,
+  normalizedVector,
+});
+const { dimensionAngularGeometry } = createAngularDimensionGeometry({
+  SNAP_THRESHOLD,
+  TWO_PI,
+  angleOfPoint,
+  dimensionArrow,
+  dimensionTextValue,
+  distance,
+  normalizeAngle,
+  offsetPoint,
+});
+const {
+  DimensionEntity,
+  dimensionGeometry,
+} = createDimensionEntityServices({
+  DEFAULT_LAYER,
+  DEFAULT_LINE_COLOR,
+  DIMENSION_STYLES,
+  TWO_PI,
+  angleOfPoint,
+  applyLineColorToEntity,
+  applyLineStyleToEntity,
+  applyLineTypeToEntity,
+  createBounds,
+  dimensionAngularGeometry,
+  dimensionLinearGeometry,
+  dimensionRadialGeometry,
+  dimensionStyleMetrics,
+  distance,
+  expandBounds,
+  normalizeAngle,
+});
+const {
+  dimensionDraftEntity,
+  dimensionPlacementDistance,
+  dimensionPlacementOrigin,
+  dimensionPlacementPoint,
+} = createDimensionPlacement({
+  DimensionEntity,
+  SNAP_THRESHOLD,
+  activeLayerName,
+  activeLineColorId,
+  distance,
+  distancePointToInfiniteLine,
+  getState: () => state,
+  normalizedVector,
+  parseDistanceInput,
+  pointFromRelativeCoordinates,
+});
 
 function polylineIncomingTangent(draft) {
   const segmentIndex = draft.segments.length - 1;
@@ -512,455 +596,6 @@ function arcCenterFromBulge(start, end, bulge) {
   };
 }
 
-function dimensionStyleMetrics(styleId) {
-  const style = DIMENSION_STYLES[styleId] || DIMENSION_STYLES.normal;
-  const profileMetrics = activeDrawingProfile().dimensionMetrics;
-  const scale = style.scale / DIMENSION_STYLES.normal.scale;
-  return {
-    textHeight: profileMetrics.textHeight * scale,
-    arrowSize: profileMetrics.arrowSize * scale,
-    textGap: profileMetrics.textGap,
-    extensionOffset: profileMetrics.extensionOffset * scale,
-    extensionOvershoot: profileMetrics.extensionOvershoot * scale,
-  };
-}
-
-function dimensionArrow(tip, direction, size) {
-  const unit = normalizedVector({ x: 0, y: 0 }, direction) || { x: 1, y: 0 };
-  const normal = { x: -unit.y, y: unit.x };
-  const arrowLength = size * 0.78;
-  const base = { x: tip.x + unit.x * arrowLength, y: tip.y + unit.y * arrowLength };
-  const halfWidth = size * 0.18;
-  return [
-    { ...tip },
-    { x: base.x + normal.x * halfWidth, y: base.y + normal.y * halfWidth },
-    { x: base.x - normal.x * halfWidth, y: base.y - normal.y * halfWidth },
-  ];
-}
-
-function dimensionExtensionLine(reference, dimensionPoint, metrics) {
-  const unit = normalizedVector(reference, dimensionPoint);
-  if (!unit) {
-    return null;
-  }
-  return {
-    start: {
-      x: reference.x + unit.x * metrics.extensionOffset,
-      y: reference.y + unit.y * metrics.extensionOffset,
-    },
-    end: {
-      x: dimensionPoint.x + unit.x * metrics.extensionOvershoot,
-      y: dimensionPoint.y + unit.y * metrics.extensionOvershoot,
-    },
-  };
-}
-
-function dimensionTextValue(entity) {
-  const precision = entity.kind === 'angular'
-    ? state.dimensionPrecision[state.drawingProfile].angular
-    : state.dimensionPrecision[state.drawingProfile].linear;
-  const fixedValue = entity.measurement().toFixed(precision);
-  const value = fixedValue.includes('.')
-    ? fixedValue.replace(/0+$/, '').replace(/\.$/, '')
-    : fixedValue;
-  if (entity.kind === 'radius') {
-    return `R${value}`;
-  }
-  if (entity.kind === 'diameter') {
-    return `Ø${value}`;
-  }
-  if (entity.kind === 'angular') {
-    return `${value}°`;
-  }
-  return value;
-}
-
-function naturalDimensionTextNormal(angle) {
-  let normal = { x: -Math.sin(angle), y: Math.cos(angle) };
-  if (Math.abs(Math.cos(angle)) < 0.05) {
-    if (normal.x > 0) {
-      normal = { x: -normal.x, y: -normal.y };
-    }
-  }
-  else if (normal.y > 0) {
-    normal = { x: -normal.x, y: -normal.y };
-  }
-  return normal;
-}
-
-function dimensionLinearGeometry(entity, metrics) {
-  const first = entity.points[0];
-  const second = entity.points[1];
-  const placement = entity.placement;
-  let firstDimension;
-  let secondDimension;
-  let textAngle = 0;
-  if (entity.kind === 'horizontal') {
-    firstDimension = { x: first.x, y: placement.y };
-    secondDimension = { x: second.x, y: placement.y };
-  }
-  else if (entity.kind === 'vertical') {
-    firstDimension = { x: placement.x, y: first.y };
-    secondDimension = { x: placement.x, y: second.y };
-    textAngle = -Math.PI * 0.5;
-  }
-  else {
-    const direction = normalizedVector(first, second) || { x: 1, y: 0 };
-    const normal = { x: -direction.y, y: direction.x };
-    const offset = (placement.x - first.x) * normal.x + (placement.y - first.y) * normal.y;
-    firstDimension = { x: first.x + normal.x * offset, y: first.y + normal.y * offset };
-    secondDimension = { x: second.x + normal.x * offset, y: second.y + normal.y * offset };
-    textAngle = Math.atan2(direction.y, direction.x);
-    if (textAngle > Math.PI * 0.5 || textAngle < -Math.PI * 0.5) {
-      textAngle += Math.PI;
-    }
-  }
-  const textNormal = naturalDimensionTextNormal(textAngle);
-  const lineDirection = normalizedVector(firstDimension, secondDimension) || { x: 1, y: 0 };
-  const midpoint = entityMidpoint({ start: firstDimension, end: secondDimension });
-  const dimensionLength = distance(firstDimension, secondDimension);
-  const externalArrows = dimensionLength < metrics.arrowSize * 2.5;
-  const dimensionLine = externalArrows
-    ? {
-      start: {
-        x: firstDimension.x - lineDirection.x * metrics.arrowSize * 1.35,
-        y: firstDimension.y - lineDirection.y * metrics.arrowSize * 1.35,
-      },
-      end: {
-        x: secondDimension.x + lineDirection.x * metrics.arrowSize * 1.35,
-        y: secondDimension.y + lineDirection.y * metrics.arrowSize * 1.35,
-      },
-    }
-    : { start: firstDimension, end: secondDimension };
-  return {
-    lines: [
-      dimensionExtensionLine(first, firstDimension, metrics),
-      dimensionExtensionLine(second, secondDimension, metrics),
-      dimensionLine,
-    ].filter(Boolean),
-    arcs: [],
-    arrows: externalArrows
-      ? [
-        dimensionArrow(firstDimension, { x: -lineDirection.x, y: -lineDirection.y }, metrics.arrowSize),
-        dimensionArrow(secondDimension, lineDirection, metrics.arrowSize),
-      ]
-      : [
-        dimensionArrow(firstDimension, lineDirection, metrics.arrowSize),
-        dimensionArrow(secondDimension, { x: -lineDirection.x, y: -lineDirection.y }, metrics.arrowSize),
-      ],
-    text: {
-      point: {
-        x: midpoint.x + textNormal.x * (metrics.textGap + metrics.textHeight * 0.55),
-        y: midpoint.y + textNormal.y * (metrics.textGap + metrics.textHeight * 0.55),
-      },
-      angle: textAngle,
-      value: dimensionTextValue(entity),
-      height: metrics.textHeight,
-    },
-  };
-}
-
-function dimensionRadialGeometry(entity, metrics) {
-  const center = entity.points[0];
-  const radiusPoint = entity.points[1];
-  const radius = distance(center, radiusPoint);
-  const direction = normalizedVector(center, entity.placement) || normalizedVector(center, radiusPoint) || { x: 1, y: 0 };
-  let textAngle = Math.atan2(direction.y, direction.x);
-  if (textAngle > Math.PI * 0.5 || textAngle < -Math.PI * 0.5) {
-    textAngle += Math.PI;
-  }
-  const textNormal = naturalDimensionTextNormal(textAngle);
-  const positiveEdge = { x: center.x + direction.x * radius, y: center.y + direction.y * radius };
-  const negativeEdge = { x: center.x - direction.x * radius, y: center.y - direction.y * radius };
-  const arrowExtension = metrics.arrowSize * 1.35;
-  const extendedPositiveEdge = {
-    x: positiveEdge.x + direction.x * arrowExtension,
-    y: positiveEdge.y + direction.y * arrowExtension,
-  };
-  const extendedNegativeEdge = {
-    x: negativeEdge.x - direction.x * arrowExtension,
-    y: negativeEdge.y - direction.y * arrowExtension,
-  };
-  const textPoint = {
-    x: entity.placement.x + textNormal.x * (metrics.textGap + metrics.textHeight * 0.55),
-    y: entity.placement.y + textNormal.y * (metrics.textGap + metrics.textHeight * 0.55),
-  };
-  if (entity.kind === 'diameter') {
-    const placementDistance = (
-      (entity.placement.x - center.x) * direction.x +
-      (entity.placement.y - center.y) * direction.y
-    );
-    const extendToCenter = placementDistance < radius;
-    return {
-      lines: [extendToCenter
-        ? { start: negativeEdge, end: positiveEdge }
-        : { start: negativeEdge, end: entity.placement }],
-      arcs: [],
-      arrows: [
-        dimensionArrow(negativeEdge, direction, metrics.arrowSize),
-        dimensionArrow(positiveEdge, { x: -direction.x, y: -direction.y }, metrics.arrowSize),
-      ],
-      text: { point: textPoint, angle: textAngle, value: dimensionTextValue(entity), height: metrics.textHeight },
-    };
-  }
-  const placementDistance = (
-    (entity.placement.x - center.x) * direction.x +
-    (entity.placement.y - center.y) * direction.y
-  );
-  const radialLine = placementDistance < radius
-    ? { start: center, end: extendedPositiveEdge }
-    : { start: center, end: entity.placement };
-  return {
-    lines: [radialLine],
-    arcs: [],
-    arrows: [dimensionArrow(positiveEdge, direction, metrics.arrowSize)],
-    text: { point: textPoint, angle: textAngle, value: dimensionTextValue(entity), height: metrics.textHeight },
-  };
-}
-
-function dimensionAngularGeometry(entity, metrics) {
-  const [vertex, firstRay, secondRay] = entity.points;
-  let startAngle = angleOfPoint(vertex, firstRay);
-  let endAngle = angleOfPoint(vertex, secondRay);
-  let sweep = normalizeAngle(endAngle - startAngle);
-  if (sweep > Math.PI) {
-    [startAngle, endAngle] = [endAngle, startAngle];
-    sweep = TWO_PI - sweep;
-  }
-  const radius = Math.max(distance(vertex, entity.placement), SNAP_THRESHOLD * 10);
-  const start = { x: vertex.x + Math.cos(startAngle) * radius, y: vertex.y + Math.sin(startAngle) * radius };
-  const end = { x: vertex.x + Math.cos(endAngle) * radius, y: vertex.y + Math.sin(endAngle) * radius };
-  const midAngle = startAngle + sweep * 0.5;
-  const tangentStart = { x: -Math.sin(startAngle), y: Math.cos(startAngle) };
-  const tangentEnd = { x: Math.sin(endAngle), y: -Math.cos(endAngle) };
-  const externalArrows = radius * sweep < metrics.arrowSize * 2.5;
-  const startArrowDirection = externalArrows
-    ? tangentStart
-    : { x: -tangentStart.x, y: -tangentStart.y };
-  const endArrowDirection = externalArrows
-    ? tangentEnd
-    : { x: -tangentEnd.x, y: -tangentEnd.y };
-  const tailLength = metrics.arrowSize * 0.78 + metrics.extensionOvershoot;
-  let textAngle = Math.atan2(
-    Math.sin(midAngle + Math.PI * 0.5),
-    Math.cos(midAngle + Math.PI * 0.5),
-  );
-  if (textAngle > Math.PI * 0.5 || textAngle < -Math.PI * 0.5) {
-    textAngle += Math.PI;
-  }
-  return {
-    lines: [
-      {
-        start,
-        end: offsetPoint(start, {
-          x: startArrowDirection.x * tailLength,
-          y: startArrowDirection.y * tailLength,
-        }),
-      },
-      {
-        start: end,
-        end: offsetPoint(end, {
-          x: endArrowDirection.x * tailLength,
-          y: endArrowDirection.y * tailLength,
-        }),
-      },
-    ],
-    arcs: [{
-      center: vertex,
-      radius,
-      startAngle,
-      endAngle,
-      counterclockwise: false,
-    }],
-    arrows: [
-      dimensionArrow(start, startArrowDirection, metrics.arrowSize),
-      dimensionArrow(end, endArrowDirection, metrics.arrowSize),
-    ],
-    text: {
-      point: {
-        x: vertex.x + Math.cos(midAngle) * (radius + metrics.textGap + metrics.textHeight * 0.6),
-        y: vertex.y + Math.sin(midAngle) * (radius + metrics.textGap + metrics.textHeight * 0.6),
-      },
-      angle: textAngle,
-      value: dimensionTextValue(entity),
-      height: metrics.textHeight,
-    },
-  };
-}
-
-function dimensionGeometry(entity) {
-  const metrics = dimensionStyleMetrics(entity.dimensionStyle);
-  let geometry;
-  if (entity.kind === 'angular') {
-    geometry = dimensionAngularGeometry(entity, metrics);
-  }
-  else if (entity.kind === 'radius' || entity.kind === 'diameter') {
-    geometry = dimensionRadialGeometry(entity, metrics);
-  }
-  else {
-    geometry = dimensionLinearGeometry(entity, metrics);
-  }
-  if (entity.textPosition && entity.kind !== 'radius' && entity.kind !== 'diameter') {
-    geometry.text.point = { ...entity.textPosition };
-  }
-  return geometry;
-}
-
-class DimensionEntity {
-  constructor(kind, points, placement, options = {}) {
-    this.type = 'DIMENSION';
-    this.kind = kind;
-    this.points = points.map((point) => ({ x: point.x, y: point.y }));
-    this.placement = { x: placement.x, y: placement.y };
-    this.textPosition = options.textPosition
-      ? { x: options.textPosition.x, y: options.textPosition.y }
-      : null;
-    this.dimensionStyle = DIMENSION_STYLES[options.dimensionStyle]?.id || 'normal';
-    this.groupId = null;
-    this.layer = options.layer || DEFAULT_LAYER.name;
-    applyLineStyleToEntity(this, 'auxiliar');
-    applyLineTypeToEntity(this, 'continuous');
-    applyLineColorToEntity(this, options.lineColor || DEFAULT_LINE_COLOR);
-  }
-
-  measurement() {
-    if (this.kind === 'horizontal') return Math.abs(this.points[1].x - this.points[0].x);
-    if (this.kind === 'vertical') return Math.abs(this.points[1].y - this.points[0].y);
-    if (this.kind === 'aligned') return distance(this.points[0], this.points[1]);
-    if (this.kind === 'radius') return distance(this.points[0], this.points[1]);
-    if (this.kind === 'diameter') return distance(this.points[0], this.points[1]) * 2;
-    const firstAngle = angleOfPoint(this.points[0], this.points[1]);
-    const secondAngle = angleOfPoint(this.points[0], this.points[2]);
-    const sweep = normalizeAngle(secondAngle - firstAngle);
-    return Math.min(sweep, TWO_PI - sweep) * 180 / Math.PI;
-  }
-
-  bounds() {
-    const geometry = dimensionGeometry(this);
-    const points = [
-      ...this.points,
-      this.placement,
-      ...geometry.lines.flatMap((line) => [line.start, line.end]),
-      ...geometry.arrows.flat(),
-      geometry.text.point,
-    ];
-    geometry.arcs.forEach((arc) => {
-      for (let index = 0; index <= 16; index += 1) {
-        const angle = arc.startAngle + normalizeAngle(arc.endAngle - arc.startAngle) * index / 16;
-        points.push({ x: arc.center.x + Math.cos(angle) * arc.radius, y: arc.center.y + Math.sin(angle) * arc.radius });
-      }
-    });
-    const padding = geometry.text.height;
-    return expandBounds(createBounds(
-      Math.min(...points.map((point) => point.x)),
-      Math.min(...points.map((point) => point.y)),
-      Math.max(...points.map((point) => point.x)),
-      Math.max(...points.map((point) => point.y)),
-    ), padding);
-  }
-
-  length() {
-    return this.measurement();
-  }
-}
-
-function dimensionPlacementOrigin(draft) {
-  return draft?.points?.[0] || null;
-}
-
-function dimensionPlacementDistance(draft, placement) {
-  if (!draft?.points?.length || !placement) {
-    return null;
-  }
-  const origin = draft.points[0];
-  if (draft.kind === 'horizontal') {
-    return Math.abs(placement.y - origin.y);
-  }
-  if (draft.kind === 'vertical') {
-    return Math.abs(placement.x - origin.x);
-  }
-  if (draft.kind === 'aligned' && draft.points[1]) {
-    return distancePointToInfiniteLine(placement, origin, {
-      x: draft.points[1].x - origin.x,
-      y: draft.points[1].y - origin.y,
-    });
-  }
-  if ((draft.kind === 'radius' || draft.kind === 'diameter') && draft.points[1]) {
-    return Math.max(0, distance(origin, placement) - distance(origin, draft.points[1]));
-  }
-  if (draft.kind === 'angular') {
-    return distance(origin, placement);
-  }
-  return null;
-}
-
-function dimensionPlacementPoint(draft, cursor, currentState) {
-  if (!draft || !cursor || draft.phase !== 'placement') {
-    return cursor;
-  }
-  const origin = dimensionPlacementOrigin(draft);
-  const coordinateTarget = pointFromRelativeCoordinates(origin, currentState.distanceInput);
-  if (coordinateTarget) {
-    draft.suggestionActive = false;
-    return coordinateTarget;
-  }
-  let inputDistance = parseDistanceInput(currentState.distanceInput);
-  draft.suggestionActive = false;
-  if (
-    inputDistance === null &&
-    !currentState.activeObjectSnap &&
-    Number.isFinite(draft.suggestedOffset) &&
-    draft.suggestedOffset > SNAP_THRESHOLD
-  ) {
-    const cursorDistance = dimensionPlacementDistance(draft, cursor);
-    const suggestionTolerance = (currentState.snapPixelTolerance || 10) / currentState.viewScale;
-    if (
-      Number.isFinite(cursorDistance) &&
-      Math.abs(cursorDistance - draft.suggestedOffset) <= suggestionTolerance
-    ) {
-      inputDistance = draft.suggestedOffset;
-      draft.suggestionActive = true;
-    }
-  }
-  if (inputDistance === null || !origin) {
-    return cursor;
-  }
-  if (draft.kind === 'horizontal') {
-    const side = Math.sign(cursor.y - origin.y) || 1;
-    return { x: cursor.x, y: origin.y + side * inputDistance };
-  }
-  if (draft.kind === 'vertical') {
-    const side = Math.sign(cursor.x - origin.x) || 1;
-    return { x: origin.x + side * inputDistance, y: cursor.y };
-  }
-  if (draft.kind === 'aligned' && draft.points[1]) {
-    const direction = normalizedVector(draft.points[0], draft.points[1]);
-    if (direction) {
-      const normal = { x: -direction.y, y: direction.x };
-      const side = Math.sign((cursor.x - origin.x) * normal.x + (cursor.y - origin.y) * normal.y) || 1;
-      return { x: origin.x + normal.x * inputDistance * side, y: origin.y + normal.y * inputDistance * side };
-    }
-  }
-  const direction = normalizedVector(origin, cursor) || { x: 1, y: 0 };
-  const radialOffset = draft.kind === 'radius' || draft.kind === 'diameter'
-    ? distance(draft.points[0], draft.points[1]) + inputDistance
-    : inputDistance;
-  return {
-    x: origin.x + direction.x * radialOffset,
-    y: origin.y + direction.y * radialOffset,
-  };
-}
-
-function dimensionDraftEntity(draft, placement) {
-  if (!draft || draft.phase !== 'placement' || !placement) {
-    return null;
-  }
-  return new DimensionEntity(draft.kind, draft.points, placement, {
-    layer: activeLayerName(),
-    lineColor: activeLineColorId(),
-    dimensionStyle: state.dimensionStyle,
-  });
-}
 
 class BlockReferenceEntity {
   constructor(definition, insertionPoint, options = {}) {
