@@ -50,7 +50,6 @@ import {
   arcMidAngle,
   arcSweep,
   boundsContainsBounds,
-  boundsContainsPoint,
   boundsIntersectsBounds,
   circularParameter,
   clamp,
@@ -74,7 +73,6 @@ import {
   pointAtCircleAngle,
   pointAtCircularParameter,
   pointAtLineParameter,
-  polygonDistanceToPoint,
   polygonSignedArea,
   rawLineParameter,
   TWO_PI,
@@ -110,6 +108,14 @@ import {
   circularReferencePoints,
   createInputResolvers,
 } from './input/snaps.js';
+import { projectPointToLine, selectionWindowMode } from './selection/geometry.js';
+import { createHitTesting } from './selection/hit-testing.js';
+import { createSelectionIntersections } from './selection/intersections.js';
+import { createPolylineSelectionGeometry } from './selection/polyline.js';
+import { createDimensionGripMovement } from './selection/grips/dimensions.js';
+import { createPolylineGripMovement, moveCircularGrip } from './selection/grips/entities.js';
+import { moveHatchGrip } from './selection/grips/hatch.js';
+import { createGripReferences } from './selection/grips/references.js';
 import {
   createEntityTransformations,
   entityCanExplode,
@@ -273,6 +279,61 @@ let DEFAULT_DRAWING_SIZE = DRAWING_PROFILES.engineering.defaultDrawingSize;
 let UNITS_LABEL = DRAWING_PROFILES.engineering.unitsLabel;
 let nextEntityGroupId = 1;
 
+const polylineSelectionGeometry = createPolylineSelectionGeometry({
+  createArcEntity: (...args) => new ArcEntity(...args),
+  createLineEntity: (...args) => new LineEntity(...args),
+  createPolylineEntity: (...args) => new PolylineEntity(...args),
+  entityDistanceToPoint: (...args) => entityDistanceToPoint(...args),
+});
+const {
+  dimensionCircularFromEntity,
+  dimensionKindForLine,
+  dimensionLineFromEntity,
+  polylineDraftEntity,
+  polylineReferencePoints,
+  polylineSegmentEntities,
+  polylineSegmentEntity,
+  primitiveEntityParts,
+} = polylineSelectionGeometry;
+
+const {
+  distancePointToArc,
+  distancePointToCircle,
+  entityDistanceToPoint,
+  entityIsNearPoint,
+} = createHitTesting({
+  dimensionGeometry: (...args) => dimensionGeometry(...args),
+  polylineSegmentEntity,
+});
+
+const {
+  entityIntersectionPoints,
+  fullCircleBoundaryIntersectionPoints,
+} = createSelectionIntersections({
+  intersectEntities,
+  intersectFullCircleBoundary,
+  primitiveEntityParts,
+});
+
+const {
+  dimensionBaseGripPoints,
+  dimensionPlacementGripPoint,
+  dimensionReferencePoints,
+  gripPoint,
+  gripReferencePoint,
+} = createGripReferences({
+  dimensionGeometry: (...args) => dimensionGeometry(...args),
+  polylineReferencePoints,
+});
+
+const { movePolylineGrip } = createPolylineGripMovement({ polylineSegmentEntity });
+const { moveDimensionGrip } = createDimensionGripMovement({
+  dimensionBaseGripPoints,
+  dimensionPlacementGripPoint,
+  dimensionStyleMetrics: (...args) => dimensionStyleMetrics(...args),
+  naturalDimensionTextNormal: (...args) => naturalDimensionTextNormal(...args),
+});
+
 const {
   activeDraftOrigin,
   objectSnapPoint,
@@ -338,283 +399,6 @@ const {
   lineStyleFromDxf,
   lineTypeFromDxf,
 });
-
-function dimensionPlacementGripPoint(entity) {
-  const geometry = dimensionGeometry(entity);
-  if (entity.kind === 'horizontal' || entity.kind === 'vertical' || entity.kind === 'aligned') {
-    const dimensionLine = geometry.lines[geometry.lines.length - 1];
-    return dimensionLine ? entityMidpoint(dimensionLine) : entity.placement;
-  }
-  if (entity.kind === 'angular' && geometry.arcs[0]) {
-    const arc = geometry.arcs[0];
-    const sweep = normalizeAngle(arc.endAngle - arc.startAngle);
-    const angle = arc.startAngle + sweep * 0.5;
-    return {
-      x: arc.center.x + Math.cos(angle) * arc.radius,
-      y: arc.center.y + Math.sin(angle) * arc.radius,
-    };
-  }
-  return entity.placement;
-}
-
-function dimensionBaseGripPoints(entity) {
-  if (!['horizontal', 'vertical', 'aligned'].includes(entity.kind) || entity.points.length < 2) {
-    return [];
-  }
-  const [first, second] = entity.points;
-  if (entity.kind === 'horizontal') {
-    return [
-      { x: first.x, y: entity.placement.y },
-      { x: second.x, y: entity.placement.y },
-    ];
-  }
-  if (entity.kind === 'vertical') {
-    return [
-      { x: entity.placement.x, y: first.y },
-      { x: entity.placement.x, y: second.y },
-    ];
-  }
-  const direction = normalizedVector(first, second);
-  if (!direction) {
-    return [{ ...entity.placement }, { ...entity.placement }];
-  }
-  const normal = { x: -direction.y, y: direction.x };
-  const offset = (entity.placement.x - first.x) * normal.x +
-    (entity.placement.y - first.y) * normal.y;
-  return [
-    { x: first.x + normal.x * offset, y: first.y + normal.y * offset },
-    { x: second.x + normal.x * offset, y: second.y + normal.y * offset },
-  ];
-}
-
-function dimensionReferencePoints(entity) {
-  const geometry = dimensionGeometry(entity);
-  const baseGrips = dimensionBaseGripPoints(entity).map((point, index) => ({
-    type: 'endpoint',
-    key: `base-${index}`,
-    point,
-  }));
-  return [
-    ...baseGrips,
-    ...entity.points.map((point, index) => ({ type: 'endpoint', key: `point-${index}`, point })),
-    { type: 'midpoint', key: 'placement', point: dimensionPlacementGripPoint(entity) },
-    { type: 'center', key: 'text', point: geometry.text.point },
-  ];
-}
-
-function gripPoint(selectedGrip) {
-  if (!selectedGrip) {
-    return null;
-  }
-  if (selectedGrip.entity.type === 'HATCH') {
-    return selectedGrip.entity.boundary[selectedGrip.index] || null;
-  }
-  if (isCircularEntity(selectedGrip.entity)) {
-    return circularReferencePoints(selectedGrip.entity)
-      .find((candidate) => candidate.key === selectedGrip.key)?.point || null;
-  }
-  if (selectedGrip.entity.type === 'POLYLINE') {
-    return polylineReferencePoints(selectedGrip.entity)
-      .find((candidate) => candidate.key === selectedGrip.key)?.point || null;
-  }
-  if (selectedGrip.entity.type === 'DIMENSION') {
-    return dimensionReferencePoints(selectedGrip.entity)
-      .find((candidate) => candidate.key === selectedGrip.key)?.point || null;
-  }
-  if (selectedGrip.entity.type === 'INSERT') {
-    return selectedGrip.entity.insertionPoint;
-  }
-  return selectedGrip.entity[selectedGrip.key] || null;
-}
-
-function gripReferencePoint(selectedGrip) {
-  if (!selectedGrip) {
-    return null;
-  }
-  if (isCircularEntity(selectedGrip.entity) && selectedGrip.key !== 'center') {
-    return selectedGrip.entity.center;
-  }
-  if (selectedGrip.entity.type === 'POLYLINE') {
-    const vertexMatch = selectedGrip.key.match(/^vertex-(\d+)$/);
-    if (vertexMatch) {
-      const index = Number(vertexMatch[1]);
-      const referenceIndex = index > 0
-        ? index - 1
-        : selectedGrip.entity.closed ? selectedGrip.entity.vertices.length - 1 : Math.min(1, selectedGrip.entity.vertices.length - 1);
-      return selectedGrip.entity.vertices[referenceIndex] || gripPoint(selectedGrip);
-    }
-    const arcMatch = selectedGrip.key.match(/^arc-(\d+)-(?:midpoint|center)$/);
-    if (arcMatch) {
-      return selectedGrip.entity.vertices[Number(arcMatch[1])] || gripPoint(selectedGrip);
-    }
-    return gripPoint(selectedGrip);
-  }
-  if (selectedGrip.entity.type === 'DIMENSION') {
-    const pointMatch = selectedGrip.key.match(/^point-(\d+)$/);
-    if (pointMatch) {
-      const index = Number(pointMatch[1]);
-      const referenceIndex = index === 0 ? Math.min(1, selectedGrip.entity.points.length - 1) : 0;
-      return selectedGrip.entity.points[referenceIndex] || gripPoint(selectedGrip);
-    }
-    if (selectedGrip.key === 'text') {
-      return dimensionPlacementGripPoint(selectedGrip.entity);
-    }
-    const baseMatch = selectedGrip.key.match(/^base-(\d+)$/);
-    if (baseMatch) {
-      return selectedGrip.entity.points[Number(baseMatch[1])] || selectedGrip.entity.points[0];
-    }
-    return selectedGrip.entity.points[0] || gripPoint(selectedGrip);
-  }
-  if (selectedGrip.entity.type !== 'LINE') {
-    return gripPoint(selectedGrip);
-  }
-  return selectedGrip.key === 'start' ? selectedGrip.entity.end : selectedGrip.entity.start;
-}
-
-function reshapeHatchArcGroup(entity, group, movedIndex, targetPoint) {
-  const indices = group.indices;
-  const movedPosition = indices.indexOf(movedIndex);
-  if (indices.length < 3 || movedPosition < 0) {
-    return false;
-  }
-
-  const endPosition = indices.length - 1;
-  const passPosition = movedPosition > 0 && movedPosition < endPosition
-    ? movedPosition
-    : Math.floor(endPosition * 0.5);
-  if (passPosition <= 0 || passPosition >= endPosition) {
-    return false;
-  }
-
-  const startPoint = movedPosition === 0
-    ? targetPoint
-    : entity.boundary[indices[0]];
-  const passPoint = movedPosition === passPosition
-    ? targetPoint
-    : entity.boundary[indices[passPosition]];
-  const endPoint = movedPosition === endPosition
-    ? targetPoint
-    : entity.boundary[indices[endPosition]];
-  const circle = circleFromThreePoints(startPoint, passPoint, endPoint);
-  if (!circle) {
-    return false;
-  }
-
-  const startAngle = angleOfPoint(circle.center, startPoint);
-  const passAngle = angleOfPoint(circle.center, passPoint);
-  const endAngle = angleOfPoint(circle.center, endPoint);
-  const positiveTraversal = angleInSweep(passAngle, startAngle, endAngle);
-  const firstSweep = positiveTraversal
-    ? normalizeAngle(passAngle - startAngle)
-    : -normalizeAngle(startAngle - passAngle);
-  const secondSweep = positiveTraversal
-    ? normalizeAngle(endAngle - passAngle)
-    : -normalizeAngle(passAngle - endAngle);
-  indices.forEach((boundaryIndex, position) => {
-    const angle = position <= passPosition
-      ? startAngle + firstSweep * position / passPosition
-      : passAngle + secondSweep * (position - passPosition) / (endPosition - passPosition);
-    const point = pointAtCircleAngle(circle, angle);
-    entity.boundary[boundaryIndex].x = point.x;
-    entity.boundary[boundaryIndex].y = point.y;
-  });
-  return true;
-}
-
-function resizeHatchCircleGroup(entity, group, targetPoint) {
-  const indices = [...new Set(group.indices)];
-  if (indices.length < 3) {
-    return false;
-  }
-  const center = indices.reduce((sum, index) => ({
-    x: sum.x + entity.boundary[index].x / indices.length,
-    y: sum.y + entity.boundary[index].y / indices.length,
-  }), { x: 0, y: 0 });
-  const radius = distance(center, targetPoint);
-  if (radius <= SNAP_THRESHOLD) {
-    return false;
-  }
-  const angles = indices.map((index) => angleOfPoint(center, entity.boundary[index]));
-  indices.forEach((boundaryIndex, position) => {
-    const point = {
-      x: center.x + Math.cos(angles[position]) * radius,
-      y: center.y + Math.sin(angles[position]) * radius,
-    };
-    entity.boundary[boundaryIndex].x = point.x;
-    entity.boundary[boundaryIndex].y = point.y;
-  });
-  return true;
-}
-
-function moveHatchGrip(entity, index, targetPoint) {
-  const curveGroups = entity.curveGroups.filter((group) => group.indices.includes(index));
-  let reshaped = false;
-  for (const group of curveGroups) {
-    if (group.type === 'ARC') {
-      reshaped = reshapeHatchArcGroup(entity, group, index, targetPoint) || reshaped;
-    }
-    else if (group.type === 'CIRCLE') {
-      reshaped = resizeHatchCircleGroup(entity, group, targetPoint) || reshaped;
-    }
-  }
-  if (!reshaped) {
-    entity.boundary[index].x = targetPoint.x;
-    entity.boundary[index].y = targetPoint.y;
-  }
-  return true;
-}
-
-function moveCircularGrip(entity, key, targetPoint) {
-  if (key === 'center') {
-    entity.center = { ...targetPoint };
-    return true;
-  }
-  if (entity.type === 'CIRCLE' && key.startsWith('quadrant-')) {
-    const radius = distance(entity.center, targetPoint);
-    if (radius <= SNAP_THRESHOLD) {
-      return false;
-    }
-    entity.radius = radius;
-    return true;
-  }
-  if (entity.type !== 'ARC') {
-    return false;
-  }
-  if (key === 'midpoint') {
-    const radius = distance(entity.center, targetPoint);
-    if (radius <= SNAP_THRESHOLD) {
-      return false;
-    }
-    entity.radius = radius;
-    return true;
-  }
-  if (key === 'start' || key === 'end') {
-    const angleKey = key === 'start' ? 'startAngle' : 'endAngle';
-    const previousAngle = entity[angleKey];
-    entity[angleKey] = angleOfPoint(entity.center, targetPoint);
-    if (entityArcSweep(entity) <= SNAP_THRESHOLD) {
-      entity[angleKey] = previousAngle;
-      return false;
-    }
-    return true;
-  }
-  return false;
-}
-
-function projectCenterToChordBisector(start, end, point) {
-  const midpoint = entityMidpoint({ start, end });
-  const chord = { x: end.x - start.x, y: end.y - start.y };
-  const chordLength = Math.hypot(chord.x, chord.y);
-  if (chordLength <= SNAP_THRESHOLD) {
-    return null;
-  }
-  const normal = { x: -chord.y / chordLength, y: chord.x / chordLength };
-  const offset = (point.x - midpoint.x) * normal.x + (point.y - midpoint.y) * normal.y;
-  return {
-    x: midpoint.x + normal.x * offset,
-    y: midpoint.y + normal.y * offset,
-  };
-}
 
 function polylineIncomingTangent(draft) {
   const segmentIndex = draft.segments.length - 1;
@@ -693,409 +477,6 @@ function arcCenterFromBulge(start, end, bulge) {
     x: midpoint.x + normal.x * offset,
     y: midpoint.y + normal.y * offset,
   };
-}
-
-function movePolylineGrip(entity, key, targetPoint) {
-  const vertexMatch = key.match(/^vertex-(\d+)$/);
-  if (vertexMatch) {
-    const vertexIndex = Number(vertexMatch[1]);
-    const adjacentArcs = [];
-    entity.segments.forEach((segment, segmentIndex) => {
-      const endIndex = (segmentIndex + 1) % entity.vertices.length;
-      if (segment.type === 'ARC' && (segmentIndex === vertexIndex || endIndex === vertexIndex)) {
-        const geometry = polylineSegmentEntity(entity, segmentIndex);
-        if (geometry) {
-          adjacentArcs.push({
-            segmentIndex,
-            midpoint: pointAtCircleAngle(geometry, arcMidAngle(geometry)),
-          });
-        }
-      }
-    });
-    entity.vertices[vertexIndex] = { ...targetPoint };
-    adjacentArcs.forEach(({ segmentIndex, midpoint }) => {
-      const start = entity.vertices[segmentIndex];
-      const end = entity.vertices[(segmentIndex + 1) % entity.vertices.length];
-      const circle = circleFromThreePoints(start, midpoint, end);
-      if (circle) {
-        entity.segments[segmentIndex].center = circle.center;
-      }
-    });
-    return true;
-  }
-
-  const arcMatch = key.match(/^arc-(\d+)-(midpoint|center)$/);
-  if (arcMatch) {
-    const segmentIndex = Number(arcMatch[1]);
-    const start = entity.vertices[segmentIndex];
-    const end = entity.vertices[(segmentIndex + 1) % entity.vertices.length];
-    if (arcMatch[2] === 'center') {
-      const center = projectCenterToChordBisector(start, end, targetPoint);
-      if (!center) {
-        return false;
-      }
-      entity.segments[segmentIndex].center = center;
-      return true;
-    }
-    const circle = circleFromThreePoints(start, targetPoint, end);
-    if (!circle) {
-      return false;
-    }
-    entity.segments[segmentIndex].center = circle.center;
-    return true;
-  }
-
-  return false;
-}
-
-function moveDimensionGrip(entity, key, targetPoint) {
-  if (key === 'text') {
-    if (entity.kind === 'radius' || entity.kind === 'diameter') {
-      const metrics = dimensionStyleMetrics(entity.dimensionStyle);
-      const textOffset = metrics.textGap + metrics.textHeight * 0.55;
-      let placement = { ...targetPoint };
-      for (let iteration = 0; iteration < 3; iteration += 1) {
-        const direction = normalizedVector(entity.points[0], placement) ||
-          normalizedVector(entity.points[0], entity.placement) ||
-          normalizedVector(entity.points[0], entity.points[1]) ||
-          { x: 1, y: 0 };
-        let textAngle = Math.atan2(direction.y, direction.x);
-        if (textAngle > Math.PI * 0.5 || textAngle < -Math.PI * 0.5) {
-          textAngle += Math.PI;
-        }
-        const normal = naturalDimensionTextNormal(textAngle);
-        placement = {
-          x: targetPoint.x - normal.x * textOffset,
-          y: targetPoint.y - normal.y * textOffset,
-        };
-      }
-      entity.placement = placement;
-      entity.textPosition = null;
-      return true;
-    }
-    entity.textPosition = { ...targetPoint };
-    return true;
-  }
-  if (key === 'placement') {
-    const currentPlacement = dimensionPlacementGripPoint(entity);
-    let nextPlacement = { ...targetPoint };
-    if (entity.kind === 'horizontal') {
-      nextPlacement = { x: entity.placement.x, y: targetPoint.y };
-    }
-    else if (entity.kind === 'vertical') {
-      nextPlacement = { x: targetPoint.x, y: entity.placement.y };
-    }
-    else if (entity.kind === 'aligned') {
-      const direction = normalizedVector(entity.points[0], entity.points[1]);
-      if (direction) {
-        const normal = { x: -direction.y, y: direction.x };
-        const offset = (targetPoint.x - entity.points[0].x) * normal.x +
-          (targetPoint.y - entity.points[0].y) * normal.y;
-        nextPlacement = {
-          x: entity.points[0].x + normal.x * offset,
-          y: entity.points[0].y + normal.y * offset,
-        };
-      }
-    }
-    else if (entity.kind === 'angular') {
-      const vertex = entity.points[0];
-      const currentDirection = normalizedVector(vertex, currentPlacement) || { x: 1, y: 0 };
-      const radius = distance(vertex, targetPoint);
-      nextPlacement = {
-        x: vertex.x + currentDirection.x * radius,
-        y: vertex.y + currentDirection.y * radius,
-      };
-    }
-    entity.placement = nextPlacement;
-    const nextGripPoint = dimensionPlacementGripPoint(entity);
-    if (entity.textPosition) {
-      entity.textPosition = offsetPoint(entity.textPosition, {
-        x: nextGripPoint.x - currentPlacement.x,
-        y: nextGripPoint.y - currentPlacement.y,
-      });
-    }
-    return true;
-  }
-  const baseMatch = key.match(/^base-(\d+)$/);
-  if (baseMatch) {
-    const index = Number(baseMatch[1]);
-    const currentBasePoint = dimensionBaseGripPoints(entity)[index];
-    if (!currentBasePoint || !entity.points[index]) {
-      return false;
-    }
-    if (entity.kind === 'horizontal') {
-      entity.points[index].x = targetPoint.x;
-    }
-    else if (entity.kind === 'vertical') {
-      entity.points[index].y = targetPoint.y;
-    }
-    else {
-      const direction = normalizedVector(entity.points[0], entity.points[1]);
-      if (!direction) {
-        return false;
-      }
-      const displacement = (targetPoint.x - currentBasePoint.x) * direction.x +
-        (targetPoint.y - currentBasePoint.y) * direction.y;
-      entity.points[index] = offsetPoint(entity.points[index], {
-        x: direction.x * displacement,
-        y: direction.y * displacement,
-      });
-    }
-    return true;
-  }
-  const pointMatch = key.match(/^point-(\d+)$/);
-  if (!pointMatch) {
-    return false;
-  }
-  const index = Number(pointMatch[1]);
-  if (!entity.points[index]) {
-    return false;
-  }
-  entity.points[index] = { ...targetPoint };
-  return true;
-}
-
-function projectPointToLine(point, linePoint, direction) {
-  const lengthSquared = direction.x * direction.x + direction.y * direction.y;
-  if (lengthSquared <= SNAP_THRESHOLD) {
-    return { ...point };
-  }
-
-  const factor = (
-    (point.x - linePoint.x) * direction.x +
-    (point.y - linePoint.y) * direction.y
-  ) / lengthSquared;
-  return {
-    x: linePoint.x + factor * direction.x,
-    y: linePoint.y + factor * direction.y,
-  };
-}
-
-function distancePointToCircle(point, entity) {
-  return Math.abs(distance(point, entity.center) - entity.radius);
-}
-
-function distancePointToArc(point, entity) {
-  const angle = angleOfPoint(entity.center, point);
-  if (angleOnArc(angle, entity)) {
-    return Math.abs(distance(point, entity.center) - entity.radius);
-  }
-
-  return Math.min(
-    distance(point, pointAtCircleAngle(entity, entity.startAngle)),
-    distance(point, pointAtCircleAngle(entity, entity.endAngle)),
-  );
-}
-
-function polylineSegmentEntity(entity, index) {
-  if (!entity || entity.type !== 'POLYLINE' || !entity.segments[index]) {
-    return null;
-  }
-  const segment = entity.segments[index];
-  const start = entity.vertices[index];
-  const end = entity.vertices[(index + 1) % entity.vertices.length];
-  if (!start || !end) {
-    return null;
-  }
-  const options = {
-    layer: entity.layer,
-    lineStyle: entity.lineStyle,
-    lineType: entity.lineType,
-    lineColor: entity.lineColor,
-  };
-  if (segment.type === 'ARC' && segment.center) {
-    const radius = distance(segment.center, start);
-    if (radius <= SNAP_THRESHOLD) {
-      return null;
-    }
-    return new ArcEntity(
-      segment.center,
-      radius,
-      angleOfPoint(segment.center, start),
-      angleOfPoint(segment.center, end),
-      { ...options, clockwise: segment.clockwise !== false },
-    );
-  }
-  return new LineEntity(start, end, options);
-}
-
-function polylineSegmentEntities(entity) {
-  if (!entity || entity.type !== 'POLYLINE') {
-    return [];
-  }
-  return entity.segments
-    .map((_, index) => polylineSegmentEntity(entity, index))
-    .filter(Boolean);
-}
-
-function polylineDraftEntity(draft) {
-  if (!draft?.vertices?.length) {
-    return null;
-  }
-  return new PolylineEntity(draft.vertices, draft.segments || [], { closed: false });
-}
-
-function primitiveEntityParts(entity) {
-  if (entity?.type === 'INSERT') {
-    return entity.expandedEntities().flatMap((part) => primitiveEntityParts(part));
-  }
-  return entity?.type === 'POLYLINE' ? polylineSegmentEntities(entity) : entity ? [entity] : [];
-}
-
-function dimensionLineFromEntity(entity, pickPoint) {
-  if (entity?.type === 'LINE') {
-    return entity;
-  }
-  if (entity?.type !== 'POLYLINE') {
-    return null;
-  }
-  return polylineSegmentEntities(entity)
-    .filter((segment) => segment.type === 'LINE')
-    .sort((first, second) =>
-      distancePointToSegment(pickPoint, first.start, first.end) -
-      distancePointToSegment(pickPoint, second.start, second.end))[0] || null;
-}
-
-function dimensionKindForLine(line) {
-  const deltaX = Math.abs(line.end.x - line.start.x);
-  const deltaY = Math.abs(line.end.y - line.start.y);
-  if (deltaX <= SNAP_THRESHOLD) {
-    return 'vertical';
-  }
-  if (deltaY <= SNAP_THRESHOLD) {
-    return 'horizontal';
-  }
-  return 'aligned';
-}
-
-function dimensionCircularFromEntity(entity, pickPoint) {
-  if (isCircularEntity(entity)) {
-    return entity;
-  }
-  if (entity?.type !== 'POLYLINE') {
-    return null;
-  }
-  const closestSegment = polylineSegmentEntities(entity)
-    .sort((first, second) =>
-      entityDistanceToPoint(first, pickPoint) - entityDistanceToPoint(second, pickPoint))[0];
-  return closestSegment?.type === 'ARC' ? closestSegment : null;
-}
-
-function polylineReferencePoints(entity) {
-  const candidates = entity.vertices.map((point, index) => ({
-    type: 'endpoint',
-    key: `vertex-${index}`,
-    point,
-  }));
-  entity.segments.forEach((segment, index) => {
-    const geometry = polylineSegmentEntity(entity, index);
-    if (!geometry) {
-      return;
-    }
-    if (geometry.type === 'ARC') {
-      candidates.push({
-        type: 'midpoint',
-        key: `arc-${index}-midpoint`,
-        point: pointAtCircleAngle(geometry, arcMidAngle(geometry)),
-      });
-      candidates.push({ type: 'center', key: `arc-${index}-center`, point: geometry.center });
-    }
-    else {
-      candidates.push({
-        type: 'midpoint',
-        key: `segment-${index}-midpoint`,
-        point: entityMidpoint(geometry),
-      });
-    }
-  });
-  return candidates;
-}
-
-function fullCircleBoundaryIntersectionPoints(circularEntity, boundary) {
-  return intersectFullCircleBoundary(circularEntity, boundary, primitiveEntityParts);
-}
-
-function entityIntersectionPoints(first, second) {
-  return intersectEntities(first, second, primitiveEntityParts);
-}
-
-function entityDistanceToPoint(entity, point) {
-  if (entity.type === 'LINE') {
-    return distancePointToSegment(point, entity.start, entity.end);
-  }
-  if (entity.type === 'CIRCLE') {
-    return distancePointToCircle(point, entity);
-  }
-  if (entity.type === 'ARC') {
-    return distancePointToArc(point, entity);
-  }
-  if (entity.type === 'TEXT') {
-    const localPoint = rotatePointAround(point, entity.insertionPoint, -entity.angle);
-    const minX = entity.insertionPoint.x;
-    const maxX = minX + entity.width();
-    const minY = entity.insertionPoint.y - entity.height;
-    const maxY = entity.insertionPoint.y + entity.height * 0.22;
-    const deltaX = Math.max(minX - localPoint.x, 0, localPoint.x - maxX);
-    const deltaY = Math.max(minY - localPoint.y, 0, localPoint.y - maxY);
-    return Math.hypot(deltaX, deltaY);
-  }
-  if (entity.type === 'HATCH') {
-    const loops = entity.loops || [entity.boundary];
-    const insideFilledArea = loops.reduce(
-      (inside, loop) => pointInPolygon(point, loop) ? !inside : inside,
-      false,
-    );
-    return insideFilledArea
-      ? 0
-      : loops.reduce((nearest, loop) => Math.min(nearest, polygonDistanceToPoint(point, loop)), Infinity);
-  }
-  if (entity.type === 'POLYLINE') {
-    return entity.segments.reduce((nearest, segment, index) => {
-      const geometry = polylineSegmentEntity(entity, index);
-      if (!geometry) {
-        return nearest;
-      }
-      const halfWidth = Math.max(segment.startWidth, segment.endWidth) * 0.5;
-      return Math.min(nearest, Math.max(0, entityDistanceToPoint(geometry, point) - halfWidth));
-    }, Infinity);
-  }
-  if (entity.type === 'DIMENSION') {
-    const geometry = dimensionGeometry(entity);
-    const lineDistance = geometry.lines.reduce(
-      (nearest, line) => Math.min(nearest, distancePointToSegment(point, line.start, line.end)),
-      Infinity,
-    );
-    const arcDistance = geometry.arcs.reduce((nearest, arc) => Math.min(
-      nearest,
-      distancePointToArc(point, {
-        type: 'ARC',
-        center: arc.center,
-        radius: arc.radius,
-        startAngle: arc.startAngle,
-        endAngle: arc.endAngle,
-        clockwise: !arc.counterclockwise,
-      }),
-    ), Infinity);
-    return Math.min(lineDistance, arcDistance, distance(point, geometry.text.point));
-  }
-  if (entity.type === 'INSERT') {
-    return entity.expandedEntities().reduce(
-      (nearest, part) => Math.min(nearest, entityDistanceToPoint(part, point)),
-      distance(entity.insertionPoint, point),
-    );
-  }
-  return Infinity;
-}
-
-function entityIsNearPoint(entity, point, tolerance) {
-  if (!boundsContainsPoint(expandBounds(entity.bounds(), tolerance), point)) {
-    return false;
-  }
-  return entityDistanceToPoint(entity, point) <= tolerance;
-}
-
-function selectionWindowMode(selectionWindow) {
-  return selectionWindow.currentWorld.x >= selectionWindow.startWorld.x ? 'window' : 'capture';
 }
 
 class LineEntity {
