@@ -1,5 +1,5 @@
 /*
- * webCAD - Operaciones de modificacion
+ * webCAD - Recorte de sombreados
  * Copyright (C) 2026 Gonzalo Rodriguez
  * SPDX-License-Identifier: GPL-3.0-or-later
  */

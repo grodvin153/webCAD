@@ -144,12 +144,14 @@ import { createLineTrimOperations } from './operations/trim/line.js';
 import { createCircularTrimOperations } from './operations/trim/circular.js';
 import { createPolylineTrimOperations } from './operations/trim/polyline.js';
 import { createGroupedLineTrimOperations } from './operations/trim/grouped-lines.js';
-import { createTrimBoundaryOperations } from './operations/trim/boundaries.js';
-import { createHatchTrimOperations } from './operations/trim/hatch.js';
 import { createTrimOperations } from './operations/trim/index.js';
 import { createLineExtendOperations } from './operations/extend/line.js';
 import { createArcExtendOperations } from './operations/extend/arc.js';
 import { createPolylineExtendOperations } from './operations/extend/polyline.js';
+import { createHatchBoundaryGeometry } from './hatches/boundary.js';
+import { createHatchFaces } from './hatches/faces.js';
+import { createHatchFlood } from './hatches/flood.js';
+import { createHatchTrimOperations } from './hatches/trim.js';
 
 const canvas = document.getElementById('cad-canvas');
 const selectToolButton = document.getElementById('tool-select');
@@ -1557,9 +1559,19 @@ const {
   closedLineGroupPolygon,
   trimLineGroupAtPoint,
 } = createGroupedLineTrimOperations(operationDependencies);
-const { hatchBoundaryAtPoint } = createTrimBoundaryOperations({
+const {
+  circlePolygon,
+  curveGroupsFromFaceEdges,
+} = createHatchBoundaryGeometry(operationDependencies);
+const { curveArrangementFaces } = createHatchFaces({
   ...operationDependencies,
+  curveGroupsFromFaceEdges,
+});
+const { hatchBoundaryAtPoint } = createHatchFlood({
+  ...operationDependencies,
+  circlePolygon,
   closedLineGroupPolygon,
+  curveArrangementFaces,
 });
 const { trimHatchEntityAtPoint } = createHatchTrimOperations(operationDependencies);
 const { trimEntityAtPoint } = createTrimOperations({

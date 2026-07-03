@@ -1,84 +1,26 @@
 /*
- * webCAD - Operaciones de modificacion
+ * webCAD - Deteccion de caras cerradas
  * Copyright (C) 2026 Gonzalo Rodriguez
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-export function createTrimBoundaryOperations(dependencies) {
+export function createHatchFaces(dependencies) {
   const {
     SNAP_THRESHOLD,
     TWO_PI,
-    angleOfPoint,
-    arcSweep,
     boundsIntersectsBounds,
     circularParameter,
-    closedLineGroupPolygon,
+    curveGroupsFromFaceEdges,
     distance,
     entityArcSweep,
     entityIntersectionPoints,
-    isCircularEntity,
     lineParameter,
-    normalizeAngle,
-    pointAtCircleAngle,
     pointAtCircularParameter,
     pointAtLineParameter,
-    pointInPolygon,
     polygonSignedArea,
     polylineSegmentEntities,
-    primitiveEntityParts,
     uniqueSortedParameters,
   } = dependencies;
-
-  function circlePolygon(circle, segments = 96) {
-    const polygon = Array.from({ length: segments }, (_, index) =>
-      pointAtCircleAngle(circle, index * TWO_PI / segments));
-    polygon.gripIndices = [0, 0.25, 0.5, 0.75]
-      .map((parameter) => Math.round(parameter * segments) % segments);
-    polygon.curveGroups = [{
-      type: 'CIRCLE',
-      indices: polygon.map((_, index) => index),
-    }];
-    return polygon;
-  }
-
-  function curveGroupsFromFaceEdges(faceEdges) {
-    const runs = [];
-    faceEdges.forEach((edge, index) => {
-      if (!isCircularEntity(edge.sourceEntity)) {
-        return;
-      }
-      const previousRun = runs[runs.length - 1];
-      if (previousRun?.sourceEntity === edge.sourceEntity &&
-          previousRun.edgeIndices[previousRun.edgeIndices.length - 1] === index - 1) {
-        previousRun.edgeIndices.push(index);
-      }
-      else {
-        runs.push({ sourceEntity: edge.sourceEntity, edgeIndices: [index] });
-      }
-    });
-
-    if (
-      runs.length > 1 &&
-      runs[0].edgeIndices[0] === 0 &&
-      runs[runs.length - 1].edgeIndices[runs[runs.length - 1].edgeIndices.length - 1] === faceEdges.length - 1 &&
-      runs[0].sourceEntity === runs[runs.length - 1].sourceEntity
-    ) {
-      const firstRun = runs.shift();
-      const lastRun = runs.pop();
-      runs.unshift({
-        sourceEntity: firstRun.sourceEntity,
-        edgeIndices: [...lastRun.edgeIndices, ...firstRun.edgeIndices],
-      });
-    }
-
-    return runs.map((run) => ({
-      type: run.sourceEntity.type,
-      indices: [
-        ...run.edgeIndices,
-        (run.edgeIndices[run.edgeIndices.length - 1] + 1) % faceEdges.length,
-      ],
-    }));
-  }
 
   function curveArrangementFaces(doc) {
     const entities = doc.entities.flatMap((entity) => {
@@ -301,41 +243,7 @@ export function createTrimBoundaryOperations(dependencies) {
     return faces;
   }
 
-  function hatchBoundaryAtPoint(doc, point) {
-    const candidates = [];
-    const visitedGroups = new Set();
-    doc.topLevelEntities().forEach((entity) => {
-      if (entity.type === 'POLYLINE') {
-        const polygon = closedLineGroupPolygon(doc, entity);
-        if (polygon && pointInPolygon(point, polygon)) {
-          candidates.push(polygon);
-        }
-      }
-      if (entity.type === 'LINE' && entity.groupId && !visitedGroups.has(entity.groupId)) {
-        visitedGroups.add(entity.groupId);
-        const polygon = closedLineGroupPolygon(doc, entity);
-        if (polygon && pointInPolygon(point, polygon)) {
-          candidates.push(polygon);
-        }
-      }
-      if (entity.type === 'CIRCLE' && distance(entity.center, point) < entity.radius - SNAP_THRESHOLD) {
-        candidates.push(circlePolygon(entity));
-      }
-    });
-    curveArrangementFaces(doc).forEach((polygon) => {
-      if (pointInPolygon(point, polygon)) {
-        candidates.push(polygon);
-      }
-    });
-    candidates.sort((first, second) =>
-      Math.abs(polygonSignedArea(first)) - Math.abs(polygonSignedArea(second)));
-    return candidates[0] || null;
-  }
-
   return {
-    circlePolygon,
-    curveGroupsFromFaceEdges,
     curveArrangementFaces,
-    hatchBoundaryAtPoint,
   };
 }
