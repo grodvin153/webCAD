@@ -37,6 +37,10 @@ import {
 } from './properties/styles.js';
 import { DEFAULT_LAYER, createLayerServices } from './properties/layers.js';
 import { createProfileServices } from './properties/profiles.js';
+import { bindDialogEvents } from './ui/dialogs.js';
+import { createLayerUi } from './ui/layers.js';
+import { createMenuServices } from './ui/menus.js';
+import { createPreferenceServices } from './ui/preferences.js';
 import { commandLabel, REPEATABLE_COMMANDS } from './commands.js';
 import {
   angleInSweep,
@@ -268,7 +272,6 @@ let MAX_VIEW_SCALE = DRAWING_PROFILES.engineering.maxViewScale;
 let DEFAULT_DRAWING_SIZE = DRAWING_PROFILES.engineering.defaultDrawingSize;
 let UNITS_LABEL = DRAWING_PROFILES.engineering.unitsLabel;
 let nextEntityGroupId = 1;
-let layerCreationColor = 'aci7';
 
 const {
   activeDraftOrigin,
@@ -11416,70 +11419,18 @@ class CadController {
 
 const doc = new CadDocument();
 
-function loadNavigationDevice() {
-  try {
-    const savedDevice = localStorage.getItem('webcad-navigation-device');
-    return savedDevice === 'mouse' || savedDevice === 'trackpad'
-      ? savedDevice
-      : 'trackpad';
-  }
-  catch {
-    return 'trackpad';
-  }
-}
-
-function loadBooleanPreference(key, fallback) {
-  try {
-    const storedValue = localStorage.getItem(key);
-    return storedValue === null ? fallback : storedValue === 'true';
-  }
-  catch {
-    return fallback;
-  }
-}
-
-function loadLineStylePreference() {
-  try {
-    const storedStyle = localStorage.getItem('webcad-active-line-style');
-    return storedStyle && LINE_STYLES[storedStyle] ? storedStyle : DEFAULT_LINE_STYLE;
-  }
-  catch {
-    return DEFAULT_LINE_STYLE;
-  }
-}
-
-function loadIntegerPreference(key, fallback, min, max) {
-  try {
-    const storedValue = localStorage.getItem(key);
-    if (storedValue === null) {
-      return fallback;
-    }
-    const value = Number(storedValue);
-    return Number.isInteger(value) ? clamp(value, min, max) : fallback;
-  }
-  catch {
-    return fallback;
-  }
-}
-
-function loadDimensionStylePreference() {
-  try {
-    const styleId = localStorage.getItem('webcad-dimension-style');
-    return DIMENSION_STYLES[styleId] ? styleId : 'normal';
-  }
-  catch {
-    return 'normal';
-  }
-}
-
-function storePreference(key, value) {
-  try {
-    localStorage.setItem(key, String(value));
-  }
-  catch {
-    // Preferences remain active for the current session when storage is unavailable.
-  }
-}
+const {
+  loadBooleanPreference,
+  loadDimensionStylePreference,
+  loadIntegerPreference,
+  loadLineStylePreference,
+  loadNavigationDevice,
+  storePreference,
+} = createPreferenceServices({
+  lineStyles: LINE_STYLES,
+  defaultLineStyle: DEFAULT_LINE_STYLE,
+  dimensionStyles: DIMENSION_STYLES,
+});
 
 const state = {
   tool: 'select',
@@ -12352,445 +12303,87 @@ function redoDrawing() {
   renderer.draw();
 }
 
-function layerDisplayColor(layer) {
-  return getLineColor(layer.lineColor).color || getLineStyle(layer.lineStyle).color;
-}
+const menuServices = createMenuServices({
+  elements: {
+    canvas,
+    layerPicker,
+    layerToggle,
+    lineStylePicker,
+    lineStyleToggle,
+    lineStyleLabel,
+    lineStyleOptionButtons,
+    lineTypePicker,
+    lineTypeToggle,
+    lineTypeLabel,
+    lineTypeOptionButtons,
+    lineColorPicker,
+    lineColorToggle,
+    lineColorLabel,
+    lineColorOptionButtons,
+    toolGroupElements,
+  },
+  getState: () => state,
+  doc,
+  controller,
+  renderer,
+  styleServices,
+  storePreference,
+  setLayerPickerOpen: (open) => layerUi.setLayerPickerOpen(open),
+});
+const {
+  closeToolGroups,
+  setActiveLineColor,
+  setActiveLineStyle,
+  setActiveLineType,
+  setLineColorPickerOpen,
+  setLineStylePickerOpen,
+  setLineTypePickerOpen,
+  setToolGroupOpen,
+  syncLineColorPicker,
+  syncLineStylePicker,
+  syncLineTypePicker,
+} = menuServices;
 
-function layerCreationDisplayColor() {
-  return getLineColor(layerCreationColor).color || getLineStyle(layerStyleInput.value).color;
-}
-
-function ensureLayerColorOption(lineColorId) {
-  const normalized = normalizeLineColorId(lineColorId);
-  const existing = [...layerColorInput.options].find((option) => option.value === normalized);
-  if (existing) {
-    return existing;
-  }
-  const option = document.createElement('option');
-  option.value = normalized;
-  option.textContent = getLineColor(normalized).label;
-  option.dataset.customColor = 'true';
-  const otherOption = [...layerColorInput.options].find((candidate) => candidate.value === 'other');
-  layerColorInput.insertBefore(option, otherOption || null);
-  return option;
-}
-
-function syncLayerCreationColorControl() {
-  ensureLayerColorOption(layerCreationColor);
-  layerColorInput.value = normalizeLineColorId(layerCreationColor);
-  layerColorPreview.style.background = layerCreationDisplayColor();
-  const lineColor = getLineColor(layerCreationColor);
-  layerColorPaletteValue.textContent = lineColor.label;
-  layerColorGrid.querySelectorAll('[data-layer-palette-color]').forEach((button) => {
-    button.classList.toggle(
-      'is-active',
-      normalizeLineColorId(button.dataset.layerPaletteColor) === lineColor.id,
-    );
-  });
-}
-
-function setLayerColorPaletteOpen(open) {
-  layerColorPalette.hidden = !open;
-  layerPicker.classList.toggle('is-palette-open', open);
-  if (open) {
-    syncLayerCreationColorControl();
-  }
-}
-
-function selectLayerCreationColor(lineColorId) {
-  layerCreationColor = normalizeLineColorId(lineColorId);
-  syncLayerCreationColorControl();
-  setLayerColorPaletteOpen(false);
-}
-
-function buildLayerColorPalette() {
-  const paletteIds = [
-    DEFAULT_LINE_COLOR,
-    ...Array.from({ length: 255 }, (_, index) => normalizeLineColorId(String(index + 1))),
-  ];
-  const fragment = document.createDocumentFragment();
-  paletteIds.forEach((lineColorId, index) => {
-    const lineColor = getLineColor(lineColorId);
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'layer-color-cell';
-    button.dataset.layerPaletteColor = lineColor.id;
-    button.setAttribute('role', 'gridcell');
-    button.setAttribute('aria-label', index === 0 ? 'Color por defecto' : `Color ACI ${index}`);
-    button.title = index === 0 ? 'Por defecto' : `ACI ${index}`;
-    button.style.setProperty('--palette-color', lineColor.color || LINE_COLOR);
-    button.addEventListener('pointerdown', (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      selectLayerCreationColor(lineColor.id);
-    });
-    fragment.append(button);
-  });
-  layerColorGrid.replaceChildren(fragment);
-}
-
-function setLayerPickerOpen(open) {
-  if (open) {
-    setLineStylePickerOpen(false);
-    setLineTypePickerOpen(false);
-    setLineColorPickerOpen(false);
-  }
-  layerPicker.classList.toggle('is-open', open);
-  if (!open) {
-    layerPicker.classList.remove('is-creating', 'is-palette-open');
-    layerColorPalette.hidden = true;
-  }
-  layerToggle.setAttribute('aria-expanded', String(open));
-}
-
-function syncLayerPicker() {
-  const activeLayer = activeLayerDefinition();
-  layerLabel.textContent = activeLayerName();
-  layerActiveSwatch.style.setProperty('--layer-color', layerDisplayColor(activeLayer));
-  layerToggle.setAttribute(
-    'aria-label',
-    `Capa activa: ${activeLayerName()}, color ${getLineColor(activeLayer.lineColor).label}`,
-  );
-  layerList.replaceChildren();
-  state.layers.forEach((layer) => {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = `layer-option${layer.name === state.activeLayer ? ' is-active' : ''}`;
-    button.dataset.layerName = layer.name;
-    button.setAttribute('role', 'menuitem');
-
-    const swatch = document.createElement('span');
-    swatch.className = 'layer-swatch';
-    swatch.style.setProperty('--layer-color', layerDisplayColor(layer));
-    const label = document.createElement('span');
-    label.textContent = layer.name;
-    button.append(swatch, label);
-    button.addEventListener('pointerdown', (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      setActiveLayer(layer.name);
-    });
-    layerList.append(button);
-  });
-}
-
-function setActiveLayer(layerName) {
-  const layer = state.layers.find((candidate) => candidate.name === layerName);
-  if (!layer) {
-    return false;
-  }
-
-  state.activeLayer = layer.name;
-  state.activeLineStyle = normalizeLineStyleId(layer.lineStyle);
-  storePreference('webcad-active-line-style', state.activeLineStyle);
-  state.activeLineType = normalizeLineTypeId(layer.lineType);
-  state.activeLineColor = normalizeLineColorId(layer.lineColor);
-  const selectedEntities = state.selectedGrip?.entity
-    ? doc.groupEntities(state.selectedGrip.entity)
-    : [...doc.selectedEntities];
-  if (state.tool === 'select' && selectedEntities.length) {
-    doc.recordHistory();
-    selectedEntities.forEach((entity) => applyLayerToEntity(entity, layer));
-    doc.markDirty();
-    state.statusText = `${selectedEntities.length} entidad${selectedEntities.length === 1 ? '' : 'es'} movida${selectedEntities.length === 1 ? '' : 's'} a capa ${layer.name}`;
-  }
-  else {
-    state.statusText = `Capa activa: ${layer.name}`;
-  }
-
-  syncLayerPicker();
-  syncLineStylePicker();
-  syncLineTypePicker();
-  syncLineColorPicker();
-  setLayerPickerOpen(false);
-  controller.updateUiStatus();
-  renderer.draw();
-  requestAnimationFrame(() => canvas.focus({ preventScroll: true }));
-  return true;
-}
-
-function nextLayerName() {
-  let index = 1;
-  while (state.layers.some((layer) => layer.name.toLowerCase() === `capa ${index}`)) {
-    index += 1;
-  }
-  return `Capa ${index}`;
-}
-
-function openLayerCreation() {
-  layerNameInput.value = nextLayerName();
-  layerStyleInput.value = 'normal';
-  layerTypeInput.value = 'continuous';
-  layerColorInput.querySelectorAll('[data-custom-color]').forEach((option) => option.remove());
-  layerCreationColor = 'aci7';
-  syncLayerCreationColorControl();
-  setLayerColorPaletteOpen(false);
-  layerPicker.classList.add('is-open', 'is-creating');
-  layerToggle.setAttribute('aria-expanded', 'true');
-  requestAnimationFrame(() => {
-    layerNameInput.focus();
-    layerNameInput.select();
-  });
-}
-
-function createLayerFromPanel() {
-  const name = layerNameInput.value.trim();
-  if (!name) {
-    state.statusText = 'La capa necesita un nombre';
-    controller.updateUiStatus();
-    layerNameInput.focus();
-    return false;
-  }
-  if (state.layers.some((layer) => layer.name.toLowerCase() === name.toLowerCase())) {
-    state.statusText = `Ya existe la capa ${name}`;
-    controller.updateUiStatus();
-    layerNameInput.focus();
-    return false;
-  }
-
-  state.layers.push({
-    name,
-    lineStyle: normalizeLineStyleId(layerStyleInput.value),
-    lineType: normalizeLineTypeId(layerTypeInput.value),
-    lineColor: normalizeLineColorId(layerCreationColor),
-  });
-  layerPicker.classList.remove('is-creating');
-  setActiveLayer(name);
-  state.statusText = `Capa ${name} creada y activada`;
-  controller.updateUiStatus();
-  renderer.draw();
-  return true;
-}
-
-function syncLayersFromEntities(entities) {
-  const layers = [{ ...DEFAULT_LAYER }];
-  const addLayer = (definition) => {
-    const name = String(definition.name || '').trim();
-    if (!name || layers.some((layer) => layer.name.toLowerCase() === name.toLowerCase())) {
-      return;
-    }
-    layers.push({
-      name,
-      lineStyle: normalizeLineStyleId(definition.lineStyle),
-      lineType: normalizeLineTypeId(definition.lineType),
-      lineColor: normalizeLineColorId(definition.lineColor),
-    });
-  };
-  (entities.layerDefinitions || []).forEach(addLayer);
-  entities.forEach((entity) => {
-    const existing = layers.find(
-      (layer) => layer.name.toLowerCase() === String(entity.layer || '').toLowerCase(),
-    );
-    if (existing) {
-      entity.layer = existing.name;
-      return;
-    }
-    addLayer({
-      name: entity.layer || `Capa ${layers.length}`,
-      lineStyle: normalizeLineStyleId(entity.lineStyle),
-      lineType: normalizeLineTypeId(entity.lineType),
-      lineColor: normalizeLineColorId(entity.lineColor),
-    });
-  });
-  state.layers = layers;
-  state.activeLayer = DEFAULT_LAYER.name;
-  state.activeLineStyle = DEFAULT_LAYER.lineStyle;
-  state.activeLineType = DEFAULT_LAYER.lineType;
-  state.activeLineColor = DEFAULT_LAYER.lineColor;
-  syncLayerPicker();
-  syncLineStylePicker();
-  syncLineTypePicker();
-  syncLineColorPicker();
-}
-
-function setLineStylePickerOpen(open) {
-  if (open) {
-    setLayerPickerOpen(false);
-    setLineTypePickerOpen(false);
-    setLineColorPickerOpen(false);
-  }
-  lineStylePicker.classList.toggle('is-open', open);
-  lineStyleToggle.setAttribute('aria-expanded', String(open));
-}
-
-function setLineTypePickerOpen(open) {
-  if (open) {
-    layerPicker.classList.remove('is-open', 'is-creating');
-    layerToggle.setAttribute('aria-expanded', 'false');
-    lineStylePicker.classList.remove('is-open');
-    lineStyleToggle.setAttribute('aria-expanded', 'false');
-    setLineColorPickerOpen(false);
-  }
-  lineTypePicker.classList.toggle('is-open', open);
-  lineTypeToggle.setAttribute('aria-expanded', String(open));
-}
-
-function setLineColorPickerOpen(open) {
-  if (open) {
-    layerPicker.classList.remove('is-open', 'is-creating');
-    layerToggle.setAttribute('aria-expanded', 'false');
-    lineStylePicker.classList.remove('is-open');
-    lineStyleToggle.setAttribute('aria-expanded', 'false');
-    lineTypePicker.classList.remove('is-open');
-    lineTypeToggle.setAttribute('aria-expanded', 'false');
-  }
-  lineColorPicker.classList.toggle('is-open', open);
-  lineColorToggle.setAttribute('aria-expanded', String(open));
-}
-
-function syncLineStylePicker() {
-  const style = getLineStyle(state.activeLineStyle);
-  lineStyleLabel.textContent = style.label;
-  lineStyleOptionButtons.forEach((button) => {
-    const active = normalizeLineStyleId(button.dataset.lineStyle) === style.id;
-    button.classList.toggle('is-active', active);
-  });
-}
-
-function syncLineTypePicker() {
-  const lineType = getLineType(state.activeLineType);
-  const previewPath = lineTypeLabel.querySelector('path');
-  if (lineType.dash.length) {
-    previewPath.setAttribute('stroke-dasharray', lineType.dash.join(' '));
-  }
-  else {
-    previewPath.removeAttribute('stroke-dasharray');
-  }
-  lineTypeToggle.title = lineType.label;
-  lineTypeToggle.setAttribute('aria-label', `Tipo de linea: ${lineType.label}`);
-  lineTypeOptionButtons.forEach((button) => {
-    button.classList.toggle('is-active', normalizeLineTypeId(button.dataset.lineType) === lineType.id);
-  });
-}
-
-function syncLineColorPicker() {
-  const lineColor = getLineColor(state.activeLineColor);
-  lineColorLabel.className = `line-color-current is-${lineColor.id}`;
-  const predefinedColorIds = new Set([
-    'default', 'red', 'yellow', 'green', 'cyan', 'blue', 'magenta', 'aci7',
-  ]);
-  lineColorLabel.style.background = predefinedColorIds.has(lineColor.id)
-    ? ''
-    : lineColor.color;
-  lineColorToggle.title = lineColor.label;
-  lineColorToggle.setAttribute('aria-label', `Color de linea: ${lineColor.label}`);
-  lineColorOptionButtons.forEach((button) => {
-    button.classList.toggle('is-active', normalizeLineColorId(button.dataset.lineColor) === lineColor.id);
-  });
-}
-
-function setActiveLineStyle(styleId) {
-  const style = getLineStyle(styleId);
-  state.activeLineStyle = style.id;
-  storePreference('webcad-active-line-style', state.activeLineStyle);
-  syncLineStylePicker();
-
-  const selectedEntities = state.selectedGrip?.entity
-    ? [state.selectedGrip.entity]
-    : [...doc.selectedEntities];
-  if (state.tool === 'select' && selectedEntities.length) {
-    const changedEntities = selectedEntities.filter((entity) => normalizeLineStyleId(entity.lineStyle) !== style.id);
-    if (changedEntities.length) {
-      doc.recordHistory();
-      changedEntities.forEach((entity) => applyLineStyleToEntity(entity, style.id));
-      doc.markDirty();
-    }
-    state.statusText = changedEntities.length === 1
-      ? `Entidad cambiada a grosor ${style.label}`
-      : changedEntities.length
-        ? `${changedEntities.length} entidades cambiadas a grosor ${style.label}`
-        : `Entidad ya tiene grosor ${style.label}`;
-  }
-  else {
-    state.statusText = `Grosor activo: ${style.label}`;
-  }
-
-  controller.updateUiStatus();
-  renderer.draw();
-  setLineStylePickerOpen(false);
-  lineStyleToggle.blur();
-  requestAnimationFrame(() => canvas.focus({ preventScroll: true }));
-}
-
-function setActiveLineType(lineTypeId) {
-  const lineType = getLineType(lineTypeId);
-  state.activeLineType = lineType.id;
-  syncLineTypePicker();
-
-  const selectedEntities = state.selectedGrip?.entity
-    ? doc.groupEntities(state.selectedGrip.entity)
-    : [...doc.selectedEntities];
-  if (state.tool === 'select' && selectedEntities.length) {
-    const changedEntities = selectedEntities.filter(
-      (entity) => normalizeLineTypeId(entity.lineType) !== lineType.id,
-    );
-    if (changedEntities.length) {
-      doc.recordHistory();
-      changedEntities.forEach((entity) => applyLineTypeToEntity(entity, lineType.id));
-      doc.markDirty();
-    }
-    state.statusText = changedEntities.length === 1
-      ? `Entidad cambiada a linea ${lineType.label.toLowerCase()}`
-      : changedEntities.length
-        ? `${changedEntities.length} entidades cambiadas a linea ${lineType.label.toLowerCase()}`
-        : `La seleccion ya usa linea ${lineType.label.toLowerCase()}`;
-  }
-  else {
-    state.statusText = `Tipo de linea activo: ${lineType.label}`;
-  }
-
-  controller.updateUiStatus();
-  renderer.draw();
-  setLineTypePickerOpen(false);
-  lineTypeToggle.blur();
-  requestAnimationFrame(() => canvas.focus({ preventScroll: true }));
-}
-
-function setActiveLineColor(lineColorId) {
-  const lineColor = getLineColor(lineColorId);
-  state.activeLineColor = lineColor.id;
-  syncLineColorPicker();
-
-  const selectedEntities = state.selectedGrip?.entity
-    ? doc.groupEntities(state.selectedGrip.entity)
-    : [...doc.selectedEntities];
-  if (state.tool === 'select' && selectedEntities.length) {
-    const changedEntities = selectedEntities.filter(
-      (entity) => normalizeLineColorId(entity.lineColor) !== lineColor.id,
-    );
-    if (changedEntities.length) {
-      doc.recordHistory();
-      changedEntities.forEach((entity) => applyLineColorToEntity(entity, lineColor.id));
-      doc.markDirty();
-    }
-    state.statusText = changedEntities.length === 1
-      ? `Entidad cambiada a color ${lineColor.label.toLowerCase()}`
-      : changedEntities.length
-        ? `${changedEntities.length} entidades cambiadas a color ${lineColor.label.toLowerCase()}`
-        : `La seleccion ya usa color ${lineColor.label.toLowerCase()}`;
-  }
-  else {
-    state.statusText = `Color activo: ${lineColor.label}`;
-  }
-
-  controller.updateUiStatus();
-  renderer.draw();
-  setLineColorPickerOpen(false);
-  lineColorToggle.blur();
-  requestAnimationFrame(() => canvas.focus({ preventScroll: true }));
-}
-
-function setToolGroupOpen(groupElement, open) {
-  toolGroupElements.forEach((element) => {
-    const shouldOpen = element === groupElement && open;
-    element.classList.toggle('is-open', shouldOpen);
-    element.querySelector('.tool-menu-button')?.setAttribute('aria-expanded', String(shouldOpen));
-  });
-}
-
-function closeToolGroups() {
-  setToolGroupOpen(null, false);
-}
+const layerUi = createLayerUi({
+  elements: {
+    canvas,
+    picker: layerPicker,
+    toggle: layerToggle,
+    label: layerLabel,
+    list: layerList,
+    createOpenButton: layerCreateOpenButton,
+    createCancelButton: layerCreateCancelButton,
+    createConfirmButton: layerCreateConfirmButton,
+    nameInput: layerNameInput,
+    styleInput: layerStyleInput,
+    typeInput: layerTypeInput,
+    colorInput: layerColorInput,
+    activeSwatch: layerActiveSwatch,
+    colorPreview: layerColorPreview,
+    colorPalette: layerColorPalette,
+    colorPaletteValue: layerColorPaletteValue,
+    colorGrid: layerColorGrid,
+  },
+  getState: () => state,
+  doc,
+  controller,
+  renderer,
+  defaultLayer: DEFAULT_LAYER,
+  defaultLineColor: DEFAULT_LINE_COLOR,
+  lineColor: LINE_COLOR,
+  styleServices,
+  applyLayerToEntity,
+  activeLayerDefinition,
+  activeLayerName,
+  menuServices,
+  storePreference,
+});
+const {
+  buildLayerColorPalette,
+  setLayerPickerOpen,
+  syncLayerPicker,
+  syncLayersFromEntities,
+} = layerUi;
 
 function runCommand(command) {
   if (REPEATABLE_COMMANDS.has(command)) {
@@ -12972,50 +12565,7 @@ importDxfButton.addEventListener('click', () => runCommand('import-dxf'));
 lineStyleToggle.addEventListener('click', () => {
   setLineStylePickerOpen(!lineStylePicker.classList.contains('is-open'));
 });
-layerToggle.addEventListener('click', () => {
-  setLayerPickerOpen(!layerPicker.classList.contains('is-open'));
-});
-layerCreateOpenButton.addEventListener('pointerdown', (event) => {
-  event.preventDefault();
-  event.stopPropagation();
-  openLayerCreation();
-});
-layerCreateCancelButton.addEventListener('pointerdown', (event) => {
-  event.preventDefault();
-  event.stopPropagation();
-  layerPicker.classList.remove('is-creating', 'is-palette-open');
-  layerColorPalette.hidden = true;
-});
-layerCreateConfirmButton.addEventListener('pointerdown', (event) => {
-  event.preventDefault();
-  event.stopPropagation();
-  createLayerFromPanel();
-});
-layerNameInput.addEventListener('keydown', (event) => {
-  if (event.key === 'Enter') {
-    event.preventDefault();
-    event.stopPropagation();
-    createLayerFromPanel();
-  }
-  if (event.key === 'Escape') {
-    event.preventDefault();
-    event.stopPropagation();
-    layerPicker.classList.remove('is-creating', 'is-palette-open');
-    layerColorPalette.hidden = true;
-  }
-});
-layerColorInput.addEventListener('change', () => {
-  if (layerColorInput.value === 'other') {
-    ensureLayerColorOption(layerCreationColor);
-    layerColorInput.value = normalizeLineColorId(layerCreationColor);
-    setLayerColorPaletteOpen(true);
-    return;
-  }
-  selectLayerCreationColor(layerColorInput.value);
-});
-layerStyleInput.addEventListener('change', () => {
-  syncLayerCreationColorControl();
-});
+layerUi.bindEvents();
 lineStyleOptionButtons.forEach((button) => {
   button.addEventListener('pointerdown', (event) => {
     event.preventDefault();
@@ -13144,160 +12694,77 @@ importDxfInput.addEventListener('change', async (event) => {
   event.target.value = '';
 });
 
-drawingProfileConfirmButton.addEventListener('click', confirmDrawingProfileDialog);
-drawingProfileCancelButton.addEventListener('click', closeDrawingProfileDialog);
-drawingProfileCloseButton.addEventListener('click', closeDrawingProfileDialog);
-drawingProfileDialog.addEventListener('pointerdown', (event) => {
-  if (event.target === drawingProfileDialog) {
-    closeDrawingProfileDialog();
-  }
-});
-drawingProfileDialog.addEventListener('keydown', (event) => {
-  if (event.key === 'Enter') {
-    event.preventDefault();
-    event.stopPropagation();
-    confirmDrawingProfileDialog();
-  }
-  if (event.key === 'Escape') {
-    event.preventDefault();
-    event.stopPropagation();
-    closeDrawingProfileDialog();
-  }
-});
-
-settingsDialogConfirmButton.addEventListener('click', confirmSettingsDialog);
-settingsDialogCancelButton.addEventListener('click', closeSettingsDialog);
-settingsDialogCloseButton.addEventListener('click', closeSettingsDialog);
-settingsDialog.addEventListener('pointerdown', (event) => {
-  if (event.target === settingsDialog) {
-    closeSettingsDialog();
-  }
-});
-settingsDialog.addEventListener('keydown', (event) => {
-  if (event.key === 'Enter') {
-    event.preventDefault();
-    event.stopPropagation();
-    confirmSettingsDialog();
-  }
-  if (event.key === 'Escape') {
-    event.preventDefault();
-    event.stopPropagation();
-    closeSettingsDialog();
-  }
-});
-
-textDialogConfirmButton.addEventListener('click', confirmTextDialog);
-textDialogCancelButton.addEventListener('click', () => closeTextDialog(true));
-textDialogCloseButton.addEventListener('click', () => closeTextDialog(true));
-textDialog.addEventListener('pointerdown', (event) => {
-  if (event.target === textDialog) {
-    closeTextDialog(true);
-  }
-});
-[textContentInput, textHeightInput].forEach((input) => {
-  input.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') {
-      event.preventDefault();
-      confirmTextDialog();
-    }
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      closeTextDialog(true);
-    }
-  });
-});
-polylineWidthConfirmButton.addEventListener('click', confirmPolylineWidthDialog);
-polylineWidthCancelButton.addEventListener('click', closePolylineWidthDialog);
-polylineWidthCloseButton.addEventListener('click', closePolylineWidthDialog);
-polylineWidthDialog.addEventListener('pointerdown', (event) => {
-  if (event.target === polylineWidthDialog) {
-    closePolylineWidthDialog();
-  }
-});
-blockCreateConfirmButton.addEventListener('click', confirmBlockCreateDialog);
-blockCreateCancelButton.addEventListener('click', () => closeBlockCreateDialog(true));
-blockCreateCloseButton.addEventListener('click', () => closeBlockCreateDialog(true));
-blockCreateDialog.addEventListener('pointerdown', (event) => {
-  if (event.target === blockCreateDialog) {
-    closeBlockCreateDialog(true);
-  }
-});
-blockNameInput.addEventListener('keydown', (event) => {
-  if (event.key === 'Enter') {
-    event.preventDefault();
-    confirmBlockCreateDialog();
-  }
-  if (event.key === 'Escape') {
-    event.preventDefault();
-    closeBlockCreateDialog(true);
-  }
-});
-blockInsertConfirmButton.addEventListener('click', confirmBlockInsertDialog);
-blockInsertCancelButton.addEventListener('click', () => closeBlockInsertDialog(true));
-blockInsertCloseButton.addEventListener('click', () => closeBlockInsertDialog(true));
-blockInsertDialog.addEventListener('pointerdown', (event) => {
-  if (event.target === blockInsertDialog) {
-    closeBlockInsertDialog(true);
-  }
-});
-[blockInsertNameInput, blockInsertScaleInput, blockInsertRotationInput].forEach((input) => {
-  input.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') {
-      event.preventDefault();
-      confirmBlockInsertDialog();
-    }
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      closeBlockInsertDialog(true);
-    }
-  });
-});
-[polylineStartWidthInput, polylineEndWidthInput].forEach((input) => {
-  input.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') {
-      event.preventDefault();
-      confirmPolylineWidthDialog();
-    }
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      closePolylineWidthDialog();
-    }
-  });
-});
-hatchDialogConfirmButton.addEventListener('click', () => confirmHatchDialog());
-hatchDialogCancelButton.addEventListener('click', () => closeHatchDialog(true));
-hatchDialogCloseButton.addEventListener('click', () => closeHatchDialog(true));
-hatchDialog.addEventListener('pointerdown', (event) => {
-  if (event.target === hatchDialog) {
-    closeHatchDialog(true);
-  }
-});
-hatchDialog.addEventListener('keydown', (event) => {
-  if (event.key === 'Enter') {
-    event.preventDefault();
-    event.stopPropagation();
-    confirmHatchDialog();
-  }
-  if (event.key === 'Escape') {
-    event.preventDefault();
-    event.stopPropagation();
-    closeHatchDialog(true);
-  }
-});
-
-aboutDialogCloseButton.addEventListener('click', closeAboutDialog);
-aboutDialogConfirmButton.addEventListener('click', closeAboutDialog);
-aboutDialog.addEventListener('pointerdown', (event) => {
-  if (event.target === aboutDialog) {
-    closeAboutDialog();
-  }
-});
-aboutDialog.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape' || event.key === 'Enter') {
-    event.preventDefault();
-    event.stopPropagation();
-    closeAboutDialog();
-  }
+bindDialogEvents({
+  elements: {
+    drawingProfile: {
+      dialog: drawingProfileDialog,
+      confirmButton: drawingProfileConfirmButton,
+      cancelButton: drawingProfileCancelButton,
+      closeButton: drawingProfileCloseButton,
+    },
+    settings: {
+      dialog: settingsDialog,
+      confirmButton: settingsDialogConfirmButton,
+      cancelButton: settingsDialogCancelButton,
+      closeButton: settingsDialogCloseButton,
+    },
+    text: {
+      dialog: textDialog,
+      confirmButton: textDialogConfirmButton,
+      cancelButton: textDialogCancelButton,
+      closeButton: textDialogCloseButton,
+      inputs: [textContentInput, textHeightInput],
+    },
+    polylineWidth: {
+      dialog: polylineWidthDialog,
+      confirmButton: polylineWidthConfirmButton,
+      cancelButton: polylineWidthCancelButton,
+      closeButton: polylineWidthCloseButton,
+      inputs: [polylineStartWidthInput, polylineEndWidthInput],
+    },
+    blockCreate: {
+      dialog: blockCreateDialog,
+      confirmButton: blockCreateConfirmButton,
+      cancelButton: blockCreateCancelButton,
+      closeButton: blockCreateCloseButton,
+      nameInput: blockNameInput,
+    },
+    blockInsert: {
+      dialog: blockInsertDialog,
+      confirmButton: blockInsertConfirmButton,
+      cancelButton: blockInsertCancelButton,
+      closeButton: blockInsertCloseButton,
+      inputs: [blockInsertNameInput, blockInsertScaleInput, blockInsertRotationInput],
+    },
+    hatch: {
+      dialog: hatchDialog,
+      confirmButton: hatchDialogConfirmButton,
+      cancelButton: hatchDialogCancelButton,
+      closeButton: hatchDialogCloseButton,
+    },
+    about: {
+      dialog: aboutDialog,
+      confirmButton: aboutDialogConfirmButton,
+      closeButton: aboutDialogCloseButton,
+    },
+  },
+  actions: {
+    confirmDrawingProfile: confirmDrawingProfileDialog,
+    closeDrawingProfile: closeDrawingProfileDialog,
+    confirmSettings: confirmSettingsDialog,
+    closeSettings: closeSettingsDialog,
+    confirmText: confirmTextDialog,
+    closeText: closeTextDialog,
+    confirmPolylineWidth: confirmPolylineWidthDialog,
+    closePolylineWidth: closePolylineWidthDialog,
+    confirmBlockCreate: confirmBlockCreateDialog,
+    closeBlockCreate: closeBlockCreateDialog,
+    confirmBlockInsert: confirmBlockInsertDialog,
+    closeBlockInsert: closeBlockInsertDialog,
+    confirmHatch: confirmHatchDialog,
+    closeHatch: closeHatchDialog,
+    closeAbout: closeAboutDialog,
+  },
 });
 
 renderer.resize();
