@@ -41,6 +41,12 @@ import { bindDialogEvents } from './ui/dialogs.js';
 import { createLayerUi } from './ui/layers.js';
 import { createMenuServices } from './ui/menus.js';
 import { createPreferenceServices } from './ui/preferences.js';
+import { createArcEntityClass } from './entities/arc.js';
+import { createCircleEntityClass } from './entities/circle.js';
+import { createHatchEntityClass } from './entities/hatch.js';
+import { createLineEntityClass } from './entities/line.js';
+import { createPolylineEntityClass } from './entities/polyline.js';
+import { createTextEntityClass } from './entities/text.js';
 import { commandLabel, REPEATABLE_COMMANDS } from './commands.js';
 import {
   angleInSweep,
@@ -400,6 +406,17 @@ const {
   lineTypeFromDxf,
 });
 
+const LineEntity = createLineEntityClass(styleServices);
+const CircleEntity = createCircleEntityClass(styleServices);
+const ArcEntity = createArcEntityClass(styleServices);
+const PolylineEntity = createPolylineEntityClass({
+  style: styleServices,
+  polylineSegmentEntity,
+  polylineSegmentEntities,
+});
+const TextEntity = createTextEntityClass(styleServices);
+const HatchEntity = createHatchEntityClass(styleServices);
+
 function polylineIncomingTangent(draft) {
   const segmentIndex = draft.segments.length - 1;
   const segment = draft.segments[segmentIndex];
@@ -477,237 +494,6 @@ function arcCenterFromBulge(start, end, bulge) {
     x: midpoint.x + normal.x * offset,
     y: midpoint.y + normal.y * offset,
   };
-}
-
-class LineEntity {
-  constructor(start, end, options = {}) {
-    this.type = 'LINE';
-    this.start = { x: start.x, y: start.y };
-    this.end = { x: end.x, y: end.y };
-    this.groupId = options.groupId || null;
-    this.layer = options.layer || DEFAULT_LAYER.name;
-    applyLineStyleToEntity(this, options.lineStyle || DEFAULT_LINE_STYLE);
-    applyLineTypeToEntity(this, options.lineType || DEFAULT_LINE_TYPE);
-    applyLineColorToEntity(this, options.lineColor || DEFAULT_LINE_COLOR);
-  }
-
-  bounds() {
-    return createBounds(
-      Math.min(this.start.x, this.end.x),
-      Math.min(this.start.y, this.end.y),
-      Math.max(this.start.x, this.end.x),
-      Math.max(this.start.y, this.end.y),
-    );
-  }
-
-  length() {
-    return distance(this.start, this.end);
-  }
-}
-
-class CircleEntity {
-  constructor(center, radius, options = {}) {
-    this.type = 'CIRCLE';
-    this.center = { x: center.x, y: center.y };
-    this.radius = radius;
-    this.groupId = options.groupId || null;
-    this.layer = options.layer || DEFAULT_LAYER.name;
-    applyLineStyleToEntity(this, options.lineStyle || DEFAULT_LINE_STYLE);
-    applyLineTypeToEntity(this, options.lineType || DEFAULT_LINE_TYPE);
-    applyLineColorToEntity(this, options.lineColor || DEFAULT_LINE_COLOR);
-  }
-
-  bounds() {
-    return createBounds(
-      this.center.x - this.radius,
-      this.center.y - this.radius,
-      this.center.x + this.radius,
-      this.center.y + this.radius,
-    );
-  }
-
-  length() {
-    return Math.PI * 2 * this.radius;
-  }
-}
-
-class ArcEntity {
-  constructor(center, radius, startAngle, endAngle, options = {}) {
-    this.type = 'ARC';
-    this.center = { x: center.x, y: center.y };
-    this.radius = radius;
-    this.startAngle = normalizeAngle(startAngle);
-    this.endAngle = normalizeAngle(endAngle);
-    this.clockwise = options.clockwise !== false;
-    this.groupId = options.groupId || null;
-    this.layer = options.layer || DEFAULT_LAYER.name;
-    applyLineStyleToEntity(this, options.lineStyle || DEFAULT_LINE_STYLE);
-    applyLineTypeToEntity(this, options.lineType || DEFAULT_LINE_TYPE);
-    applyLineColorToEntity(this, options.lineColor || DEFAULT_LINE_COLOR);
-  }
-
-  bounds() {
-    const points = [
-      pointAtCircleAngle(this, this.startAngle),
-      pointAtCircleAngle(this, this.endAngle),
-    ];
-    for (const angle of [0, Math.PI * 0.5, Math.PI, Math.PI * 1.5]) {
-      if (angleOnArc(angle, this)) {
-        points.push(pointAtCircleAngle(this, angle));
-      }
-    }
-
-    return createBounds(
-      Math.min(...points.map((point) => point.x)),
-      Math.min(...points.map((point) => point.y)),
-      Math.max(...points.map((point) => point.x)),
-      Math.max(...points.map((point) => point.y)),
-    );
-  }
-
-  length() {
-    return this.radius * entityArcSweep(this);
-  }
-}
-
-class PolylineEntity {
-  constructor(vertices, segments, options = {}) {
-    this.type = 'POLYLINE';
-    this.vertices = vertices.map((point) => ({ x: point.x, y: point.y }));
-    this.closed = Boolean(options.closed);
-    const expectedSegments = this.closed
-      ? this.vertices.length
-      : Math.max(0, this.vertices.length - 1);
-    this.segments = segments.slice(0, expectedSegments).map((segment) => ({
-      type: segment.type === 'ARC' ? 'ARC' : 'LINE',
-      center: segment.center ? { x: segment.center.x, y: segment.center.y } : null,
-      clockwise: segment.clockwise !== false,
-      startWidth: Math.max(0, Number(segment.startWidth) || 0),
-      endWidth: Math.max(0, Number(segment.endWidth) || 0),
-    }));
-    while (this.segments.length < expectedSegments) {
-      this.segments.push({ type: 'LINE', center: null, clockwise: true, startWidth: 0, endWidth: 0 });
-    }
-    this.groupId = null;
-    this.layer = options.layer || DEFAULT_LAYER.name;
-    applyLineStyleToEntity(this, options.lineStyle || DEFAULT_LINE_STYLE);
-    applyLineTypeToEntity(this, options.lineType || DEFAULT_LINE_TYPE);
-    applyLineColorToEntity(this, options.lineColor || DEFAULT_LINE_COLOR);
-  }
-
-  bounds() {
-    let bounds = null;
-    this.segments.forEach((_, index) => {
-      const geometry = polylineSegmentEntity(this, index);
-      if (geometry) {
-        bounds = mergeBounds(bounds, geometry.bounds());
-      }
-    });
-    if (!bounds && this.vertices.length) {
-      bounds = createBounds(
-        Math.min(...this.vertices.map((point) => point.x)),
-        Math.min(...this.vertices.map((point) => point.y)),
-        Math.max(...this.vertices.map((point) => point.x)),
-        Math.max(...this.vertices.map((point) => point.y)),
-      );
-    }
-    const maximumWidth = this.segments.reduce(
-      (maximum, segment) => Math.max(maximum, segment.startWidth, segment.endWidth),
-      0,
-    );
-    return bounds ? expandBounds(bounds, maximumWidth * 0.5) : createBounds(0, 0, 0, 0);
-  }
-
-  length() {
-    return polylineSegmentEntities(this).reduce((total, segment) => total + segment.length(), 0);
-  }
-}
-
-class TextEntity {
-  constructor(insertionPoint, text, height, options = {}) {
-    this.type = 'TEXT';
-    this.insertionPoint = { x: insertionPoint.x, y: insertionPoint.y };
-    this.text = String(text || '');
-    this.height = Math.max(Number(height) || 0, SNAP_THRESHOLD);
-    this.angle = Number(options.angle) || 0;
-    this.groupId = options.groupId || null;
-    this.layer = options.layer || DEFAULT_LAYER.name;
-    applyLineStyleToEntity(this, options.lineStyle || DEFAULT_LINE_STYLE);
-    applyLineTypeToEntity(this, options.lineType || DEFAULT_LINE_TYPE);
-    applyLineColorToEntity(this, options.lineColor || DEFAULT_LINE_COLOR);
-  }
-
-  width() {
-    return Math.max(this.height * 0.35, this.text.length * this.height * 0.56);
-  }
-
-  bounds() {
-    const corners = [
-      { x: this.insertionPoint.x, y: this.insertionPoint.y - this.height },
-      { x: this.insertionPoint.x + this.width(), y: this.insertionPoint.y - this.height },
-      { x: this.insertionPoint.x + this.width(), y: this.insertionPoint.y + this.height * 0.22 },
-      { x: this.insertionPoint.x, y: this.insertionPoint.y + this.height * 0.22 },
-    ].map((point) => rotatePointAround(point, this.insertionPoint, this.angle));
-    return createBounds(
-      Math.min(...corners.map((point) => point.x)),
-      Math.min(...corners.map((point) => point.y)),
-      Math.max(...corners.map((point) => point.x)),
-      Math.max(...corners.map((point) => point.y)),
-    );
-  }
-
-  length() {
-    return this.width();
-  }
-}
-
-class HatchEntity {
-  constructor(boundary, options = {}) {
-    this.type = 'HATCH';
-    const requestedGripIndices = options.gripIndices || boundary.gripIndices;
-    const requestedCurveGroups = options.curveGroups || boundary.curveGroups;
-    const requestedLoops = Array.isArray(options.loops) && options.loops.length
-      ? options.loops
-      : [boundary];
-    this.loops = requestedLoops
-      .filter((loop) => Array.isArray(loop) && loop.length >= 3)
-      .map((loop) => loop.map((point) => ({ x: point.x, y: point.y })));
-    if (!this.loops.length) {
-      this.loops = [boundary.map((point) => ({ x: point.x, y: point.y }))];
-    }
-    this.boundary = this.loops[0];
-    this.gripIndices = Array.isArray(requestedGripIndices)
-      ? [...new Set(requestedGripIndices)]
-        .filter((index) => Number.isInteger(index) && index >= 0 && index < this.boundary.length)
-      : this.boundary.map((_, index) => index);
-    this.curveGroups = Array.isArray(requestedCurveGroups)
-      ? requestedCurveGroups.map((group) => ({
-        type: group.type,
-        indices: [...group.indices],
-      }))
-      : [];
-    this.pattern = 'solid';
-    this.groupId = null;
-    this.layer = options.layer || DEFAULT_LAYER.name;
-    applyLineStyleToEntity(this, options.lineStyle || DEFAULT_LINE_STYLE);
-    applyLineTypeToEntity(this, options.lineType || DEFAULT_LINE_TYPE);
-    applyLineColorToEntity(this, options.lineColor || DEFAULT_LINE_COLOR);
-  }
-
-  bounds() {
-    const points = this.loops.flat();
-    return createBounds(
-      Math.min(...points.map((point) => point.x)),
-      Math.min(...points.map((point) => point.y)),
-      Math.max(...points.map((point) => point.x)),
-      Math.max(...points.map((point) => point.y)),
-    );
-  }
-
-  length() {
-    return this.loops.reduce((total, loop) => total + loop.reduce((loopTotal, point, index) =>
-      loopTotal + distance(point, loop[(index + 1) % loop.length]), 0), 0);
-  }
 }
 
 function dimensionStyleMetrics(styleId) {
