@@ -33,7 +33,10 @@ import {
   SNAP_MARKER_SIZE,
   X_AXIS_COLOR,
   Y_AXIS_COLOR,
-} from './cad-styles.js';
+  createStyleServices,
+} from './properties/styles.js';
+import { DEFAULT_LAYER, createLayerServices } from './properties/layers.js';
+import { createProfileServices } from './properties/profiles.js';
 import { commandLabel, REPEATABLE_COMMANDS } from './commands.js';
 import {
   angleInSweep,
@@ -264,12 +267,6 @@ let MIN_VIEW_SCALE = DRAWING_PROFILES.engineering.minViewScale;
 let MAX_VIEW_SCALE = DRAWING_PROFILES.engineering.maxViewScale;
 let DEFAULT_DRAWING_SIZE = DRAWING_PROFILES.engineering.defaultDrawingSize;
 let UNITS_LABEL = DRAWING_PROFILES.engineering.unitsLabel;
-const DEFAULT_LAYER = {
-  name: 'Normal',
-  lineStyle: 'normal',
-  lineType: 'continuous',
-  lineColor: 'default',
-};
 let nextEntityGroupId = 1;
 let layerCreationColor = 'aci7';
 
@@ -296,148 +293,48 @@ function createEntityGroupId(prefix = 'group') {
   return id;
 }
 
-function normalizeLineStyleId(value) {
-  const normalized = String(value || '').toLowerCase();
-  const byLayer = Object.values(LINE_STYLES).find(
-    (style) => style.layer.toLowerCase() === normalized,
-  );
-  if (byLayer) {
-    return byLayer.id;
-  }
-  return LINE_STYLES[normalized] ? normalized : DEFAULT_LINE_STYLE;
-}
+const styleServices = createStyleServices(() => state);
+const {
+  activeLineColorId,
+  activeLineStyleId,
+  activeLineTypeId,
+  applyLineColorToEntity,
+  applyLineStyleToEntity,
+  applyLineTypeToEntity,
+  getLineColor,
+  getLineStyle,
+  getLineType,
+  lineColorFromDxf,
+  lineStyleFromDxf,
+  lineTypeFromDxf,
+  normalizeLineColorId,
+  normalizeLineStyleId,
+  normalizeLineTypeId,
+} = styleServices;
 
-function lineStyleFromDxf(record, fallbackStyle = null) {
-  const lineWeight = Number(record['370']);
-  if (Number.isFinite(lineWeight) && lineWeight > 0) {
-    if (lineWeight <= 37) {
-      return 'auxiliar';
-    }
-    if (lineWeight >= 65) {
-      return 'gruesa';
-    }
-    return 'normal';
-  }
-  if (fallbackStyle) {
-    return normalizeLineStyleId(fallbackStyle);
-  }
-  return normalizeLineStyleId(record['8']);
-}
+const {
+  activeDrawingProfile,
+  drawingProfileById,
+  profileLineTypeDash,
+} = createProfileServices({
+  getState: () => state,
+  getLineType,
+});
 
-function getLineStyle(styleId) {
-  return LINE_STYLES[normalizeLineStyleId(styleId)];
-}
-
-function activeLineStyleId() {
-  return normalizeLineStyleId(state.activeLineStyle);
-}
-
-function applyLineStyleToEntity(entity, styleId) {
-  const style = getLineStyle(styleId);
-  entity.lineStyle = style.id;
-  entity.color = getLineColor(entity.lineColor).color || style.color;
-}
-
-function normalizeLineTypeId(value) {
-  const normalized = String(value || '').trim().toLowerCase();
-  const byDxfName = Object.values(LINE_TYPES).find(
-    (lineType) => lineType.dxfName.toLowerCase() === normalized,
-  );
-  return byDxfName?.id || (LINE_TYPES[normalized] ? normalized : DEFAULT_LINE_TYPE);
-}
-
-function getLineType(lineTypeId) {
-  return LINE_TYPES[normalizeLineTypeId(lineTypeId)];
-}
-
-function drawingProfileById(profileId) {
-  return DRAWING_PROFILES[profileId] || DRAWING_PROFILES.engineering;
-}
-
-function activeDrawingProfile() {
-  return drawingProfileById(state.drawingProfile);
-}
-
-function profileLineTypeDash(lineTypeId) {
-  const scale = activeDrawingProfile().lineTypeScale;
-  return getLineType(lineTypeId).dash.map((length) => length * scale);
-}
-
-function activeLineTypeId() {
-  return normalizeLineTypeId(state.activeLineType);
-}
-
-function applyLineTypeToEntity(entity, lineTypeId) {
-  entity.lineType = getLineType(lineTypeId).id;
-}
-
-function lineTypeFromDxf(record, fallbackType = null) {
-  const rawType = String(record['6'] || '').trim().toUpperCase();
-  if (!rawType || rawType === 'BYLAYER' || rawType === 'BYBLOCK') {
-    return normalizeLineTypeId(fallbackType || DEFAULT_LINE_TYPE);
-  }
-  return normalizeLineTypeId(rawType);
-}
-
-function normalizeLineColorId(value) {
-  const normalized = String(value || '').trim().toLowerCase();
-  const numericAci = Number(normalized);
-  const byAci = Number.isFinite(numericAci)
-    ? Object.values(LINE_COLORS).find((lineColor) => lineColor.aci === Math.abs(numericAci))
-    : null;
-  return byAci?.id || (LINE_COLORS[normalized] ? normalized : DEFAULT_LINE_COLOR);
-}
-
-function getLineColor(lineColorId) {
-  return LINE_COLORS[normalizeLineColorId(lineColorId)];
-}
-
-function activeLineColorId() {
-  return normalizeLineColorId(state.activeLineColor);
-}
-
-function applyLineColorToEntity(entity, lineColorId) {
-  const lineColor = getLineColor(lineColorId);
-  entity.lineColor = lineColor.id;
-  entity.color = lineColor.color || getLineStyle(entity.lineStyle).color;
-}
-
-function lineColorFromDxf(record, fallbackColor = null) {
-  const aci = Number(record['62']);
-  if (!Number.isFinite(aci) || aci === 0 || Math.abs(aci) === 256) {
-    return normalizeLineColorId(fallbackColor || DEFAULT_LINE_COLOR);
-  }
-  return normalizeLineColorId(aci);
-}
-
-function dxfEntityOptions(record, layerDefinitionMap) {
-  const requestedLayer = String(record['8'] || DEFAULT_LAYER.name).trim();
-  const layer = layerDefinitionMap.get(requestedLayer.toLowerCase()) || null;
-  return {
-    layer: layer?.name || requestedLayer,
-    lineStyle: lineStyleFromDxf(record, layer?.lineStyle),
-    lineType: lineTypeFromDxf(record, layer?.lineType),
-    lineColor: lineColorFromDxf(record, layer?.lineColor),
-  };
-}
-
-function activeLayerDefinition() {
-  return state.layers.find((layer) => layer.name === state.activeLayer) || state.layers[0];
-}
-
-function activeLayerName() {
-  return activeLayerDefinition()?.name || DEFAULT_LAYER.name;
-}
-
-function applyLayerToEntity(entity, layer) {
-  if (!entity || !layer) {
-    return;
-  }
-  entity.layer = layer.name;
-  applyLineStyleToEntity(entity, entity.type === 'DIMENSION' ? 'auxiliar' : layer.lineStyle);
-  applyLineTypeToEntity(entity, entity.type === 'DIMENSION' ? 'continuous' : layer.lineType);
-  applyLineColorToEntity(entity, layer.lineColor);
-}
+const {
+  activeLayerDefinition,
+  activeLayerName,
+  applyLayerToEntity,
+  dxfEntityOptions,
+} = createLayerServices({
+  getState: () => state,
+  applyLineColorToEntity,
+  applyLineStyleToEntity,
+  applyLineTypeToEntity,
+  lineColorFromDxf,
+  lineStyleFromDxf,
+  lineTypeFromDxf,
+});
 
 function dimensionPlacementGripPoint(entity) {
   const geometry = dimensionGeometry(entity);

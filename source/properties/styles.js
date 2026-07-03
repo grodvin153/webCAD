@@ -138,3 +138,124 @@ for (let aci = 8; aci <= 255; aci += 1) {
     aci,
   };
 }
+
+export function createStyleServices(getState) {
+  function normalizeLineStyleId(value) {
+    const normalized = String(value || '').toLowerCase();
+    const byLayer = Object.values(LINE_STYLES).find(
+      (style) => style.layer.toLowerCase() === normalized,
+    );
+    if (byLayer) {
+      return byLayer.id;
+    }
+    return LINE_STYLES[normalized] ? normalized : DEFAULT_LINE_STYLE;
+  }
+
+  function lineStyleFromDxf(record, fallbackStyle = null) {
+    const lineWeight = Number(record['370']);
+    if (Number.isFinite(lineWeight) && lineWeight > 0) {
+      if (lineWeight <= 37) {
+        return 'auxiliar';
+      }
+      if (lineWeight >= 65) {
+        return 'gruesa';
+      }
+      return 'normal';
+    }
+    if (fallbackStyle) {
+      return normalizeLineStyleId(fallbackStyle);
+    }
+    return normalizeLineStyleId(record['8']);
+  }
+
+  function getLineStyle(styleId) {
+    return LINE_STYLES[normalizeLineStyleId(styleId)];
+  }
+
+  function activeLineStyleId() {
+    return normalizeLineStyleId(getState().activeLineStyle);
+  }
+
+  function normalizeLineTypeId(value) {
+    const normalized = String(value || '').trim().toLowerCase();
+    const byDxfName = Object.values(LINE_TYPES).find(
+      (lineType) => lineType.dxfName.toLowerCase() === normalized,
+    );
+    return byDxfName?.id || (LINE_TYPES[normalized] ? normalized : DEFAULT_LINE_TYPE);
+  }
+
+  function getLineType(lineTypeId) {
+    return LINE_TYPES[normalizeLineTypeId(lineTypeId)];
+  }
+
+  function activeLineTypeId() {
+    return normalizeLineTypeId(getState().activeLineType);
+  }
+
+  function applyLineTypeToEntity(entity, lineTypeId) {
+    entity.lineType = getLineType(lineTypeId).id;
+  }
+
+  function lineTypeFromDxf(record, fallbackType = null) {
+    const rawType = String(record['6'] || '').trim().toUpperCase();
+    if (!rawType || rawType === 'BYLAYER' || rawType === 'BYBLOCK') {
+      return normalizeLineTypeId(fallbackType || DEFAULT_LINE_TYPE);
+    }
+    return normalizeLineTypeId(rawType);
+  }
+
+  function normalizeLineColorId(value) {
+    const normalized = String(value || '').trim().toLowerCase();
+    const numericAci = Number(normalized);
+    const byAci = Number.isFinite(numericAci)
+      ? Object.values(LINE_COLORS).find((lineColor) => lineColor.aci === Math.abs(numericAci))
+      : null;
+    return byAci?.id || (LINE_COLORS[normalized] ? normalized : DEFAULT_LINE_COLOR);
+  }
+
+  function getLineColor(lineColorId) {
+    return LINE_COLORS[normalizeLineColorId(lineColorId)];
+  }
+
+  function activeLineColorId() {
+    return normalizeLineColorId(getState().activeLineColor);
+  }
+
+  function applyLineStyleToEntity(entity, styleId) {
+    const style = getLineStyle(styleId);
+    entity.lineStyle = style.id;
+    entity.color = getLineColor(entity.lineColor).color || style.color;
+  }
+
+  function applyLineColorToEntity(entity, lineColorId) {
+    const lineColor = getLineColor(lineColorId);
+    entity.lineColor = lineColor.id;
+    entity.color = lineColor.color || getLineStyle(entity.lineStyle).color;
+  }
+
+  function lineColorFromDxf(record, fallbackColor = null) {
+    const aci = Number(record['62']);
+    if (!Number.isFinite(aci) || aci === 0 || Math.abs(aci) === 256) {
+      return normalizeLineColorId(fallbackColor || DEFAULT_LINE_COLOR);
+    }
+    return normalizeLineColorId(aci);
+  }
+
+  return {
+    activeLineColorId,
+    activeLineStyleId,
+    activeLineTypeId,
+    applyLineColorToEntity,
+    applyLineStyleToEntity,
+    applyLineTypeToEntity,
+    getLineColor,
+    getLineStyle,
+    getLineType,
+    lineColorFromDxf,
+    lineStyleFromDxf,
+    lineTypeFromDxf,
+    normalizeLineColorId,
+    normalizeLineStyleId,
+    normalizeLineTypeId,
+  };
+}
