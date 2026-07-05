@@ -4174,7 +4174,11 @@ class CadRenderer {
     if (!draft?.firstPoint || !this.state.mouseWorld) {
       return;
     }
-    const secondPoint = resolveCursorPoint(this.state.mouseWorld, this.state);
+    const secondPoint = resolvePointForState(
+      this.state.mouseWorld,
+      this.state,
+      draft.firstPoint,
+    );
     if (!secondPoint || distance(draft.firstPoint, secondPoint) <= SNAP_THRESHOLD) {
       return;
     }
@@ -4415,6 +4419,25 @@ class CadController {
 
   resolveInputPoint(point) {
     return resolveCursorPoint(point, this.state);
+  }
+
+  resolveMirrorAxisPoint(point) {
+    return resolvePointForState(
+      point,
+      this.state,
+      this.state.mirrorDraft?.firstPoint || null,
+    );
+  }
+
+  updateMirrorStatusGuidance() {
+    const draft = this.state.mirrorDraft;
+    if (this.state.tool !== 'mirror' || !draft || draft.selecting) return;
+    const snapLabel = this.state.activeObjectSnap
+      ? ` · OSNAP ${formatSnapType(this.state.activeObjectSnap.type)}`
+      : ' · OSNAP disponible';
+    this.state.statusText = draft.firstPoint
+      ? `Simetria: indique segundo punto del eje${snapLabel} · clic para confirmar`
+      : `Simetria: indique primer punto del eje${snapLabel}`;
   }
 
   clearShortcutPrefix() {
@@ -5133,7 +5156,7 @@ class CadController {
       if (this.state.distanceInput) {
         return this.handleDistanceInputKey({ key: 'Enter' });
       }
-      const secondPoint = resolveCursorPoint(this.state.mouseWorld, this.state);
+      const secondPoint = this.resolveMirrorAxisPoint(this.state.mouseWorld);
       return this.mirrorSelectionAcross(secondPoint);
     }
     if (this.state.tool === 'select-set' && this.state.selectionSetDraft?.selecting) {
@@ -5754,7 +5777,7 @@ class CadController {
       selecting: !sourceEntities.length,
     };
     this.state.statusText = sourceEntities.length
-      ? `Simetria de ${sourceEntities.length} entidad${sourceEntities.length === 1 ? '' : 'es'} - indique primer punto del eje`
+      ? `Simetria de ${sourceEntities.length} entidad${sourceEntities.length === 1 ? '' : 'es'} - indique primer punto del eje · OSNAP activo`
       : 'Simetria: seleccione objetos y confirme con Enter, Espacio o clic derecho';
     this.updateUiStatus();
     this.renderer.draw();
@@ -5902,7 +5925,7 @@ class CadController {
     }
     this.rememberSelectionSet(sourceEntities);
     this.state.mirrorDraft = { sourceEntities, firstPoint: null, selecting: false };
-    this.state.statusText = `Simetria de ${sourceEntities.length} entidad${sourceEntities.length === 1 ? '' : 'es'} - indique primer punto del eje`;
+    this.state.statusText = `Simetria de ${sourceEntities.length} entidad${sourceEntities.length === 1 ? '' : 'es'} - indique primer punto del eje · OSNAP activo`;
     this.updateCanvasCursorMode();
     return true;
   }
@@ -7061,7 +7084,7 @@ class CadController {
       }
 
       if (this.state.mirrorDraft?.firstPoint) {
-        const cursor = resolveCursorPoint(this.state.mouseWorld, this.state);
+        const cursor = this.resolveMirrorAxisPoint(this.state.mouseWorld);
         const targetPoint = coordinateTarget ||
           (inputDistance !== null && cursor
             ? pointFromDistance(this.state.mirrorDraft.firstPoint, cursor, inputDistance)
@@ -7643,10 +7666,13 @@ class CadController {
         this.renderer.draw();
         return;
       }
-      const point = this.resolveInputPoint(worldPoint);
+      const point = this.resolveMirrorAxisPoint(worldPoint);
       if (!this.state.mirrorDraft.firstPoint) {
         this.state.mirrorDraft.firstPoint = point;
-        this.state.statusText = 'Primer punto del eje indicado - indique segundo punto';
+        const snapLabel = this.state.activeObjectSnap
+          ? ` con OSNAP ${formatSnapType(this.state.activeObjectSnap.type)}`
+          : '';
+        this.state.statusText = `Primer punto del eje indicado${snapLabel} - indique segundo punto`;
       }
       else {
         this.mirrorSelectionAcross(point);
@@ -7900,6 +7926,11 @@ class CadController {
 
   onPointerMove(event) {
     this.updateMouse(event);
+
+    if (this.state.tool === 'mirror' && this.state.mirrorDraft && !this.state.mirrorDraft.selecting) {
+      this.resolveMirrorAxisPoint(this.state.mouseWorld);
+      this.updateMirrorStatusGuidance();
+    }
 
     if (this.state.selectionWindow) {
       const deltaX = this.state.mouseScreen.x - this.state.selectionWindow.startScreen.x;
