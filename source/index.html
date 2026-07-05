@@ -22,6 +22,7 @@
             <button class="submenu-item" type="button" data-command="settings">Configuracion...</button>
             <button class="submenu-item" type="button" data-command="import-dxf">Importar DXF</button>
             <button class="submenu-item" type="button" data-command="export-dxf">Exportar DXF</button>
+            <button class="submenu-item" type="button" data-command="import-png">Importar PNG...</button>
           </div>
         </div>
         <div class="menu-item">
@@ -757,7 +758,32 @@
   </main>
 
   <input id="import-dxf-input" type="file" accept=".dxf,text/plain" hidden>
-
+  <input id="import-png-input" type="file" accept=".png,image/png" hidden>
+  <div id="image-calibration-dialog" class="cad-dialog-backdrop" hidden>
+    <section class="cad-dialog" role="dialog" aria-modal="true" aria-labelledby="image-calibration-title">
+      <header>
+        <div>
+          <span class="cad-dialog-kicker">IMAGEN DE REFERENCIA</span>
+          <h2 id="image-calibration-title">Calibrar escala</h2>
+        </div>
+        <button id="image-calibration-close" class="cad-dialog-close" type="button" aria-label="Cerrar">×</button>
+      </header>
+      <label class="cad-dialog-field">
+        <span>Distancia medida en la imagen</span>
+        <input id="image-calibration-measured" type="text" readonly>
+      </label>
+      <label class="cad-dialog-field">
+        <span>Longitud real</span>
+        <input id="image-calibration-length" type="number" min="0.000001" step="any" autocomplete="off">
+      </label>
+      <p class="cad-dialog-note">Alternativa al segmento CAD: la imagen se escala conservando fijo el primer punto marcado.</p>
+      <div id="image-calibration-error" class="cad-dialog-error" aria-live="polite"></div>
+      <footer>
+        <button id="image-calibration-cancel" type="button">Cancelar</button>
+        <button id="image-calibration-confirm" class="is-primary" type="button">Aplicar</button>
+      </footer>
+    </section>
+  </div>
   <div id="drawing-profile-dialog" class="cad-dialog-backdrop" hidden>
     <section class="cad-dialog" role="dialog" aria-modal="true" aria-labelledby="drawing-profile-title">
       <header>

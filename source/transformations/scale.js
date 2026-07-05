@@ -33,6 +33,14 @@ export function scaleEntityByFactors(entity, scaleX, scaleY) {
     entity.height *= uniformScale;
     return true;
   }
+  if (entity.type === 'IMAGE') {
+    entity.center = scalePointFromOrigin(entity.center, scaleX, scaleY);
+    entity.width *= Math.abs(scaleX);
+    entity.height *= Math.abs(scaleY);
+    entity.flipX = Boolean(entity.flipX) !== (scaleX < 0);
+    entity.flipY = Boolean(entity.flipY) !== (scaleY < 0);
+    return true;
+  }
   if (entity.type === 'HATCH') {
     entity.loops = (entity.loops || [entity.boundary]).map((loop) =>
       loop.map((point) => scalePointFromOrigin(point, scaleX, scaleY)));

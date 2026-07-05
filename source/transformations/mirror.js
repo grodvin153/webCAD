@@ -97,6 +97,18 @@ export function mirrorEntityAcrossAxis(entity, firstPoint, secondPoint) {
     entity.rotation = -angleOfPoint(entity.insertionPoint, mirroredXAxis) * 180 / Math.PI;
     entity.scaleY *= -1;
   }
+  else if (entity.type === 'IMAGE') {
+    const oldCenter = { ...entity.center };
+    const angle = entity.rotation * Math.PI / 180;
+    const oldXAxis = {
+      x: oldCenter.x + Math.cos(angle),
+      y: oldCenter.y + Math.sin(angle),
+    };
+    entity.center = mirrorPoint(oldCenter);
+    const mirroredXAxis = mirrorPoint(oldXAxis);
+    entity.rotation = angleOfPoint(entity.center, mirroredXAxis) * 180 / Math.PI;
+    entity.flipY = !entity.flipY;
+  }
   else {
     return false;
   }

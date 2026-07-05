@@ -45,6 +45,7 @@ export function createHitTesting({ dimensionGeometry, polylineSegmentEntity }) {
       const deltaY = Math.max(minY - localPoint.y, 0, localPoint.y - maxY);
       return Math.hypot(deltaX, deltaY);
     }
+    if (entity.type === 'IMAGE') return entity.distanceToPoint(point);
     if (entity.type === 'HATCH') {
       const loops = entity.loops || [entity.boundary];
       const insideFilledArea = loops.reduce(

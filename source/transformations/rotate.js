@@ -41,6 +41,11 @@ export function rotateEntityByAngle(entity, basePoint, angleDegrees) {
     entity.angle += angleDegrees;
     return true;
   }
+  if (entity.type === 'IMAGE') {
+    entity.center = rotatePointAround(entity.center, basePoint, angleDegrees);
+    entity.rotation += angleDegrees;
+    return true;
+  }
   if (entity.type === 'HATCH') {
     entity.loops = (entity.loops || [entity.boundary]).map((loop) => loop.map((point) =>
       rotatePointAround(point, basePoint, angleDegrees)));

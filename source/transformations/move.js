@@ -22,6 +22,10 @@ export function moveEntityByVector(entity, vector) {
     entity.insertionPoint = offsetPoint(entity.insertionPoint, vector);
     return true;
   }
+  if (entity.type === 'IMAGE') {
+    entity.center = offsetPoint(entity.center, vector);
+    return true;
+  }
   if (entity.type === 'HATCH') {
     entity.loops = (entity.loops || [entity.boundary]).map((loop) =>
       loop.map((point) => offsetPoint(point, vector)));

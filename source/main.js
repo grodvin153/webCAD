@@ -47,6 +47,14 @@ import { createHatchEntityClass } from './entities/hatch.js';
 import { createLineEntityClass } from './entities/line.js';
 import { createPolylineEntityClass } from './entities/polyline.js';
 import { createTextEntityClass } from './entities/text.js';
+import { createRasterImageEntityClass } from './images/entity.js';
+import { createPngImporter } from './images/importer.js';
+import {
+  applyImageAlignment,
+  bestImageAlignment,
+  calibrateImageLength,
+} from './images/calibration.js';
+import { drawRasterImage } from './images/rendering.js';
 import { createDimensionStyles } from './dimensions/styles.js';
 import { createLinearDimensionGeometry } from './dimensions/geometry/linear.js';
 import { createRadialDimensionGeometry } from './dimensions/geometry/radial.js';
@@ -193,6 +201,7 @@ const newButton = document.getElementById('action-new');
 const exportDxfButton = document.getElementById('action-export-dxf');
 const importDxfButton = document.getElementById('action-import-dxf');
 const importDxfInput = document.getElementById('import-dxf-input');
+const importPngInput = document.getElementById('import-png-input');
 const lineStylePicker = document.querySelector('.line-style-picker');
 const lineStyleToggle = document.getElementById('line-style-toggle');
 const lineStyleLabel = document.getElementById('line-style-label');
@@ -299,6 +308,13 @@ const blockInsertError = document.getElementById('block-insert-error');
 const aboutDialog = document.getElementById('about-dialog');
 const aboutDialogCloseButton = document.getElementById('about-dialog-close');
 const aboutDialogConfirmButton = document.getElementById('about-dialog-confirm');
+const imageCalibrationDialog = document.getElementById('image-calibration-dialog');
+const imageCalibrationCloseButton = document.getElementById('image-calibration-close');
+const imageCalibrationCancelButton = document.getElementById('image-calibration-cancel');
+const imageCalibrationConfirmButton = document.getElementById('image-calibration-confirm');
+const imageCalibrationMeasuredInput = document.getElementById('image-calibration-measured');
+const imageCalibrationLengthInput = document.getElementById('image-calibration-length');
+const imageCalibrationError = document.getElementById('image-calibration-error');
 
 let GRID_BASE = DRAWING_PROFILES.engineering.gridBase;
 let MIN_VIEW_SCALE = DRAWING_PROFILES.engineering.minViewScale;
@@ -438,6 +454,7 @@ const PolylineEntity = createPolylineEntityClass({
 });
 const TextEntity = createTextEntityClass(styleServices);
 const HatchEntity = createHatchEntityClass(styleServices);
+const RasterImageEntity = createRasterImageEntityClass(styleServices);
 
 const dimensionStyles = createDimensionStyles({
   DIMENSION_STYLES,
@@ -516,6 +533,7 @@ const {
   parseDistanceInput,
   pointFromRelativeCoordinates,
 });
+
 
 function polylineIncomingTangent(draft) {
   const segmentIndex = draft.segments.length - 1;
@@ -673,6 +691,7 @@ const {
   HatchEntity,
   LineEntity,
   PolylineEntity,
+  RasterImageEntity,
   TextEntity,
   createEntityGroupId,
 });
@@ -2960,7 +2979,24 @@ class CadRenderer {
       if (entity.type === 'DIMENSION') {
         this.drawDimensionEntity(ctx, entity, { color, width: options.width });
       }
+      if (entity.type === 'IMAGE') {
+        this.drawImageEntity(ctx, entity, {
+          alpha: options.alpha,
+          outlineColor: options.outline ? color : null,
+          outlineWidth: options.width,
+        });
+      }
     }
+  }
+
+  drawImageEntity(ctx, entity, options = {}) {
+    drawRasterImage(ctx, entity, {
+      alpha: options.alpha,
+      outlineColor: options.outlineColor,
+      outlineWidth: (options.outlineWidth || 1.5) / this.state.viewScale,
+      dash: options.dash?.map((length) => length / this.state.viewScale),
+      requestDraw: () => this.draw(),
+    });
   }
 
   drawEntityOverlay(ctx, entity, options = {}) {
@@ -3000,6 +3036,14 @@ class CadRenderer {
         width,
         alpha: options.alpha ?? 0.28,
         outline: options.outline,
+      });
+    }
+    if (entity.type === 'IMAGE') {
+      this.drawImageEntity(ctx, entity, {
+        alpha: options.alpha ?? entity.opacity,
+        outlineColor: color,
+        outlineWidth: options.width ?? 2,
+        dash: [7, 5],
       });
     }
   }
@@ -3230,6 +3274,9 @@ class CadRenderer {
           this.drawBlockReference(ctx, entity, { simplified });
         }
       }
+      if (entity.type === 'IMAGE') {
+        this.drawImageEntity(ctx, entity);
+      }
     }
     if (simplified) {
       this.drawLodBatches(ctx, lodBatches);
@@ -3328,6 +3375,12 @@ class CadRenderer {
           outline: true,
         });
         this.drawBlockGrip(ctx, selectedEntity);
+      }
+      if (selectedEntity?.type === 'IMAGE') {
+        this.drawImageEntity(ctx, selectedEntity, {
+          outlineColor: SELECTED_COLOR,
+          outlineWidth: 2.25,
+        });
       }
     }
   }
@@ -4169,6 +4222,67 @@ class CadRenderer {
     ctx.restore();
   }
 
+  drawImageInteractionPreview(ctx) {
+    const insertionDraft = this.state.imageDraft;
+    if (this.state.tool === 'image-insert' && insertionDraft?.preview && this.state.mouseWorld) {
+      insertionDraft.preview.center = resolveCursorPoint(this.state.mouseWorld, this.state);
+      this.drawImageEntity(ctx, insertionDraft.preview, {
+        alpha: 0.58,
+        outlineColor: PREVIEW_COLOR,
+        outlineWidth: 2,
+        dash: [7, 5],
+      });
+    }
+
+    const draft = this.state.imageCalibrationDraft;
+    if (this.state.tool !== 'image-calibrate' || !draft) return;
+    const cursor = this.state.mouseWorld;
+    const endPoint = draft.sourceEnd || cursor;
+    if (draft.sourceStart && endPoint) {
+      ctx.save();
+      ctx.strokeStyle = PREVIEW_COLOR;
+      ctx.fillStyle = PREVIEW_COLOR;
+      ctx.lineWidth = 2 / this.state.viewScale;
+      ctx.setLineDash([7 / this.state.viewScale, 5 / this.state.viewScale]);
+      ctx.beginPath();
+      ctx.moveTo(draft.sourceStart.x, draft.sourceStart.y);
+      ctx.lineTo(endPoint.x, endPoint.y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      for (const point of [draft.sourceStart, draft.sourceEnd].filter(Boolean)) {
+        ctx.beginPath();
+        ctx.arc(point.x, point.y, 4 / this.state.viewScale, 0, TWO_PI);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+    if (draft.sourceStart && draft.sourceEnd && draft.targetSegment) {
+      const preview = cloneEntity(draft.entity);
+      const alignment = bestImageAlignment(
+        preview,
+        draft.sourceStart,
+        draft.sourceEnd,
+        draft.targetSegment,
+      );
+      if (preview && applyImageAlignment(preview, alignment)) {
+        this.drawImageEntity(ctx, preview, {
+          alpha: 0.42,
+          outlineColor: PREVIEW_COLOR,
+          outlineWidth: 2,
+          dash: [7, 5],
+        });
+      }
+      ctx.save();
+      ctx.strokeStyle = PREVIEW_COLOR;
+      ctx.lineWidth = 3 / this.state.viewScale;
+      ctx.beginPath();
+      ctx.moveTo(draft.targetSegment.start.x, draft.targetSegment.start.y);
+      ctx.lineTo(draft.targetSegment.end.x, draft.targetSegment.end.y);
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
   drawCrosshair(ctx) {
     if (
       !this.state.mouseWorld ||
@@ -4229,6 +4343,7 @@ class CadRenderer {
     this.drawCopyPreview(ctx);
     this.drawRotatePreview(ctx);
     this.drawMirrorPreview(ctx);
+    this.drawImageInteractionPreview(ctx);
     this.drawSelectionWindow(ctx);
     this.drawObjectSnapMarker(ctx);
   }
@@ -4247,6 +4362,7 @@ class CadController {
     this.lastTextPointerDown = null;
     this.lastHatchPointerDown = null;
     this.lastBlockPointerDown = null;
+    this.lastImagePointerDown = null;
     this.keyboardRefreshFrame = null;
 
     this.canvas.addEventListener('pointerdown', (event) => this.onPointerDown(event));
@@ -4288,6 +4404,7 @@ class CadController {
     this.lastTextPointerDown = null;
     this.lastHatchPointerDown = null;
     this.lastBlockPointerDown = null;
+    this.lastImagePointerDown = null;
   }
 
   armShortcutPrefix(prefix) {
@@ -4411,6 +4528,8 @@ class CadController {
     this.state.blockCreateDraft = null;
     this.state.blockInsertDraft = null;
     this.state.dimensionDraft = null;
+    this.state.imageDraft = null;
+    this.state.imageCalibrationDraft = null;
     this.state.distanceInput = '';
     this.state.selectedGrip = null;
     this.state.activeObjectSnap = null;
@@ -4442,6 +4561,8 @@ class CadController {
       tool === 'extend' ||
       tool === 'erase' ||
       tool === 'explode'
+      || tool === 'image-insert'
+      || tool === 'image-calibrate'
     ) {
       if (tool !== 'copy' && tool !== 'move' && tool !== 'rotate' && tool !== 'mirror' && tool !== 'select-set' && tool !== 'erase' && tool !== 'explode' && tool !== 'extend' && tool !== 'block-create') {
         this.doc.selectEntity(null);
@@ -4481,6 +4602,10 @@ class CadController {
                   ? 'Crear bloque: seleccione objetos'
                 : tool === 'block-insert'
                   ? 'Insertar bloque: indique punto de insercion'
+                : tool === 'image-insert'
+                  ? 'Imagen: indique punto de insercion'
+                : tool === 'image-calibrate'
+                  ? 'Imagen: indique primer punto de referencia'
                 : tool === 'text'
                   ? 'Texto: indique contenido y altura'
                   : tool === 'select-set'
@@ -4562,7 +4687,8 @@ class CadController {
         (tool === 'rotate' && this.state.rotateDraft && !this.state.rotateDraft.selecting) ||
         (tool === 'mirror' && this.state.mirrorDraft && !this.state.mirrorDraft.selecting) ||
         (tool === 'block-create' && this.state.blockCreateDraft && !this.state.blockCreateDraft.selecting) ||
-        (tool === 'block-insert' && this.state.blockInsertDraft),
+        (tool === 'block-insert' && this.state.blockInsertDraft) ||
+        tool === 'image-insert' || tool === 'image-calibrate',
     );
     this.canvas.classList.toggle('is-erase-tool', tool === 'erase');
     this.canvas.classList.toggle('is-explode-tool', tool === 'explode');
@@ -4570,7 +4696,106 @@ class CadController {
     this.renderer.draw();
   }
 
-  findEntityAt(point) {
+  startImageInsertion(imageData) {
+    this.setTool('image-insert');
+    const width = Math.max(this.renderer.visibleWorldWidth() * 0.35, SNAP_THRESHOLD * 10);
+    const height = width * imageData.pixelHeight / imageData.pixelWidth;
+    const center = this.state.mouseWorld || {
+      x: this.state.viewOffset.x + this.renderer.visibleWorldWidth() * 0.5,
+      y: this.state.viewOffset.y + this.renderer.visibleWorldHeight() * 0.5,
+    };
+    this.state.imageDraft = {
+      preview: new RasterImageEntity(center, width, height, imageData.source, {
+        name: imageData.name,
+        layer: activeLayerName(),
+      }),
+    };
+    this.state.statusText = 'Imagen cargada: indique el punto de insercion';
+    this.updateUiStatus();
+    this.renderer.draw();
+  }
+
+  startImageCalibration(entity) {
+    this.setTool('image-calibrate');
+    this.state.imageCalibrationDraft = {
+      entity,
+      phase: 'source-start',
+      sourceStart: null,
+      sourceEnd: null,
+      targetSegment: null,
+    };
+    this.doc.selectEntity(entity);
+    this.state.statusText = 'Calibrar imagen: indique el primer punto sobre la imagen';
+    this.updateUiStatus();
+    this.renderer.draw();
+  }
+
+  applyImageSegmentAlignment() {
+    const draft = this.state.imageCalibrationDraft;
+    if (!draft?.sourceStart || !draft.sourceEnd || !draft.targetSegment) return false;
+    const alignment = bestImageAlignment(
+      draft.entity,
+      draft.sourceStart,
+      draft.sourceEnd,
+      draft.targetSegment,
+    );
+    if (!alignment) return false;
+    this.doc.recordHistory();
+    applyImageAlignment(draft.entity, alignment);
+    this.doc.markDirty();
+    const entity = draft.entity;
+    this.setTool('select');
+    this.doc.selectEntity(entity);
+    this.state.statusText = 'Imagen alineada y escalada con el segmento de referencia';
+    return true;
+  }
+
+  handleImagePoint(worldPoint) {
+    if (this.state.tool === 'image-insert' && this.state.imageDraft?.preview) {
+      const entity = this.state.imageDraft.preview;
+      entity.center = { ...this.resolveInputPoint(worldPoint) };
+      this.doc.addEntity(entity);
+      this.setTool('select');
+      this.doc.selectEntity(entity);
+      this.state.statusText = 'Imagen insertada · doble clic para calibrar o alinear';
+      return true;
+    }
+    const draft = this.state.imageCalibrationDraft;
+    if (this.state.tool !== 'image-calibrate' || !draft) return false;
+    if (draft.phase === 'source-start') {
+      draft.sourceStart = { ...worldPoint };
+      draft.phase = 'source-end';
+      this.state.statusText = 'Calibrar imagen: indique el segundo punto de referencia';
+      return true;
+    }
+    if (draft.phase === 'source-end') {
+      if (distance(draft.sourceStart, worldPoint) <= SNAP_THRESHOLD) {
+        this.state.statusText = 'Los dos puntos de referencia deben ser distintos';
+        return false;
+      }
+      draft.sourceEnd = { ...worldPoint };
+      draft.phase = 'target';
+      this.state.statusText = 'Pique una linea o tramo de polilinea para alinear y escalar · Enter para indicar longitud';
+      return true;
+    }
+    if (draft.phase === 'target') {
+      draft.targetSegment = this.imageReferenceSegmentAt(worldPoint, draft.entity);
+      if (draft.targetSegment) return this.applyImageSegmentAlignment();
+      this.state.statusText = 'Seleccione una linea o un tramo recto de polilinea · Enter para indicar longitud';
+    }
+    return false;
+  }
+
+  imageReferenceSegmentAt(point, excludedEntity) {
+    const candidate = this.findEntityAt(point, { exclude: excludedEntity });
+    const segment = dimensionLineFromEntity(candidate, point);
+    const tolerance = 7 / this.state.viewScale;
+    return segment && distancePointToSegment(point, segment.start, segment.end) <= tolerance
+      ? segment
+      : null;
+  }
+
+  findEntityAt(point, options = {}) {
     const tolerance = 7 / this.state.viewScale;
     const pickBounds = expandBounds(createBounds(point.x, point.y, point.x, point.y), tolerance);
     const candidates = this.doc.queryBounds(pickBounds);
@@ -4580,6 +4805,7 @@ class CadController {
     ];
     for (let index = pickCandidates.length - 1; index >= 0; index -= 1) {
       const entity = pickCandidates[index];
+      if (entity === options.exclude) continue;
       if (entity.type === 'LINE' &&
           distancePointToSegment(point, entity.start, entity.end) <= tolerance) {
         return entity;
@@ -4603,6 +4829,9 @@ class CadController {
         return entity;
       }
       if (entity.type === 'INSERT' && entityDistanceToPoint(entity, point) <= tolerance) {
+        return entity;
+      }
+      if (entity.type === 'IMAGE' && entityDistanceToPoint(entity, point) <= tolerance) {
         return entity;
       }
     }
@@ -4657,13 +4886,23 @@ class CadController {
       return this.state.dimensionDraft?.phase === 'reference' ||
         this.state.dimensionDraft?.phase === 'second-line';
     }
+    if (this.state.tool === 'image-calibrate') {
+      return this.state.imageCalibrationDraft?.phase === 'target';
+    }
     return false;
   }
 
   updateHoveredEntity() {
+    const imageCalibration = this.state.imageCalibrationDraft;
     this.state.hoveredEntity = this.isEntityHoverSelectionActive() && this.state.mouseWorld
-      ? this.findEntityAt(this.state.mouseWorld)
+      ? this.findEntityAt(this.state.mouseWorld, { exclude: imageCalibration?.entity })
       : null;
+    if (imageCalibration?.phase === 'target') {
+      imageCalibration.targetSegment = this.imageReferenceSegmentAt(
+        this.state.mouseWorld,
+        imageCalibration.entity,
+      );
+    }
   }
 
   onPointerLeave() {
@@ -4762,6 +5001,8 @@ class CadController {
       this.state.tool === 'extend' ||
       this.state.tool === 'erase' ||
       this.state.tool === 'explode' ||
+      this.state.tool === 'image-insert' ||
+      this.state.tool === 'image-calibrate' ||
       this.state.pendingLineStart ||
       this.state.polylineDraft ||
       this.state.rectangleDraft ||
@@ -4782,6 +5023,8 @@ class CadController {
       this.state.blockCreateDraft ||
       this.state.blockInsertDraft ||
       this.state.dimensionDraft
+      || this.state.imageDraft ||
+      this.state.imageCalibrationDraft
     ) {
       this.setTool('select');
       if (clearCommandSelection) {
@@ -4800,6 +5043,13 @@ class CadController {
   }
 
   handleCommandEnter() {
+    if (
+      this.state.tool === 'image-calibrate' &&
+      this.state.imageCalibrationDraft?.phase === 'target'
+    ) {
+      openImageCalibrationDialog();
+      return true;
+    }
     if (this.state.tool === 'block-create' && this.state.blockCreateDraft?.selecting) {
       return this.confirmBlockCreateSelection();
     }
@@ -4893,6 +5143,8 @@ class CadController {
       this.state.tool === 'extend' ||
       this.state.tool === 'erase' ||
       this.state.tool === 'explode' ||
+      this.state.tool === 'image-insert' ||
+      this.state.tool === 'image-calibrate' ||
       this.state.circleDraft ||
       this.state.polylineDraft ||
       this.state.rectangleDraft ||
@@ -4912,6 +5164,8 @@ class CadController {
       this.state.blockCreateDraft ||
       this.state.blockInsertDraft ||
       this.state.dimensionDraft
+      || this.state.imageDraft ||
+      this.state.imageCalibrationDraft
     ) {
       this.setTool('select');
       this.state.statusText = 'Orden terminada';
@@ -6902,6 +7156,13 @@ class CadController {
       return;
     }
 
+    if (this.state.tool === 'image-insert' || this.state.tool === 'image-calibrate') {
+      this.handleImagePoint(worldPoint);
+      this.updateUiStatus();
+      this.renderer.draw();
+      return;
+    }
+
     if (this.state.tool === 'select') {
       const grip = this.findGripAt(worldPoint);
       if (grip) {
@@ -6953,9 +7214,13 @@ class CadController {
         const isBlockDoubleClick = entity.type === 'INSERT' &&
           this.lastBlockPointerDown?.entity === entity &&
           now - this.lastBlockPointerDown.time <= 450;
+        const isImageDoubleClick = entity.type === 'IMAGE' &&
+          this.lastImagePointerDown?.entity === entity &&
+          now - this.lastImagePointerDown.time <= 450;
         this.lastTextPointerDown = entity.type === 'TEXT' ? { entity, time: now } : null;
         this.lastHatchPointerDown = entity.type === 'HATCH' ? { entity, time: now } : null;
         this.lastBlockPointerDown = entity.type === 'INSERT' ? { entity, time: now } : null;
+        this.lastImagePointerDown = entity.type === 'IMAGE' ? { entity, time: now } : null;
         this.doc.selectEntity(entity);
         this.rememberSelectionSet();
         if (isBlockDoubleClick) {
@@ -6986,6 +7251,11 @@ class CadController {
           this.renderer.draw();
           return;
         }
+        if (isImageDoubleClick) {
+          this.lastImagePointerDown = null;
+          this.startImageCalibration(entity);
+          return;
+        }
         const selectedEntities = [...this.doc.selectedEntities];
         const entityLabel = entity.type === 'POLYLINE'
           ? 'Polilinea'
@@ -7001,7 +7271,9 @@ class CadController {
             ? 'Arco'
             : entity.type === 'TEXT'
               ? 'Texto'
-              : entity.type === 'HATCH' ? 'Sombreado' : 'Linea';
+              : entity.type === 'HATCH'
+                ? 'Sombreado'
+                : entity.type === 'IMAGE' ? 'Imagen' : 'Linea';
         const selectedLength = selectedEntities.reduce((total, selectedEntity) => total + selectedEntity.length(), 0);
         const selectionLabel = entity.type === 'INSERT' ? 'seleccionado' : 'seleccionada';
         this.state.statusText = `${entityLabel} ${selectionLabel} - capa ${entity.layer} - grosor ${getLineStyle(entity.lineStyle).label} - ${formatNumber(selectedLength)} ${UNITS_LABEL}`;
@@ -7013,6 +7285,7 @@ class CadController {
       this.lastTextPointerDown = null;
       this.lastHatchPointerDown = null;
       this.lastBlockPointerDown = null;
+      this.lastImagePointerDown = null;
       this.state.selectionWindow = {
         startWorld: { ...worldPoint },
         currentWorld: { ...worldPoint },
@@ -7731,6 +8004,7 @@ class CadController {
 
   onKeyDown(event) {
     if (!drawingProfileDialog.hidden || !settingsDialog.hidden || !textDialog.hidden || !hatchDialog.hidden ||
+        !imageCalibrationDialog.hidden ||
         !polylineWidthDialog.hidden || !blockCreateDialog.hidden ||
         !blockInsertDialog.hidden || !aboutDialog.hidden) {
       return;
@@ -8074,6 +8348,12 @@ class CadController {
     if (this.state.tool === 'block-insert') {
       toolLabel = 'Insertar bloque';
     }
+    if (this.state.tool === 'image-insert') {
+      toolLabel = 'Insertar imagen';
+    }
+    if (this.state.tool === 'image-calibrate') {
+      toolLabel = 'Calibrar imagen';
+    }
     if (DIMENSION_TOOLS.has(this.state.tool)) {
       toolLabel = commandLabel(this.state.tool);
     }
@@ -8294,6 +8574,8 @@ const state = {
   blockInsertDraft: null,
   blockEditDraft: null,
   dimensionDraft: null,
+  imageDraft: null,
+  imageCalibrationDraft: null,
   dimensionStyle: loadDimensionStylePreference(),
   dimensionPrecision: {
     engineering: {
@@ -8354,6 +8636,66 @@ const controller = new CadController(canvas, doc, renderer, state);
 state.doc = doc;
 let textDialogEntity = null;
 let hatchDialogEntity = null;
+
+const pngImporter = createPngImporter({
+  input: importPngInput,
+  onLoad: (imageData) => controller.startImageInsertion(imageData),
+  onError: (error) => {
+    console.error('No se pudo importar el PNG', error);
+    state.statusText = error?.message || 'No se pudo importar la imagen PNG';
+    controller.updateUiStatus();
+    renderer.draw();
+  },
+});
+
+function openImageCalibrationDialog() {
+  const draft = state.imageCalibrationDraft;
+  if (!draft?.sourceStart || !draft.sourceEnd) return false;
+  imageCalibrationMeasuredInput.value = `${formatNumber(distance(draft.sourceStart, draft.sourceEnd))} ${UNITS_LABEL}`;
+  imageCalibrationLengthInput.value = '';
+  imageCalibrationError.textContent = '';
+  imageCalibrationDialog.hidden = false;
+  requestAnimationFrame(() => imageCalibrationLengthInput.focus());
+  return true;
+}
+
+function closeImageCalibrationDialog(cancelCommand = true) {
+  imageCalibrationDialog.hidden = true;
+  imageCalibrationError.textContent = '';
+  if (cancelCommand && state.tool === 'image-calibrate') {
+    const entity = state.imageCalibrationDraft?.entity;
+    controller.setTool('select');
+    if (entity) doc.selectEntity(entity);
+    state.statusText = 'Calibracion de imagen cancelada';
+  }
+  canvas.focus({ preventScroll: true });
+  controller.updateUiStatus();
+  renderer.draw();
+}
+
+function confirmImageCalibrationDialog() {
+  const draft = state.imageCalibrationDraft;
+  const targetLength = Number(String(imageCalibrationLengthInput.value).replace(',', '.'));
+  if (!draft?.sourceStart || !draft.sourceEnd || !Number.isFinite(targetLength) || targetLength <= SNAP_THRESHOLD) {
+    imageCalibrationError.textContent = 'Introduzca una longitud real mayor que cero';
+    return false;
+  }
+  doc.recordHistory();
+  if (!calibrateImageLength(draft.entity, draft.sourceStart, draft.sourceEnd, targetLength)) {
+    imageCalibrationError.textContent = 'No se pudo calibrar con esos puntos';
+    return false;
+  }
+  doc.markDirty();
+  const entity = draft.entity;
+  imageCalibrationDialog.hidden = true;
+  controller.setTool('select');
+  doc.selectEntity(entity);
+  state.statusText = `Imagen calibrada a ${formatNumber(targetLength)} ${UNITS_LABEL}`;
+  canvas.focus({ preventScroll: true });
+  controller.updateUiStatus();
+  renderer.draw();
+  return true;
+}
 
 window.webcadDebug = { doc, state, renderer, controller, parseDxf, serializeDocumentToDxf };
 
@@ -9031,6 +9373,8 @@ function newDrawing() {
   state.blockCreateDraft = null;
   state.blockInsertDraft = null;
   state.dimensionDraft = null;
+  state.imageDraft = null;
+  state.imageCalibrationDraft = null;
   state.lastCopy = null;
   state.lastTextHeight = activeDrawingProfile().defaultTextHeight;
   state.previousSelection = [];
@@ -9105,6 +9449,8 @@ function resetInteractionState() {
   state.blockCreateDraft = null;
   state.blockInsertDraft = null;
   state.dimensionDraft = null;
+  state.imageDraft = null;
+  state.imageCalibrationDraft = null;
   state.distanceInput = '';
   state.selectedGrip = null;
   state.activeObjectSnap = null;
@@ -9275,6 +9621,7 @@ function runCommand(command) {
   if (command === 'settings') openSettingsDialog();
   if (command === 'export-dxf') exportDxf();
   if (command === 'import-dxf') importDxf();
+  if (command === 'import-png') pngImporter.importPng();
   if (command === 'about') showAbout();
   if (!command.startsWith('toggle-')) {
     closeToolGroups();
@@ -9291,6 +9638,23 @@ dimensionStyleSelect.addEventListener('change', () => {
   state.statusText = `Estilo de cota: ${DIMENSION_STYLES[state.dimensionStyle].label}`;
   controller.updateUiStatus();
   renderer.draw();
+});
+
+imageCalibrationConfirmButton.addEventListener('click', confirmImageCalibrationDialog);
+imageCalibrationCancelButton.addEventListener('click', () => closeImageCalibrationDialog(true));
+imageCalibrationCloseButton.addEventListener('click', () => closeImageCalibrationDialog(true));
+imageCalibrationDialog.addEventListener('pointerdown', (event) => {
+  if (event.target === imageCalibrationDialog) closeImageCalibrationDialog(true);
+});
+imageCalibrationLengthInput.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    confirmImageCalibrationDialog();
+  }
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    closeImageCalibrationDialog(true);
+  }
 });
 
 navigationMouseButton.addEventListener('click', () => runCommand('navigation-mouse'));
@@ -9508,6 +9872,8 @@ importDxfInput.addEventListener('change', async (event) => {
   state.blockCreateDraft = null;
   state.blockInsertDraft = null;
   state.dimensionDraft = null;
+  state.imageDraft = null;
+  state.imageCalibrationDraft = null;
   state.lastCopy = null;
   state.previousSelection = [];
   state.distanceInput = '';

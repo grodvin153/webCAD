@@ -22,6 +22,7 @@ export function createEntityTransformations({
   HatchEntity,
   LineEntity,
   PolylineEntity,
+  RasterImageEntity,
   TextEntity,
   createEntityGroupId,
 }) {
@@ -146,6 +147,25 @@ export function createEntityTransformations({
           lineColor: entity.lineColor,
           angle: entity.angle,
           groupId,
+        },
+      );
+    }
+    if (entity.type === 'IMAGE') {
+      return new RasterImageEntity(
+        offsetPoint(entity.center, vector),
+        entity.width,
+        entity.height,
+        entity.source,
+        {
+          name: entity.name,
+          layer: entity.layer,
+          lineStyle: entity.lineStyle,
+          lineType: entity.lineType,
+          lineColor: entity.lineColor,
+          rotation: entity.rotation,
+          opacity: entity.opacity,
+          flipX: entity.flipX,
+          flipY: entity.flipY,
         },
       );
     }
