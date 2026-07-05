@@ -142,6 +142,11 @@ import {
 } from './transformations/clone.js';
 import { moveEntityByVector } from './transformations/move.js';
 import {
+  createScaleCommand,
+  drawScalePreview as drawScaleCommandPreview,
+  parseScaleFactor,
+} from './transformations/scale-command.js';
+import {
   dotProduct,
   mirrorEntityAcrossAxis,
 } from './transformations/mirror.js';
@@ -187,6 +192,7 @@ const chamferToolButton = document.getElementById('tool-chamfer');
 const copyToolButton = document.getElementById('tool-copy');
 const moveToolButton = document.getElementById('tool-move');
 const rotateToolButton = document.getElementById('tool-rotate');
+const scaleToolButton = document.getElementById('tool-scale');
 const mirrorToolButton = document.getElementById('tool-mirror');
 const eraseToolButton = document.getElementById('tool-erase');
 const explodeToolButton = document.getElementById('tool-explode');
@@ -322,6 +328,7 @@ let MAX_VIEW_SCALE = DRAWING_PROFILES.engineering.maxViewScale;
 let DEFAULT_DRAWING_SIZE = DRAWING_PROFILES.engineering.defaultDrawingSize;
 let UNITS_LABEL = DRAWING_PROFILES.engineering.unitsLabel;
 let nextEntityGroupId = 1;
+let scaleCommand = null;
 
 const polylineSelectionGeometry = createPolylineSelectionGeometry({
   createArcEntity: (...args) => new ArcEntity(...args),
@@ -4190,6 +4197,20 @@ class CadRenderer {
     ctx.restore();
   }
 
+  drawScalePreview(ctx) {
+    drawScaleCommandPreview(ctx, {
+      draft: this.state.scaleDraft,
+      mouseWorld: this.state.mouseWorld,
+      distanceInput: this.state.distanceInput,
+      resolvePoint: (point) => resolveCursorPoint(point, this.state),
+      cloneEntity,
+      drawEntity: (context, entity) =>
+        this.drawHighlightedEntity(context, entity, PREVIEW_COLOR, 0),
+      viewScale: this.state.viewScale,
+      previewColor: PREVIEW_COLOR,
+    });
+  }
+
   drawSelectionWindow(ctx) {
     const selectionWindow = this.state.selectionWindow;
     if (!selectionWindow?.currentWorld) {
@@ -4343,6 +4364,7 @@ class CadRenderer {
     this.drawCopyPreview(ctx);
     this.drawRotatePreview(ctx);
     this.drawMirrorPreview(ctx);
+    this.drawScalePreview(ctx);
     this.drawImageInteractionPreview(ctx);
     this.drawSelectionWindow(ctx);
     this.drawObjectSnapMarker(ctx);
@@ -4444,6 +4466,15 @@ class CadController {
     }
 
     const key = event.key.toLowerCase();
+    if (this.shortcutPrefix === 'e') {
+      this.clearShortcutPrefix();
+      if (key === 's') {
+        event.preventDefault();
+        runCommand('scale');
+        return true;
+      }
+      return false;
+    }
     if (this.shortcutPrefix === 'd') {
       this.clearShortcutPrefix();
       if (key === 's') {
@@ -4498,6 +4529,15 @@ class CadController {
       return true;
     }
 
+    if (key === 'e' && this.state.tool === 'select') {
+      event.preventDefault();
+      this.clearShortcutPrefix();
+      this.armShortcutPrefix('e');
+      this.state.statusText = 'Atajo ES: pulse S para Escala';
+      this.updateUiStatus();
+      return true;
+    }
+
     return false;
   }
 
@@ -4514,6 +4554,7 @@ class CadController {
     this.state.copyDraft = null;
     this.state.moveDraft = null;
     this.state.rotateDraft = null;
+    this.state.scaleDraft = null;
     this.state.mirrorDraft = null;
     this.state.filletDraft = tool === 'fillet'
       ? { firstOperand: null }
@@ -4553,6 +4594,7 @@ class CadController {
       tool === 'copy' ||
       tool === 'move' ||
       tool === 'rotate' ||
+      tool === 'scale' ||
       tool === 'mirror' ||
       tool === 'select-set' ||
       tool === 'trim' ||
@@ -4564,7 +4606,7 @@ class CadController {
       || tool === 'image-insert'
       || tool === 'image-calibrate'
     ) {
-      if (tool !== 'copy' && tool !== 'move' && tool !== 'rotate' && tool !== 'mirror' && tool !== 'select-set' && tool !== 'erase' && tool !== 'explode' && tool !== 'extend' && tool !== 'block-create') {
+      if (tool !== 'copy' && tool !== 'move' && tool !== 'rotate' && tool !== 'scale' && tool !== 'mirror' && tool !== 'select-set' && tool !== 'erase' && tool !== 'explode' && tool !== 'extend' && tool !== 'block-create') {
         this.doc.selectEntity(null);
       }
     }
@@ -4596,6 +4638,8 @@ class CadController {
               ? 'Desplazar: indique punto origen'
                 : tool === 'rotate'
                   ? 'Girar: indique punto base'
+                : tool === 'scale'
+                  ? 'Escalar: indique punto base'
                 : tool === 'mirror'
                   ? 'Simetria: indique primer punto del eje'
                 : tool === 'block-create'
@@ -4646,6 +4690,7 @@ class CadController {
     copyToolButton.classList.toggle('is-active', tool === 'copy');
     moveToolButton.classList.toggle('is-active', tool === 'move');
     rotateToolButton.classList.toggle('is-active', tool === 'rotate');
+    scaleToolButton.classList.toggle('is-active', tool === 'scale');
     mirrorToolButton.classList.toggle('is-active', tool === 'mirror');
     eraseToolButton.classList.toggle('is-active', tool === 'erase');
     explodeToolButton.classList.toggle('is-active', tool === 'explode');
@@ -4673,6 +4718,7 @@ class CadController {
     this.canvas.classList.toggle('is-move-tool', tool === 'move' && this.state.moveDraft?.selecting);
     this.canvas.classList.toggle('is-rotate-tool',
       tool === 'rotate' && this.state.rotateDraft?.selecting ||
+      tool === 'scale' && this.state.scaleDraft?.selecting ||
       tool === 'mirror' && this.state.mirrorDraft?.selecting);
     this.canvas.classList.toggle('is-selection-set-tool', tool === 'select-set');
     this.canvas.classList.toggle(
@@ -4685,6 +4731,7 @@ class CadController {
       (tool === 'copy' && this.state.copyDraft && !this.state.copyDraft.selecting) ||
         (tool === 'move' && this.state.moveDraft && !this.state.moveDraft.selecting) ||
         (tool === 'rotate' && this.state.rotateDraft && !this.state.rotateDraft.selecting) ||
+        (tool === 'scale' && this.state.scaleDraft && !this.state.scaleDraft.selecting) ||
         (tool === 'mirror' && this.state.mirrorDraft && !this.state.mirrorDraft.selecting) ||
         (tool === 'block-create' && this.state.blockCreateDraft && !this.state.blockCreateDraft.selecting) ||
         (tool === 'block-insert' && this.state.blockInsertDraft) ||
@@ -4869,6 +4916,9 @@ class CadController {
     if (this.state.tool === 'rotate') {
       return Boolean(this.state.rotateDraft?.selecting);
     }
+    if (this.state.tool === 'scale') {
+      return Boolean(this.state.scaleDraft?.selecting);
+    }
     if (this.state.tool === 'mirror') {
       return Boolean(this.state.mirrorDraft?.selecting);
     }
@@ -4919,6 +4969,7 @@ class CadController {
     this.canvas.classList.toggle('is-move-tool', this.state.tool === 'move' && this.state.moveDraft?.selecting);
     this.canvas.classList.toggle('is-rotate-tool',
       this.state.tool === 'rotate' && this.state.rotateDraft?.selecting ||
+      this.state.tool === 'scale' && this.state.scaleDraft?.selecting ||
       this.state.tool === 'mirror' && this.state.mirrorDraft?.selecting);
     this.canvas.classList.toggle('is-explode-tool', this.state.tool === 'explode');
     this.canvas.classList.toggle(
@@ -4931,6 +4982,7 @@ class CadController {
       (this.state.tool === 'copy' && this.state.copyDraft && !this.state.copyDraft.selecting) ||
         (this.state.tool === 'move' && this.state.moveDraft && !this.state.moveDraft.selecting) ||
         (this.state.tool === 'rotate' && this.state.rotateDraft && !this.state.rotateDraft.selecting) ||
+        (this.state.tool === 'scale' && this.state.scaleDraft && !this.state.scaleDraft.selecting) ||
         (this.state.tool === 'mirror' && this.state.mirrorDraft && !this.state.mirrorDraft.selecting) ||
         (this.state.tool === 'block-create' && this.state.blockCreateDraft && !this.state.blockCreateDraft.selecting) ||
         (this.state.tool === 'block-insert' && this.state.blockInsertDraft),
@@ -4948,6 +5000,7 @@ class CadController {
       !this.state.copyDraft &&
       !this.state.moveDraft &&
       !this.state.rotateDraft &&
+      !this.state.scaleDraft &&
       !this.state.filletDraft &&
       !this.state.selectionSetDraft &&
       !this.state.eraseDraft &&
@@ -4993,6 +5046,7 @@ class CadController {
       this.state.tool === 'copy' ||
       this.state.tool === 'move' ||
       this.state.tool === 'rotate' ||
+      this.state.tool === 'scale' ||
       this.state.tool === 'mirror' ||
       this.state.tool === 'select-set' ||
       this.state.tool === 'trim' ||
@@ -5013,6 +5067,7 @@ class CadController {
       this.state.copyDraft ||
       this.state.moveDraft ||
       this.state.rotateDraft ||
+      this.state.scaleDraft ||
       this.state.mirrorDraft ||
       this.state.filletDraft ||
       this.state.chamferDraft ||
@@ -5068,6 +5123,9 @@ class CadController {
     if (this.state.tool === 'rotate' && this.state.rotateDraft?.selecting) {
       return this.confirmRotateSelection();
     }
+    if (this.state.tool === 'scale' && this.state.scaleDraft?.selecting) {
+      return scaleCommand.confirmSelection();
+    }
     if (this.state.tool === 'mirror' && this.state.mirrorDraft?.selecting) {
       return this.confirmMirrorSelection();
     }
@@ -5086,6 +5144,10 @@ class CadController {
         return this.handleDistanceInputKey({ key: 'Enter' });
       }
       return this.rotateSelectionBy(this.renderer.rotatePreviewAngle());
+    }
+    if (this.state.scaleDraft?.basePoint) {
+      const cursor = resolveCursorPoint(this.state.mouseWorld, this.state);
+      return scaleCommand.apply(scaleCommand.factorFromPoint(cursor));
     }
     if (this.state.tool === 'erase' && this.state.eraseDraft?.selecting) {
       return this.confirmEraseSelection();
@@ -5135,6 +5197,7 @@ class CadController {
       this.state.tool === 'copy' ||
       this.state.tool === 'move' ||
       this.state.tool === 'rotate' ||
+      this.state.tool === 'scale' ||
       this.state.tool === 'mirror' ||
       this.state.tool === 'select-set' ||
       this.state.tool === 'trim' ||
@@ -5154,6 +5217,7 @@ class CadController {
       this.state.copyDraft ||
       this.state.moveDraft ||
       this.state.rotateDraft ||
+      this.state.scaleDraft ||
       this.state.mirrorDraft ||
       this.state.filletDraft ||
       this.state.chamferDraft ||
@@ -5415,6 +5479,7 @@ class CadController {
       (this.state.tool === 'copy' && this.state.copyDraft?.selecting) ||
       (this.state.tool === 'move' && this.state.moveDraft?.selecting) ||
       (this.state.tool === 'rotate' && this.state.rotateDraft?.selecting) ||
+      (this.state.tool === 'scale' && this.state.scaleDraft?.selecting) ||
       (this.state.tool === 'erase' && this.state.eraseDraft?.selecting) ||
       (this.state.tool === 'explode' && this.state.explodeDraft?.selecting) ||
       (this.state.tool === 'extend' && this.state.extendDraft?.phase === 'boundaries') ||
@@ -6814,6 +6879,7 @@ class CadController {
       this.state.copyDraft?.basePoint ||
       this.state.moveDraft?.basePoint ||
       this.state.rotateDraft?.basePoint ||
+      this.state.scaleDraft?.basePoint ||
       this.state.blockCreateDraft?.name ||
       this.state.blockInsertDraft ||
       this.state.dimensionDraft?.phase === 'placement'
@@ -6829,6 +6895,8 @@ class CadController {
         ? `Repetir copia: x${multiplier}`
         : this.state.rotateDraft?.basePoint
         ? `Angulo: ${this.state.distanceInput}°`
+        : this.state.scaleDraft?.basePoint
+        ? `Factor de escala: x${this.state.distanceInput}`
         : parseRelativeCoordinateInput(this.state.distanceInput)
         ? `Coordenadas: ${this.state.distanceInput} ${UNITS_LABEL}`
         : radiusDraft
@@ -6844,9 +6912,13 @@ class CadController {
       this.state.statusText = parseRelativeCoordinateInput(this.state.distanceInput)
         ? this.state.rotateDraft?.basePoint
           ? `Angulo: ${this.state.distanceInput}°`
+          : this.state.scaleDraft?.basePoint
+            ? `Factor de escala: x${this.state.distanceInput}`
           : `Coordenadas: ${this.state.distanceInput} ${UNITS_LABEL}`
         : this.state.rotateDraft?.basePoint
         ? `Angulo: ${this.state.distanceInput}°`
+        : this.state.scaleDraft?.basePoint
+        ? `Factor de escala: x${this.state.distanceInput}`
         : radiusDraft
         ? `Radio: ${this.state.distanceInput} ${UNITS_LABEL}`
         : `Distancia: ${this.state.distanceInput} ${UNITS_LABEL}`;
@@ -6858,11 +6930,15 @@ class CadController {
       this.state.statusText = this.state.distanceInput
         ? this.state.rotateDraft?.basePoint
           ? `Angulo: ${this.state.distanceInput}°`
+          : this.state.scaleDraft?.basePoint
+          ? `Factor de escala: x${this.state.distanceInput}`
           : radiusDraft
           ? `Radio: ${this.state.distanceInput} ${UNITS_LABEL}`
           : `Distancia: ${this.state.distanceInput} ${UNITS_LABEL}`
         : this.state.rotateDraft?.basePoint
           ? 'Angulo pendiente'
+          : this.state.scaleDraft?.basePoint
+            ? 'Factor de escala pendiente'
           : radiusDraft ? 'Radio pendiente' : 'Segundo punto pendiente';
       return true;
     }
@@ -6875,6 +6951,17 @@ class CadController {
         }
         else {
           this.state.statusText = 'Angulo no valido';
+        }
+        return true;
+      }
+
+      if (this.state.scaleDraft?.basePoint) {
+        const factor = parseScaleFactor(this.state.distanceInput);
+        if (factor !== null && scaleCommand.apply(factor)) {
+          this.state.distanceInput = '';
+        }
+        else {
+          this.state.statusText = 'Factor de escala no valido';
         }
         return true;
       }
@@ -7492,6 +7579,45 @@ class CadController {
       return;
     }
 
+    if (this.state.tool === 'scale') {
+      if (!this.state.scaleDraft) {
+        scaleCommand.start();
+        return;
+      }
+      if (this.state.scaleDraft.selecting) {
+        const entity = this.findEntityAt(worldPoint);
+        if (entity) {
+          this.doc.addSelectedEntities([entity]);
+          this.state.statusText = `${this.doc.selectedEntities.size} entidad${this.doc.selectedEntities.size === 1 ? '' : 'es'} seleccionada${this.doc.selectedEntities.size === 1 ? '' : 's'} para escalar`;
+        }
+        else {
+          this.state.selectionWindow = {
+            startWorld: { ...worldPoint },
+            currentWorld: { ...worldPoint },
+            startScreen: { ...this.state.mouseScreen },
+            dragging: false,
+            purpose: 'scale',
+          };
+          this.state.statusText = 'Ventana de seleccion para escalar';
+        }
+        this.updateUiStatus();
+        this.renderer.draw();
+        return;
+      }
+      const point = this.resolveInputPoint(worldPoint);
+      if (!this.state.scaleDraft.basePoint) {
+        scaleCommand.setBasePoint(point);
+      }
+      else {
+        scaleCommand.apply(scaleCommand.factorFromPoint(point));
+      }
+      this.state.distanceInput = '';
+      this.updateCanvasCursorMode();
+      this.updateUiStatus();
+      this.renderer.draw();
+      return;
+    }
+
     if (this.state.tool === 'mirror') {
       if (!this.state.mirrorDraft) {
         this.startMirror();
@@ -7791,6 +7917,8 @@ class CadController {
           ? `Seleccion para desplazar por ${mode}`
           : this.state.selectionWindow.purpose === 'rotate'
             ? `Seleccion para girar por ${mode}`
+          : this.state.selectionWindow.purpose === 'scale'
+            ? `Seleccion para escalar por ${mode}`
           : this.state.selectionWindow.purpose === 'mirror'
             ? `Seleccion para simetria por ${mode}`
         : this.state.selectionWindow.purpose === 'erase'
@@ -7859,6 +7987,7 @@ class CadController {
           selectionWindow.purpose !== 'select-set' &&
           selectionWindow.purpose !== 'move' &&
           selectionWindow.purpose !== 'rotate' &&
+          selectionWindow.purpose !== 'scale' &&
           selectionWindow.purpose !== 'mirror' &&
           selectionWindow.purpose !== 'erase' &&
           selectionWindow.purpose !== 'explode' &&
@@ -7877,6 +8006,8 @@ class CadController {
             ? 'Seleccione objetos para desplazar'
             : selectionWindow.purpose === 'rotate'
               ? 'Seleccione objetos para girar'
+            : selectionWindow.purpose === 'scale'
+              ? 'Seleccione objetos para escalar'
             : selectionWindow.purpose === 'mirror'
               ? 'Seleccione objetos para simetria'
             : selectionWindow.purpose === 'erase'
@@ -7897,6 +8028,7 @@ class CadController {
           selectionWindow.purpose === 'select-set' ||
           selectionWindow.purpose === 'move' ||
           selectionWindow.purpose === 'rotate' ||
+          selectionWindow.purpose === 'scale' ||
           selectionWindow.purpose === 'mirror' ||
           selectionWindow.purpose === 'erase' ||
           selectionWindow.purpose === 'explode' ||
@@ -7925,6 +8057,8 @@ class CadController {
             ? this.doc.selectedEntities.size
             : selectionWindow.purpose === 'rotate'
               ? this.doc.selectedEntities.size
+            : selectionWindow.purpose === 'scale'
+              ? this.doc.selectedEntities.size
             : selectionWindow.purpose === 'mirror'
               ? this.doc.selectedEntities.size
             : selectionWindow.purpose === 'erase'
@@ -7946,6 +8080,8 @@ class CadController {
                   ? ' para desplazar'
                   : selectionWindow.purpose === 'rotate'
                     ? ' para girar'
+                  : selectionWindow.purpose === 'scale'
+                    ? ' para escalar'
                   : selectionWindow.purpose === 'mirror'
                     ? ' para simetria'
                   : selectionWindow.purpose === 'erase'
@@ -8121,6 +8257,7 @@ class CadController {
         this.state.copyDraft?.selecting ||
         this.state.moveDraft?.selecting ||
         this.state.rotateDraft?.selecting ||
+        this.state.scaleDraft?.selecting ||
         this.state.mirrorDraft?.selecting ||
         this.state.eraseDraft?.selecting ||
         this.state.explodeDraft?.selecting ||
@@ -8232,6 +8369,7 @@ class CadController {
         this.state.copyDraft ||
         this.state.moveDraft ||
         this.state.rotateDraft ||
+        this.state.scaleDraft ||
         this.state.mirrorDraft ||
         this.state.blockCreateDraft?.name ||
         this.state.blockInsertDraft ||
@@ -8251,6 +8389,8 @@ class CadController {
 
     cursorInput.textContent = this.state.rotateDraft?.basePoint
       ? `${this.state.distanceInput}°`
+      : this.state.scaleDraft?.basePoint
+      ? `x${this.state.distanceInput}`
       : multiplier || copyMultiplierDraft
       ? this.state.distanceInput
       : `${cursorInputValue} ${UNITS_LABEL}`;
@@ -8335,6 +8475,9 @@ class CadController {
     }
     if (this.state.tool === 'rotate') {
       toolLabel = 'Girar';
+    }
+    if (this.state.tool === 'scale') {
+      toolLabel = 'Escala';
     }
     if (this.state.tool === 'mirror') {
       toolLabel = 'Simetria';
@@ -8563,6 +8706,7 @@ const state = {
   copyDraft: null,
   moveDraft: null,
   rotateDraft: null,
+  scaleDraft: null,
   mirrorDraft: null,
   filletDraft: null,
   chamferDraft: null,
@@ -8634,6 +8778,17 @@ const state = {
 const renderer = new CadRenderer(canvas, doc, state);
 const controller = new CadController(canvas, doc, renderer, state);
 state.doc = doc;
+scaleCommand = createScaleCommand({
+  state,
+  doc,
+  rememberSelection: (entities) => controller.rememberSelectionSet(entities),
+  setTool: (tool) => controller.setTool(tool),
+  refresh: () => {
+    controller.updateUiStatus();
+    renderer.draw();
+  },
+  formatNumber,
+});
 let textDialogEntity = null;
 let hatchDialogEntity = null;
 
@@ -9363,6 +9518,7 @@ function newDrawing() {
   state.copyDraft = null;
   state.moveDraft = null;
   state.rotateDraft = null;
+  state.scaleDraft = null;
   state.mirrorDraft = null;
   state.filletDraft = null;
   state.chamferDraft = null;
@@ -9439,6 +9595,7 @@ function resetInteractionState() {
   state.copyDraft = null;
   state.moveDraft = null;
   state.rotateDraft = null;
+  state.scaleDraft = null;
   state.mirrorDraft = null;
   state.filletDraft = null;
   state.chamferDraft = null;
@@ -9603,6 +9760,7 @@ function runCommand(command) {
   if (command === 'copy') controller.startCopy();
   if (command === 'move') controller.startMove();
   if (command === 'rotate') controller.startRotate();
+  if (command === 'scale') scaleCommand.start();
   if (command === 'mirror') controller.startMirror();
   if (command === 'trim') controller.setTool('trim');
   if (command === 'fillet') controller.setTool('fillet');
@@ -9756,6 +9914,7 @@ chamferToolButton.addEventListener('click', () => runCommand('chamfer'));
 copyToolButton.addEventListener('click', () => runCommand('copy'));
 moveToolButton.addEventListener('click', () => runCommand('move'));
 rotateToolButton.addEventListener('click', () => runCommand('rotate'));
+scaleToolButton.addEventListener('click', () => runCommand('scale'));
 mirrorToolButton.addEventListener('click', () => runCommand('mirror'));
 eraseToolButton.addEventListener('click', () => runCommand('erase'));
 explodeToolButton.addEventListener('click', () => runCommand('explode'));
@@ -9862,6 +10021,7 @@ importDxfInput.addEventListener('change', async (event) => {
   state.copyDraft = null;
   state.moveDraft = null;
   state.rotateDraft = null;
+  state.scaleDraft = null;
   state.mirrorDraft = null;
   state.filletDraft = null;
   state.chamferDraft = null;

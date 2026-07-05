@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+import { moveEntityByVector } from './move.js';
+
 export function scalePointFromOrigin(point, scaleX, scaleY) {
   return { x: point.x * scaleX, y: point.y * scaleY };
 }
@@ -65,4 +67,20 @@ export function scaleEntityByFactors(entity, scaleX, scaleY) {
     return true;
   }
   return false;
+}
+
+export function scaleEntityAroundPoint(entity, basePoint, factor) {
+  if (!entity || !basePoint || !Number.isFinite(factor) || factor <= 0) {
+    return false;
+  }
+  const toOrigin = { x: -basePoint.x, y: -basePoint.y };
+  if (!moveEntityByVector(entity, toOrigin)) {
+    return false;
+  }
+  if (!scaleEntityByFactors(entity, factor, factor)) {
+    moveEntityByVector(entity, basePoint);
+    return false;
+  }
+  moveEntityByVector(entity, basePoint);
+  return true;
 }

@@ -57,6 +57,7 @@
             <button class="submenu-item" type="button" data-command="copy">Copiar</button>
             <button class="submenu-item" type="button" data-command="move">Desplazar</button>
             <button class="submenu-item" type="button" data-command="rotate">Girar</button>
+            <button class="submenu-item" type="button" data-command="scale">Escala (ES)</button>
             <button class="submenu-item" type="button" data-command="mirror">Simetria (S)</button>
             <button class="submenu-item" type="button" data-command="trim">Recortar</button>
             <button class="submenu-item" type="button" data-command="extend">Alargar</button>
@@ -657,6 +658,21 @@
           <path d="M24 7v34" stroke-dasharray="3 3"></path>
           <path d="M19 13 8 24l11 11z"></path>
           <path d="m29 13 11 11-11 11z"></path>
+        </svg>
+      </button>
+      <button
+        id="tool-scale"
+        class="tool-button"
+        type="button"
+        data-tool="scale"
+        title="Escala (ES)"
+        aria-label="Escala"
+      >
+        <svg viewBox="0 0 48 48" aria-hidden="true">
+          <rect x="9" y="25" width="14" height="14"></rect>
+          <rect x="23" y="9" width="16" height="16"></rect>
+          <path d="M20 28 35 13"></path>
+          <path d="m28 13 7 0 0 7"></path>
         </svg>
       </button>
       <button
