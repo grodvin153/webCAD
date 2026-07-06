@@ -3569,6 +3569,8 @@ class CadRenderer {
       (this.state.tool === 'copy' && !this.state.copyDraft?.selecting) ||
       (this.state.tool === 'move' && !this.state.moveDraft?.selecting) ||
       (this.state.tool === 'rotate' && !this.state.rotateDraft?.selecting) ||
+      (this.state.tool === 'scale' && !this.state.scaleDraft?.selecting) ||
+      (this.state.tool === 'mirror' && !this.state.mirrorDraft?.selecting) ||
       (this.state.tool === 'block-create' && !this.state.blockCreateDraft?.selecting) ||
       this.state.tool === 'block-insert' ||
       this.state.tool === 'text' ||
@@ -4474,6 +4476,7 @@ class CadController {
   scheduleKeyboardRefresh() {
     this.updateCursorInput();
     statusMessage.textContent = this.state.statusText || 'Listo';
+    statusMessage.title = this.state.statusText || 'Listo';
     if (this.keyboardRefreshFrame !== null) {
       return;
     }

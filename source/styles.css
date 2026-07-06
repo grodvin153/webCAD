@@ -1381,7 +1381,7 @@ input {
 .status-bar {
   flex: 0 0 var(--status-height);
   display: grid;
-  grid-template-columns: 34px 34px 140px 170px 118px 135px 110px minmax(150px, 1fr) 92px;
+  grid-template-columns: 34px 34px 34px 132px 160px 104px 112px 160px minmax(180px, 1fr) 88px;
   align-items: center;
   gap: 7px;
   height: var(--status-height);
@@ -1399,6 +1399,11 @@ input {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+#status-message {
+  color: var(--accent);
+  font-weight: 650;
 }
 
 .status-toggle {
