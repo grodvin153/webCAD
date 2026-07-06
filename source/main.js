@@ -171,10 +171,13 @@ import { createHatchBoundaryGeometry } from './hatches/boundary.js';
 import { createHatchFaces } from './hatches/faces.js';
 import { createHatchFlood } from './hatches/flood.js';
 import { createHatchTrimOperations } from './hatches/trim.js';
+import { createTangentLineCommand } from './tools/tangent-line/command.js';
+import { drawTangentLinePreview as drawTangentLineCommandPreview } from './tools/tangent-line/rendering.js';
 
 const canvas = document.getElementById('cad-canvas');
 const selectToolButton = document.getElementById('tool-select');
 const lineToolButton = document.getElementById('tool-line');
+const tangentLineToolButton = document.getElementById('tool-tangent-line');
 const polylineToolButton = document.getElementById('tool-polyline');
 const rectangleToolButton = document.getElementById('tool-rectangle');
 const textToolButton = document.getElementById('tool-text');
@@ -329,6 +332,7 @@ let DEFAULT_DRAWING_SIZE = DRAWING_PROFILES.engineering.defaultDrawingSize;
 let UNITS_LABEL = DRAWING_PROFILES.engineering.unitsLabel;
 let nextEntityGroupId = 1;
 let scaleCommand = null;
+let tangentLineCommand = null;
 
 const polylineSelectionGeometry = createPolylineSelectionGeometry({
   createArcEntity: (...args) => new ArcEntity(...args),
@@ -3184,6 +3188,20 @@ class CadRenderer {
     ctx.restore();
   }
 
+  drawTangentLinePreview(ctx) {
+    if (!tangentLineCommand) return;
+    drawTangentLineCommandPreview(ctx, {
+      draft: this.state.tangentLineDraft,
+      hoveredEntity: this.state.hoveredEntity,
+      cursorPoint: this.state.mouseWorld,
+      command: tangentLineCommand,
+      drawOperand: (context, entity) =>
+        this.drawHighlightedEntity(context, entity, PREVIEW_COLOR, 2),
+      previewColor: PREVIEW_COLOR,
+      viewScale: this.state.viewScale,
+    });
+  }
+
   drawChamferPreview(ctx) {
     const firstOperand = this.state.chamferDraft?.firstOperand;
     const secondEntity = this.state.hoveredEntity;
@@ -4363,6 +4381,7 @@ class CadRenderer {
     }
     this.drawCrosshair(ctx);
     this.drawEntities(ctx);
+    this.drawTangentLinePreview(ctx);
     this.drawFilletPreview(ctx);
     this.drawChamferPreview(ctx);
     this.drawPreview(ctx);
@@ -4577,6 +4596,7 @@ class CadController {
     this.state.hatchDraft = null;
     this.state.circleDraft = null;
     this.state.arcDraft = null;
+    this.state.tangentLineDraft = null;
     this.state.copyDraft = null;
     this.state.moveDraft = null;
     this.state.rotateDraft = null;
@@ -4614,6 +4634,7 @@ class CadController {
       tool === 'arc-center-radius' ||
       tool === 'arc-3p' ||
       tool === 'arc-center-start-end' ||
+      tool === 'tangent-line' ||
       tool === 'block-create' ||
       tool === 'block-insert' ||
       DIMENSION_TOOLS.has(tool) ||
@@ -4676,6 +4697,8 @@ class CadController {
                   ? 'Imagen: indique punto de insercion'
                 : tool === 'image-calibrate'
                   ? 'Imagen: indique primer punto de referencia'
+                : tool === 'tangent-line'
+                  ? 'Linea tangente: seleccione el primer objeto'
                 : tool === 'text'
                   ? 'Texto: indique contenido y altura'
                   : tool === 'select-set'
@@ -4699,6 +4722,7 @@ class CadController {
                       : 'Linea por dos puntos';
     selectToolButton.classList.toggle('is-active', tool === 'select');
     lineToolButton.classList.toggle('is-active', tool === 'line');
+    tangentLineToolButton.classList.toggle('is-active', tool === 'tangent-line');
     polylineToolButton.classList.toggle('is-active', tool === 'polyline');
     rectangleToolButton.classList.toggle('is-active', tool === 'rectangle');
     textToolButton.classList.toggle('is-active', tool === 'text');
@@ -4729,7 +4753,7 @@ class CadController {
     this.canvas.classList.toggle('is-select-tool', tool === 'select');
     this.canvas.classList.toggle(
       'is-line-tool',
-      tool === 'line' || tool === 'polyline' || tool === 'rectangle' || DIMENSION_TOOLS.has(tool),
+      tool === 'line' || tool === 'tangent-line' || tool === 'polyline' || tool === 'rectangle' || DIMENSION_TOOLS.has(tool),
     );
     this.canvas.classList.toggle('is-text-tool', tool === 'text');
     this.canvas.classList.toggle('is-hatch-tool', tool === 'hatch');
@@ -4924,6 +4948,9 @@ class CadController {
     if (this.state.tool === 'fillet') {
       return true;
     }
+    if (this.state.tool === 'tangent-line') {
+      return true;
+    }
     if (this.state.tool === 'chamfer') {
       return true;
     }
@@ -5021,6 +5048,7 @@ class CadController {
       !this.state.polylineDraft &&
       !this.state.circleDraft &&
       !this.state.arcDraft &&
+      !this.state.tangentLineDraft &&
       !this.state.textDraft &&
       !this.state.hatchDraft &&
       !this.state.copyDraft &&
@@ -5067,6 +5095,7 @@ class CadController {
       this.state.tool === 'arc-center-radius' ||
       this.state.tool === 'arc-3p' ||
       this.state.tool === 'arc-center-start-end' ||
+      this.state.tool === 'tangent-line' ||
       this.state.tool === 'block-create' ||
       this.state.tool === 'block-insert' ||
       this.state.tool === 'copy' ||
@@ -5090,6 +5119,7 @@ class CadController {
       this.state.hatchDraft ||
       this.state.circleDraft ||
       this.state.arcDraft ||
+      this.state.tangentLineDraft ||
       this.state.copyDraft ||
       this.state.moveDraft ||
       this.state.rotateDraft ||
@@ -5220,6 +5250,7 @@ class CadController {
       this.state.tool === 'arc-center-radius' ||
       this.state.tool === 'arc-3p' ||
       this.state.tool === 'arc-center-start-end' ||
+      this.state.tool === 'tangent-line' ||
       this.state.tool === 'copy' ||
       this.state.tool === 'move' ||
       this.state.tool === 'rotate' ||
@@ -5240,6 +5271,7 @@ class CadController {
       this.state.textDraft ||
       this.state.hatchDraft ||
       this.state.arcDraft ||
+      this.state.tangentLineDraft ||
       this.state.copyDraft ||
       this.state.moveDraft ||
       this.state.rotateDraft ||
@@ -7687,6 +7719,13 @@ class CadController {
       return;
     }
 
+    if (this.state.tool === 'tangent-line') {
+      tangentLineCommand.pick(worldPoint);
+      this.updateUiStatus();
+      this.renderer.draw();
+      return;
+    }
+
     if (this.state.tool === 'trim') {
       const entity = this.findEntityAt(worldPoint);
       if (!entity) {
@@ -7985,6 +8024,10 @@ class CadController {
     }
 
     this.updateHoveredEntity();
+
+    if (this.state.tool === 'tangent-line') {
+      tangentLineCommand.updateGuidance(this.state.hoveredEntity, this.state.mouseWorld);
+    }
 
     this.updateUiStatus();
     this.renderer.draw();
@@ -8456,6 +8499,9 @@ class CadController {
     if (this.state.tool === 'line') {
       toolLabel = 'Linea 2P';
     }
+    if (this.state.tool === 'tangent-line') {
+      toolLabel = 'Linea tangente';
+    }
     if (this.state.tool === 'polyline') {
       toolLabel = 'Polilinea';
     }
@@ -8737,6 +8783,7 @@ const state = {
   hatchDraft: null,
   circleDraft: null,
   arcDraft: null,
+  tangentLineDraft: null,
   copyDraft: null,
   moveDraft: null,
   rotateDraft: null,
@@ -8822,6 +8869,23 @@ scaleCommand = createScaleCommand({
     renderer.draw();
   },
   formatNumber,
+});
+tangentLineCommand = createTangentLineCommand({
+  state,
+  doc,
+  setTool: (tool) => controller.setTool(tool),
+  findEntityAt: (point) => controller.findEntityAt(point),
+  operandAt: filletOperandAt,
+  createLine: (start, end) => new LineEntity(start, end, {
+    layer: activeLayerName(),
+    lineStyle: activeLineStyleId(),
+    lineType: activeLineTypeId(),
+    lineColor: activeLineColorId(),
+  }),
+  refresh: () => {
+    controller.updateUiStatus();
+    renderer.draw();
+  },
 });
 let textDialogEntity = null;
 let hatchDialogEntity = null;
@@ -9549,6 +9613,7 @@ function newDrawing() {
   state.hatchDraft = null;
   state.circleDraft = null;
   state.arcDraft = null;
+  state.tangentLineDraft = null;
   state.copyDraft = null;
   state.moveDraft = null;
   state.rotateDraft = null;
@@ -9626,6 +9691,7 @@ function resetInteractionState() {
   state.hatchDraft = null;
   state.circleDraft = null;
   state.arcDraft = null;
+  state.tangentLineDraft = null;
   state.copyDraft = null;
   state.moveDraft = null;
   state.rotateDraft = null;
@@ -9770,6 +9836,7 @@ function runCommand(command) {
   if (command === 'select') controller.setTool('select');
   if (command === 'select-set') controller.startSelectionSet();
   if (command === 'line') controller.setTool('line');
+  if (command === 'tangent-line') tangentLineCommand.start();
   if (command === 'polyline') controller.setTool('polyline');
   if (command === 'rectangle') controller.setTool('rectangle');
   if (command === 'text') controller.startText();
@@ -9899,6 +9966,7 @@ blockEditorSaveButton.addEventListener('click', () => finishBlockEditor(true));
 blockEditorDiscardButton.addEventListener('click', () => finishBlockEditor(false));
 selectToolButton.addEventListener('click', () => runCommand('select'));
 lineToolButton.addEventListener('click', () => runCommand('line'));
+tangentLineToolButton.addEventListener('click', () => runCommand('tangent-line'));
 polylineToolButton.addEventListener('click', () => runCommand('polyline'));
 rectangleToolButton.addEventListener('click', () => runCommand('rectangle'));
 textToolButton.addEventListener('click', () => runCommand('text'));
@@ -10052,6 +10120,7 @@ importDxfInput.addEventListener('change', async (event) => {
   state.hatchDraft = null;
   state.circleDraft = null;
   state.arcDraft = null;
+  state.tangentLineDraft = null;
   state.copyDraft = null;
   state.moveDraft = null;
   state.rotateDraft = null;

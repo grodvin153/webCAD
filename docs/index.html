@@ -7,7 +7,7 @@
   <meta name="author" content="Gonzalo Rodriguez">
   <meta name="copyright" content="Copyright (C) 2026 Gonzalo Rodriguez">
   <title>webCAD</title>
-  <script type="module" crossorigin src="./assets/main-Wgcwt8Nl.js"></script>
+  <script type="module" crossorigin src="./assets/main-DfyklfAW.js"></script>
   <link rel="stylesheet" crossorigin href="./assets/main-CNKGYpxM.css">
 </head>
 <body>
@@ -41,6 +41,7 @@
           <button class="menu-title" type="button">Dibujar</button>
           <div class="submenu" role="menu">
             <button class="submenu-item" type="button" data-command="line">Linea</button>
+            <button class="submenu-item" type="button" data-command="tangent-line">Linea tangente a dos objetos</button>
             <button class="submenu-item" type="button" data-command="polyline">Polilinea (P)</button>
             <button class="submenu-item" type="button" data-command="rectangle">Rectangulo</button>
             <button class="submenu-item" type="button" data-command="text">Texto</button>
@@ -345,6 +346,22 @@
           <path d="M10 38 38 10"></path>
           <circle cx="10" cy="38" r="3"></circle>
           <circle cx="38" cy="10" r="3"></circle>
+        </svg>
+      </button>
+      <button
+        id="tool-tangent-line"
+        class="tool-button"
+        type="button"
+        data-tool="tangent-line"
+        title="Linea tangente a dos objetos"
+        aria-label="Linea tangente a dos objetos"
+      >
+        <svg viewBox="0 0 48 48" aria-hidden="true">
+          <circle cx="14" cy="30" r="8"></circle>
+          <circle cx="35" cy="18" r="5"></circle>
+          <path d="M9 21 32 12"></path>
+          <circle cx="9" cy="21" r="1.8"></circle>
+          <circle cx="32" cy="12" r="1.8"></circle>
         </svg>
       </button>
       <button

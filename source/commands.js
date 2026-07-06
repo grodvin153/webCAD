@@ -6,6 +6,7 @@
 
 export const REPEATABLE_COMMANDS = new Set([
   'line',
+  'tangent-line',
   'polyline',
   'rectangle',
   'text',
@@ -38,6 +39,7 @@ export const REPEATABLE_COMMANDS = new Set([
 export function commandLabel(command) {
   const labels = {
     line: 'Linea',
+    'tangent-line': 'Linea tangente',
     polyline: 'Polilinea',
     rectangle: 'Rectangulo',
     text: 'Texto',
