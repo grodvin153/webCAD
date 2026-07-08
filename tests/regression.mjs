@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 
 import { createCommandDispatcher } from '../source/app/command-dispatcher.js';
+import { createControllerStatusMethods } from '../source/controller/status.js';
 import { createCadDocumentClass } from '../source/document/cad-document.js';
 import { createArcEntityClass } from '../source/entities/arc.js';
 import { createCircleEntityClass } from '../source/entities/circle.js';
@@ -300,6 +301,87 @@ function testCommandDispatcher() {
   assert.deepEqual(calls.slice(2), [['toggleGridSnap']]);
 }
 
+function testLineDraftStatus() {
+  const element = () => ({
+    classList: { toggle() {} },
+    disabled: false,
+    hidden: false,
+    setAttribute() {},
+    textContent: '',
+    title: '',
+  });
+  const statusLength = element();
+  const statusMessage = element();
+  const methods = createControllerStatusMethods({
+    DIMENSION_TOOLS: new Set(),
+    activeDraftOrigin: () => null,
+    activeDrawingProfile: () => ({ shortLabel: 'ING' }),
+    activeFilletRadius: () => 0,
+    activeLayerName: () => 'Continua',
+    activeLineColorId: () => 'bylayer',
+    activeLineStyleId: () => 'bylayer',
+    activeLineTypeId: () => 'bylayer',
+    activeOffsetDistance: () => 0,
+    blockEditorBar: element(),
+    blockEditorName: element(),
+    commandLabel: (tool) => tool,
+    distance,
+    dimensionPlacementPoint: () => null,
+    formatChamferDistances: () => '0 / 0',
+    formatNumber: (value) => String(value),
+    formatSnapType: (type) => type,
+    getLineColor: () => ({ label: 'Por capa' }),
+    getLineStyle: () => ({ label: 'Por capa' }),
+    getLineType: () => ({ label: 'Por capa' }),
+    parseCopyMultiplier: () => null,
+    parseDistanceInput: () => null,
+    pointFromDistance: () => null,
+    pointFromPartialRelativeCoordinates: () => null,
+    pointFromRelativeCoordinates: () => null,
+    polylineTangentArcToPoint: () => ({ radius: 0 }),
+    rectangleTargetPoint: () => null,
+    redoButton: element(),
+    redoCommandButtons: [],
+    resolveCursorPoint: (point) => point,
+    resolvePointForState: (point) => point,
+    statusCursor: element(),
+    statusDxf: element(),
+    statusEntities: element(),
+    statusGridButton: element(),
+    statusLayer: element(),
+    statusLength,
+    statusLineWeightButton: element(),
+    statusMessage,
+    statusOrthoButton: element(),
+    statusTool: element(),
+    undoButton: element(),
+    undoCommandButtons: [],
+    unitsLabel: () => 'mm',
+  });
+  const controller = {
+    activeGripPoint: () => null,
+    activeGripReferencePoint: () => null,
+    doc: { canRedo: () => false, canUndo: () => false, entities: [] },
+    gripDragState: null,
+    state: {
+      distanceInput: '',
+      lineWeightDisplayEnabled: true,
+      mouseWorld: { x: 3, y: 4, z: 0 },
+      orthoEnabled: false,
+      pendingLineStart: { x: 0, y: 0, z: 0 },
+      snapEnabled: true,
+      statusText: '',
+      tool: 'line',
+    },
+    updateCanvasCursorMode() {},
+    updateCursorInput() {},
+  };
+
+  methods.updateUiStatus.call(controller);
+  assert.equal(statusLength.textContent, 'Longitud: 5 mm');
+  assert.match(statusMessage.textContent, /Segundo punto pendiente/);
+}
+
 testInputAndCoordinates();
 testEntitiesAndTransforms();
 testIntersectionsAndSelection();
@@ -307,5 +389,6 @@ testTrim();
 testDocumentHistory();
 testDxfRoundTrip();
 testCommandDispatcher();
+testLineDraftStatus();
 
 console.log('webCAD regression: OK');

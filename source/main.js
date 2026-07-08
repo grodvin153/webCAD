@@ -1965,6 +1965,7 @@ Object.assign(
     blockEditorBar,
     blockEditorName,
     commandLabel,
+    distance,
     dimensionPlacementPoint,
     formatChamferDistances,
     formatNumber,

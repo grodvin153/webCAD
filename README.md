@@ -35,7 +35,7 @@ La visualización continúa siendo 2D sobre XY, pero los puntos conservan coorde
 
 ## Versión
 
-Versión estable actual: **0.5.0**.
+Versión estable actual: **0.5.1**.
 
 ## Autoría y licencia
 

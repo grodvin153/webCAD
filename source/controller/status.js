@@ -14,6 +14,7 @@ export function createControllerStatusMethods(dependencies) {
     blockEditorBar,
     blockEditorName,
     commandLabel,
+    distance,
     dimensionPlacementPoint,
     formatChamferDistances,
     formatNumber,

@@ -1,5 +1,11 @@
 # Historial de cambios
 
+## 0.5.1 - 2026-07-08
+
+- Corregida la dependencia de cálculo de distancia perdida al extraer el estado visual del controlador.
+- Restaurada la creación de líneas por puntos y su encadenamiento continuo.
+- Añadida una regresión específica para el estado dinámico del primer punto de línea.
+
 ## 0.5.0 - 2026-07-08
 
 ### Arquitectura
