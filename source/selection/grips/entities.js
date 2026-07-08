@@ -5,6 +5,7 @@
  */
 
 import { SNAP_THRESHOLD } from '../../config.js';
+import { coordinateZ, point3 } from '../../coordinates/point3.js';
 import {
   angleOfPoint,
   arcMidAngle,
@@ -17,7 +18,7 @@ import { circleFromThreePoints } from '../../input/coordinates.js';
 
 export function moveCircularGrip(entity, key, targetPoint) {
   if (key === 'center') {
-    entity.center = { ...targetPoint };
+    entity.center = point3(targetPoint, coordinateZ(entity.center));
     return true;
   }
   if (entity.type === 'CIRCLE' && key.startsWith('quadrant-')) {
@@ -53,7 +54,11 @@ function projectCenterToChordBisector(start, end, point) {
   if (chordLength <= SNAP_THRESHOLD) return null;
   const normal = { x: -chord.y / chordLength, y: chord.x / chordLength };
   const offset = (point.x - midpoint.x) * normal.x + (point.y - midpoint.y) * normal.y;
-  return { x: midpoint.x + normal.x * offset, y: midpoint.y + normal.y * offset };
+  return {
+    x: midpoint.x + normal.x * offset,
+    y: midpoint.y + normal.y * offset,
+    z: midpoint.z,
+  };
 }
 
 export function createPolylineGripMovement({ polylineSegmentEntity }) {
@@ -74,7 +79,10 @@ export function createPolylineGripMovement({ polylineSegmentEntity }) {
           }
         }
       });
-      entity.vertices[vertexIndex] = { ...targetPoint };
+      entity.vertices[vertexIndex] = point3(
+        targetPoint,
+        coordinateZ(entity.vertices[vertexIndex]),
+      );
       adjacentArcs.forEach(({ segmentIndex, midpoint }) => {
         const start = entity.vertices[segmentIndex];
         const end = entity.vertices[(segmentIndex + 1) % entity.vertices.length];

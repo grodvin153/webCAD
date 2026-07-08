@@ -81,21 +81,28 @@ export function parseAngleInput(value) {
 
 export function parseRelativeCoordinateInput(value) {
   const parts = String(value || '').split(',');
-  if (parts.length !== 2 || !parts[0].trim() || !parts[1].trim()) return null;
+  if (![2, 3].includes(parts.length) || parts.some((part) => !part.trim())) return null;
   const x = parseScalarExpression(parts[0]);
   const y = parseScalarExpression(parts[1]);
-  return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null;
+  const z = parts.length === 3 ? parseScalarExpression(parts[2]) : 0;
+  return Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z) ? { x, y, z } : null;
 }
 
 export function parsePartialRelativeCoordinateInput(value) {
   const parts = String(value || '').split(',');
-  if (parts.length !== 2) return null;
+  if (![2, 3].includes(parts.length)) return null;
   const x = parts[0].trim() ? parseScalarExpression(parts[0]) : null;
   const y = parts[1].trim() ? parseScalarExpression(parts[1]) : null;
-  if ((parts[0].trim() && x === null) || (parts[1].trim() && y === null) || (x === null && y === null)) {
+  const z = parts.length === 3 && parts[2].trim() ? parseScalarExpression(parts[2]) : null;
+  if (
+    (parts[0].trim() && x === null) ||
+    (parts[1].trim() && y === null) ||
+    (parts.length === 3 && parts[2].trim() && z === null) ||
+    (x === null && y === null && z === null)
+  ) {
     return null;
   }
-  return { x, y };
+  return { x, y, z };
 }
 
 

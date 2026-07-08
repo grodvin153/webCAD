@@ -1,5 +1,7 @@
 /* webCAD - Inferencias ortogonales bloqueables | SPDX-License-Identifier: GPL-3.0-or-later */
 
+import { coordinateZ } from '../coordinates/point3.js';
+
 const DEFAULT_ANGLE_TOLERANCE = 6 * Math.PI / 180;
 
 function samePoint(first, second, tolerance = 1e-9) {
@@ -23,15 +25,15 @@ export function inferenceAxisLine(origin, axis) {
   if (!origin || !axis) return null;
   return {
     point: { ...origin },
-    direction: axis === 'horizontal' ? { x: 1, y: 0 } : { x: 0, y: 1 },
+    direction: axis === 'horizontal' ? { x: 1, y: 0, z: 0 } : { x: 0, y: 1, z: 0 },
   };
 }
 
 export function projectPointToInferenceAxis(origin, point, axis) {
   if (!origin || !point || !axis) return point ? { ...point } : null;
   return axis === 'horizontal'
-    ? { x: point.x, y: origin.y }
-    : { x: origin.x, y: point.y };
+    ? { x: point.x, y: origin.y, z: coordinateZ(point, coordinateZ(origin)) }
+    : { x: origin.x, y: point.y, z: coordinateZ(point, coordinateZ(origin)) };
 }
 
 export function createOrthogonalInference({ angleTolerance = DEFAULT_ANGLE_TOLERANCE } = {}) {

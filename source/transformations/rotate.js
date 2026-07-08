@@ -5,6 +5,7 @@
  */
 
 import { SNAP_THRESHOLD } from '../config.js';
+import { coordinateZ } from '../coordinates/point3.js';
 import { distance, normalizeAngle } from '../geometry.js';
 
 export function rotatePointAround(point, basePoint, angleDegrees) {
@@ -16,6 +17,7 @@ export function rotatePointAround(point, basePoint, angleDegrees) {
   return {
     x: basePoint.x + deltaX * cosine - deltaY * sine,
     y: basePoint.y + deltaX * sine + deltaY * cosine,
+    z: coordinateZ(point),
   };
 }
 
@@ -29,12 +31,14 @@ export function rotateEntityByAngle(entity, basePoint, angleDegrees) {
     const directionPoint = {
       x: entity.basePoint.x + entity.direction.x,
       y: entity.basePoint.y + entity.direction.y,
+      z: entity.basePoint.z + entity.direction.z,
     };
     entity.basePoint = rotatePointAround(entity.basePoint, basePoint, angleDegrees);
     const rotatedDirectionPoint = rotatePointAround(directionPoint, basePoint, angleDegrees);
     entity.direction = {
       x: rotatedDirectionPoint.x - entity.basePoint.x,
       y: rotatedDirectionPoint.y - entity.basePoint.y,
+      z: rotatedDirectionPoint.z - entity.basePoint.z,
     };
     return true;
   }

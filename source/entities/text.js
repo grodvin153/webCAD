@@ -1,6 +1,7 @@
 /* webCAD - Entidad texto | SPDX-License-Identifier: GPL-3.0-or-later */
 
 import { SNAP_THRESHOLD } from '../config.js';
+import { point3 } from '../coordinates/point3.js';
 import { createBounds } from '../geometry.js';
 import { DEFAULT_LAYER } from '../properties/layers.js';
 import { DEFAULT_LINE_COLOR, DEFAULT_LINE_STYLE, DEFAULT_LINE_TYPE } from '../properties/styles.js';
@@ -10,7 +11,7 @@ export function createTextEntityClass(style) {
   return class TextEntity {
     constructor(insertionPoint, text, height, options = {}) {
       this.type = 'TEXT';
-      this.insertionPoint = { x: insertionPoint.x, y: insertionPoint.y };
+      this.insertionPoint = point3(insertionPoint);
       this.text = String(text || '');
       this.height = Math.max(Number(height) || 0, SNAP_THRESHOLD);
       this.angle = Number(options.angle) || 0;

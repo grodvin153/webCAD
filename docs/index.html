@@ -7,7 +7,7 @@
   <meta name="author" content="Gonzalo Rodriguez">
   <meta name="copyright" content="Copyright (C) 2026 Gonzalo Rodriguez">
   <title>webCAD</title>
-  <script type="module" crossorigin src="./assets/main-BEmdDfzP.js"></script>
+  <script type="module" crossorigin src="./assets/main-BmzrZooS.js"></script>
   <link rel="stylesheet" crossorigin href="./assets/main-CHB2Njap.css">
 </head>
 <body>
@@ -1208,7 +1208,7 @@
       <header>
         <div>
           <span class="cad-dialog-kicker">AUTORIA Y VERSION</span>
-          <h2 id="about-dialog-title">webCAD 0.4.0</h2>
+          <h2 id="about-dialog-title">webCAD 0.5.0</h2>
         </div>
         <button id="about-dialog-close" class="cad-dialog-close" type="button" aria-label="Cerrar">×</button>
       </header>
@@ -1218,7 +1218,7 @@
         <div>
           <strong>Gonzalo Rodriguez</strong>
           <span>Autor y desarrollador de webCAD</span>
-          <small>Editor CAD 2D para navegador · Versión estable 0.4.0</small>
+          <small>Editor CAD 2D para navegador · Versión estable 0.5.0</small>
         </div>
       </div>
 
@@ -1238,20 +1238,21 @@
           <h3>Funciones disponibles</h3>
           <ul>
             <li>Líneas, polilíneas con arcos y anchura variable, rectángulos, círculos, texto y sombreado sólido.</li>
-            <li>Selección múltiple, pinzamientos, copiar, desplazar, girar, borrar, recortar, alargar, empalmar y descomponer.</li>
+            <li>Selección múltiple, pinzamientos, copiar, desplazar, girar, simetría, escala, matriz polar y estirar.</li>
+            <li>Recortar, alargar, empalmar, chaflán, equidistancia, borrar y descomponer.</li>
             <li>Snaps de extremo, medio, centro, intersección y perpendicular; rejilla y modo ortogonal.</li>
             <li>Capas, colores, tipos y grosores de línea, historial y entrada por coordenadas.</li>
-            <li>Bloques reutilizables con edición interna por doble clic, punto base, escala, giro y compatibilidad DXF BLOCK/INSERT.</li>
+            <li>Bloques reutilizables, cotas, líneas auxiliares, imágenes calibrables y compatibilidad DXF BLOCK/INSERT.</li>
           </ul>
         </section>
         <section class="about-feature-card is-release">
-          <h3>Novedades de 0.4.0</h3>
+          <h3>Novedades de 0.5.0</h3>
           <ul>
-            <li>Nueva orden Empalme (F) entre líneas, polilíneas, arcos y círculos, con ghost, radio 0 y arco DXF tangente.</li>
-            <li>Cotas mejoradas: pinzamientos coherentes, textos angulares legibles y flechas proporcionadas.</li>
-            <li>Importación de sombreados DXF por contornos y huecos, con filtrado de patrones no compatibles.</li>
-            <li>Mayor rendimiento en planos grandes mediante nivel de detalle adaptativo y geometría agrupada.</li>
-            <li>Ejes X/Y con colores CAD y preferencias persistentes de rejilla y grosores.</li>
+            <li>Arquitectura modular en 135 archivos para aislar entidades, operaciones, renderizado, controladores y formatos.</li>
+            <li>Modelo de coordenadas preparado para X, Y y Z, manteniendo el dibujo y la interacción actuales en el plano XY.</li>
+            <li>Importación y exportación DXF separadas, extensibles y con conservación de elevaciones Z.</li>
+            <li>Arranque, diálogos, eventos, preferencias y acciones documentales desacoplados del archivo principal.</li>
+            <li>Nueva batería de regresión para coordenadas, DXF, selección, recorte, historial y órdenes.</li>
           </ul>
         </section>
       </div>

@@ -5,9 +5,10 @@
  */
 
 import { moveEntityByVector } from './move.js';
+import { coordinateZ } from '../coordinates/point3.js';
 
 export function scalePointFromOrigin(point, scaleX, scaleY) {
-  return { x: point.x * scaleX, y: point.y * scaleY };
+  return { x: point.x * scaleX, y: point.y * scaleY, z: coordinateZ(point) };
 }
 
 export function scaleEntityByFactors(entity, scaleX, scaleY) {
@@ -21,15 +22,17 @@ export function scaleEntityByFactors(entity, scaleX, scaleY) {
     const directionPoint = {
       x: entity.basePoint.x + entity.direction.x,
       y: entity.basePoint.y + entity.direction.y,
+      z: entity.basePoint.z + entity.direction.z,
     };
     entity.basePoint = scalePointFromOrigin(entity.basePoint, scaleX, scaleY);
     const scaledDirectionPoint = scalePointFromOrigin(directionPoint, scaleX, scaleY);
     const delta = {
       x: scaledDirectionPoint.x - entity.basePoint.x,
       y: scaledDirectionPoint.y - entity.basePoint.y,
+      z: scaledDirectionPoint.z - entity.basePoint.z,
     };
     const length = Math.hypot(delta.x, delta.y);
-    if (length > 0) entity.direction = { x: delta.x / length, y: delta.y / length };
+    if (length > 0) entity.direction = { x: delta.x / length, y: delta.y / length, z: delta.z / length };
     return true;
   }
   if (entity.type === 'DIMENSION') {
@@ -88,14 +91,14 @@ export function scaleEntityAroundPoint(entity, basePoint, factor) {
   if (!entity || !basePoint || !Number.isFinite(factor) || factor <= 0) {
     return false;
   }
-  const toOrigin = { x: -basePoint.x, y: -basePoint.y };
+  const toOrigin = { x: -basePoint.x, y: -basePoint.y, z: 0 };
   if (!moveEntityByVector(entity, toOrigin)) {
     return false;
   }
   if (!scaleEntityByFactors(entity, factor, factor)) {
-    moveEntityByVector(entity, basePoint);
+    moveEntityByVector(entity, { x: basePoint.x, y: basePoint.y, z: 0 });
     return false;
   }
-  moveEntityByVector(entity, basePoint);
+  moveEntityByVector(entity, { x: basePoint.x, y: basePoint.y, z: 0 });
   return true;
 }

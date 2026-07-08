@@ -5,6 +5,7 @@
  */
 
 import { entityMidpoint, normalizeAngle, normalizedVector } from '../../geometry.js';
+import { coordinateZ } from '../../coordinates/point3.js';
 import { isCircularEntity } from '../../intersections.js';
 import { circularReferencePoints } from '../../input/snaps.js';
 
@@ -22,6 +23,7 @@ export function createGripReferences({ dimensionGeometry, polylineReferencePoint
       return {
         x: arc.center.x + Math.cos(angle) * arc.radius,
         y: arc.center.y + Math.sin(angle) * arc.radius,
+        z: coordinateZ(entity.placement, coordinateZ(arc.center)),
       };
     }
     return entity.placement;
@@ -31,10 +33,16 @@ export function createGripReferences({ dimensionGeometry, polylineReferencePoint
     if (!['horizontal', 'vertical', 'aligned'].includes(entity.kind) || entity.points.length < 2) return [];
     const [first, second] = entity.points;
     if (entity.kind === 'horizontal') {
-      return [{ x: first.x, y: entity.placement.y }, { x: second.x, y: entity.placement.y }];
+      return [
+        { x: first.x, y: entity.placement.y, z: coordinateZ(first) },
+        { x: second.x, y: entity.placement.y, z: coordinateZ(second) },
+      ];
     }
     if (entity.kind === 'vertical') {
-      return [{ x: entity.placement.x, y: first.y }, { x: entity.placement.x, y: second.y }];
+      return [
+        { x: entity.placement.x, y: first.y, z: coordinateZ(first) },
+        { x: entity.placement.x, y: second.y, z: coordinateZ(second) },
+      ];
     }
     const direction = normalizedVector(first, second);
     if (!direction) return [{ ...entity.placement }, { ...entity.placement }];
@@ -42,8 +50,8 @@ export function createGripReferences({ dimensionGeometry, polylineReferencePoint
     const offset = (entity.placement.x - first.x) * normal.x +
       (entity.placement.y - first.y) * normal.y;
     return [
-      { x: first.x + normal.x * offset, y: first.y + normal.y * offset },
-      { x: second.x + normal.x * offset, y: second.y + normal.y * offset },
+      { x: first.x + normal.x * offset, y: first.y + normal.y * offset, z: coordinateZ(first) },
+      { x: second.x + normal.x * offset, y: second.y + normal.y * offset, z: coordinateZ(second) },
     ];
   }
 

@@ -1,6 +1,7 @@
 /* webCAD - Entidad polilinea | SPDX-License-Identifier: GPL-3.0-or-later */
 
 import { createBounds, expandBounds, mergeBounds } from '../geometry.js';
+import { point3 } from '../coordinates/point3.js';
 import { DEFAULT_LAYER } from '../properties/layers.js';
 import { DEFAULT_LINE_COLOR, DEFAULT_LINE_STYLE, DEFAULT_LINE_TYPE } from '../properties/styles.js';
 
@@ -8,12 +9,12 @@ export function createPolylineEntityClass({ style, polylineSegmentEntity, polyli
   return class PolylineEntity {
     constructor(vertices, segments, options = {}) {
       this.type = 'POLYLINE';
-      this.vertices = vertices.map((point) => ({ x: point.x, y: point.y }));
+      this.vertices = vertices.map((point) => point3(point));
       this.closed = Boolean(options.closed);
       const expectedSegments = this.closed ? this.vertices.length : Math.max(0, this.vertices.length - 1);
       this.segments = segments.slice(0, expectedSegments).map((segment) => ({
         type: segment.type === 'ARC' ? 'ARC' : 'LINE',
-        center: segment.center ? { x: segment.center.x, y: segment.center.y } : null,
+        center: segment.center ? point3(segment.center) : null,
         clockwise: segment.clockwise !== false,
         startWidth: Math.max(0, Number(segment.startWidth) || 0),
         endWidth: Math.max(0, Number(segment.endWidth) || 0),

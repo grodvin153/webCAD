@@ -1,14 +1,16 @@
 {
   "name": "webcad",
   "private": true,
-  "version": "0.4.0",
+  "version": "0.5.0",
   "author": "Gonzalo Rodriguez",
   "license": "GPL-3.0-or-later",
   "type": "module",
   "scripts": {
     "dev": "vite --configLoader runner",
     "build": "vite build --configLoader runner",
-    "preview": "vite preview --configLoader runner"
+    "preview": "vite preview --configLoader runner",
+    "test": "node tests/regression.mjs",
+    "verify": "npm run test && npm run build"
   },
   "devDependencies": {
     "vite": "^7.2.7"

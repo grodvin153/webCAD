@@ -5,6 +5,7 @@
  */
 
 import { SNAP_THRESHOLD } from '../config.js';
+import { coordinateZ } from '../coordinates/point3.js';
 import {
   angleInSweep,
   angleOfPoint,
@@ -21,6 +22,7 @@ export function snapPoint(point, step) {
   return {
     x: snap(point.x, step),
     y: snap(point.y, step),
+    z: coordinateZ(point),
   };
 }
 
@@ -28,7 +30,11 @@ export function snapPoint(point, step) {
 export function pointFromRelativeCoordinates(origin, value) {
   const relative = parseRelativeCoordinateInput(value);
   return relative && origin
-    ? { x: origin.x + relative.x, y: origin.y - relative.y }
+    ? {
+      x: origin.x + relative.x,
+      y: origin.y - relative.y,
+      z: coordinateZ(origin) + relative.z,
+    }
     : null;
 }
 
@@ -38,6 +44,9 @@ export function pointFromPartialRelativeCoordinates(origin, cursor, value) {
   return {
     x: relative.x === null ? cursor.x : origin.x + relative.x,
     y: relative.y === null ? cursor.y : origin.y - relative.y,
+    z: relative.z === null
+      ? coordinateZ(cursor, coordinateZ(origin))
+      : coordinateZ(origin) + relative.z,
   };
 }
 
@@ -53,6 +62,7 @@ export function pointFromDistance(start, directionPoint, distanceValue) {
   return {
     x: start.x + (deltaX / directionLength) * distanceValue,
     y: start.y + (deltaY / directionLength) * distanceValue,
+    z: coordinateZ(start),
   };
 }
 
@@ -81,6 +91,7 @@ export function circleFromThreePoints(first, second, third) {
       secondSquared * (first.x - third.x) +
       thirdSquared * (second.x - first.x)
     ) / determinant,
+    z: (coordinateZ(first) + coordinateZ(second) + coordinateZ(third)) / 3,
   };
   const radius = distance(center, first);
 

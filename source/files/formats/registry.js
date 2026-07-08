@@ -4,8 +4,10 @@ export function createCadFormatRegistry() {
   const formats = new Map();
 
   function register(format) {
-    if (!format?.id || typeof format.serialize !== 'function') {
-      throw new TypeError('El formato necesita id y serializador');
+    const canParse = typeof format?.parse === 'function';
+    const canSerialize = typeof format?.serialize === 'function';
+    if (!format?.id || (!canParse && !canSerialize)) {
+      throw new TypeError('El formato necesita id y al menos un lector o serializador');
     }
     const extension = String(format.extension || '').toLowerCase();
     if (!extension.startsWith('.')) {

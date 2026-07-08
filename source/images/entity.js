@@ -1,6 +1,7 @@
 /* webCAD - Entidad de imagen raster | SPDX-License-Identifier: GPL-3.0-or-later */
 
 import { SNAP_THRESHOLD } from '../config.js';
+import { point3 } from '../coordinates/point3.js';
 import { createBounds } from '../geometry.js';
 import { DEFAULT_LAYER } from '../properties/layers.js';
 import { DEFAULT_LINE_COLOR, DEFAULT_LINE_STYLE, DEFAULT_LINE_TYPE } from '../properties/styles.js';
@@ -18,7 +19,7 @@ export function createRasterImageEntityClass(style) {
   return class RasterImageEntity {
     constructor(center, width, height, source, options = {}) {
       this.type = 'IMAGE';
-      this.center = { x: center.x, y: center.y };
+      this.center = point3(center);
       this.width = Math.max(Math.abs(Number(width) || 0), SNAP_THRESHOLD);
       this.height = Math.max(Math.abs(Number(height) || 0), SNAP_THRESHOLD);
       this.source = String(source || '');
@@ -45,7 +46,7 @@ export function createRasterImageEntityClass(style) {
         { x: -halfWidth, y: halfHeight },
       ].map((corner) => {
         const rotated = rotateVector(corner, angle);
-        return { x: this.center.x + rotated.x, y: this.center.y + rotated.y };
+        return { x: this.center.x + rotated.x, y: this.center.y + rotated.y, z: this.center.z };
       });
     }
 

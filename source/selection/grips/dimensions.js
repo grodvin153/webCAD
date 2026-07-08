@@ -5,6 +5,7 @@
  */
 
 import { distance, normalizedVector, offsetPoint } from '../../geometry.js';
+import { coordinateZ, point3 } from '../../coordinates/point3.js';
 
 export function createDimensionGripMovement({
   dimensionBaseGripPoints,
@@ -17,7 +18,7 @@ export function createDimensionGripMovement({
       if (entity.kind === 'radius' || entity.kind === 'diameter') {
         const metrics = dimensionStyleMetrics(entity.dimensionStyle);
         const textOffset = metrics.textGap + metrics.textHeight * 0.55;
-        let placement = { ...targetPoint };
+        let placement = point3(targetPoint, coordinateZ(entity.placement));
         for (let iteration = 0; iteration < 3; iteration += 1) {
           const direction = normalizedVector(entity.points[0], placement) ||
             normalizedVector(entity.points[0], entity.placement) ||
@@ -29,20 +30,21 @@ export function createDimensionGripMovement({
           placement = {
             x: targetPoint.x - normal.x * textOffset,
             y: targetPoint.y - normal.y * textOffset,
+            z: coordinateZ(entity.placement),
           };
         }
         entity.placement = placement;
         entity.textPosition = null;
         return true;
       }
-      entity.textPosition = { ...targetPoint };
+      entity.textPosition = point3(targetPoint, coordinateZ(entity.textPosition, coordinateZ(entity.placement)));
       return true;
     }
     if (key === 'placement') {
       const currentPlacement = dimensionPlacementGripPoint(entity);
-      let nextPlacement = { ...targetPoint };
-      if (entity.kind === 'horizontal') nextPlacement = { x: entity.placement.x, y: targetPoint.y };
-      else if (entity.kind === 'vertical') nextPlacement = { x: targetPoint.x, y: entity.placement.y };
+      let nextPlacement = point3(targetPoint, coordinateZ(entity.placement));
+      if (entity.kind === 'horizontal') nextPlacement = { x: entity.placement.x, y: targetPoint.y, z: coordinateZ(entity.placement) };
+      else if (entity.kind === 'vertical') nextPlacement = { x: targetPoint.x, y: entity.placement.y, z: coordinateZ(entity.placement) };
       else if (entity.kind === 'aligned') {
         const direction = normalizedVector(entity.points[0], entity.points[1]);
         if (direction) {
@@ -52,6 +54,7 @@ export function createDimensionGripMovement({
           nextPlacement = {
             x: entity.points[0].x + normal.x * offset,
             y: entity.points[0].y + normal.y * offset,
+            z: coordinateZ(entity.placement),
           };
         }
       }
@@ -62,6 +65,7 @@ export function createDimensionGripMovement({
         nextPlacement = {
           x: vertex.x + currentDirection.x * radius,
           y: vertex.y + currentDirection.y * radius,
+          z: coordinateZ(entity.placement, coordinateZ(vertex)),
         };
       }
       entity.placement = nextPlacement;
@@ -97,7 +101,7 @@ export function createDimensionGripMovement({
     if (!pointMatch) return false;
     const index = Number(pointMatch[1]);
     if (!entity.points[index]) return false;
-    entity.points[index] = { ...targetPoint };
+    entity.points[index] = point3(targetPoint, coordinateZ(entity.points[index]));
     return true;
   }
 

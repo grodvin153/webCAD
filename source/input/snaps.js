@@ -17,6 +17,7 @@ import {
   perpendicularFootOnSegment,
   pointAtCircleAngle,
 } from '../geometry.js';
+import { coordinateZ } from '../coordinates/point3.js';
 import {
   isCircularEntity,
   pointOnCircularEntity,
@@ -33,7 +34,7 @@ export function addSnapCandidate(point, candidate, tolerance, currentBest) {
   if (!currentBest || snapDistance < currentBest.distance) {
     return {
       ...candidate,
-      point: { x: candidate.point.x, y: candidate.point.y },
+      point: { x: candidate.point.x, y: candidate.point.y, z: coordinateZ(candidate.point) },
       distance: snapDistance,
     };
   }
@@ -57,10 +58,10 @@ export function circularReferencePoints(entity) {
 
   const candidates = [
     { type: 'center', key: 'center', point: entity.center },
-    { type: 'quadrant', key: 'quadrant-0', point: { x: entity.center.x + entity.radius, y: entity.center.y } },
-    { type: 'quadrant', key: 'quadrant-1', point: { x: entity.center.x, y: entity.center.y + entity.radius } },
-    { type: 'quadrant', key: 'quadrant-2', point: { x: entity.center.x - entity.radius, y: entity.center.y } },
-    { type: 'quadrant', key: 'quadrant-3', point: { x: entity.center.x, y: entity.center.y - entity.radius } },
+    { type: 'quadrant', key: 'quadrant-0', point: { x: entity.center.x + entity.radius, y: entity.center.y, z: coordinateZ(entity.center) } },
+    { type: 'quadrant', key: 'quadrant-1', point: { x: entity.center.x, y: entity.center.y + entity.radius, z: coordinateZ(entity.center) } },
+    { type: 'quadrant', key: 'quadrant-2', point: { x: entity.center.x - entity.radius, y: entity.center.y, z: coordinateZ(entity.center) } },
+    { type: 'quadrant', key: 'quadrant-3', point: { x: entity.center.x, y: entity.center.y - entity.radius, z: coordinateZ(entity.center) } },
   ];
   return candidates.filter((candidate) => pointOnCircularEntity(candidate.point, entity));
 }
@@ -78,6 +79,7 @@ function perpendicularFootOnInfiniteEntity(origin, entity) {
   return {
     x: basePoint.x + direction.x * factor,
     y: basePoint.y + direction.y * factor,
+    z: coordinateZ(basePoint) + coordinateZ(direction) * factor,
   };
 }
 

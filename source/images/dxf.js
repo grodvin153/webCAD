@@ -1,5 +1,7 @@
 /* webCAD - Persistencia DXF de imagenes embebidas | SPDX-License-Identifier: GPL-3.0-or-later */
 
+import { coordinateZ } from '../coordinates/point3.js';
+
 const APP_ID = 'WEBCAD';
 const FORMAT_MARKER = 'WEBCAD_IMAGE_V1';
 const META_BEGIN = 'META_BEGIN';
@@ -43,7 +45,7 @@ export function appendEmbeddedImageToDxf(lines, entity) {
     '8', entity.layer,
     '10', String(entity.center.x + lowerLeftOffset.x),
     '20', String(-(entity.center.y + lowerLeftOffset.y)),
-    '30', '0',
+    '30', String(coordinateZ(entity.center)),
     '11', String(uVector.x),
     '21', String(-uVector.y),
     '31', '0',
@@ -87,6 +89,7 @@ export function parseEmbeddedImageFromDxf(entityPairs) {
       center: {
         x: Number(metadata.center?.x),
         y: Number(metadata.center?.y),
+        z: coordinateZ(metadata.center),
       },
       width: Number(metadata.width),
       height: Number(metadata.height),

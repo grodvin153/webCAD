@@ -5,6 +5,7 @@
  */
 
 import { SNAP_THRESHOLD } from './config.js';
+import { coordinateZ } from './coordinates/point3.js';
 import {
   angleOfPoint,
   angleOnArc,
@@ -39,6 +40,8 @@ export function lineSegmentIntersection(first, second) {
   return {
     x: first.start.x + firstFactor * firstDeltaX,
     y: first.start.y + firstFactor * firstDeltaY,
+    z: coordinateZ(first.start) +
+      (coordinateZ(first.end) - coordinateZ(first.start)) * firstFactor,
   };
 }
 
@@ -64,6 +67,8 @@ export function infiniteLineSegmentIntersection(axisPoint, axisDirection, entity
   return {
     x: entity.start.x + segmentFactor * segmentX,
     y: entity.start.y + segmentFactor * segmentY,
+    z: coordinateZ(entity.start) +
+      (coordinateZ(entity.end) - coordinateZ(entity.start)) * segmentFactor,
   };
 }
 
@@ -83,6 +88,7 @@ export function infiniteLineLineIntersection(firstPoint, firstDirection, secondP
   return {
     x: firstPoint.x + firstDirection.x * firstFactor,
     y: firstPoint.y + firstDirection.y * firstFactor,
+    z: coordinateZ(firstPoint) + coordinateZ(firstDirection) * firstFactor,
   };
 }
 
@@ -118,6 +124,7 @@ export function infiniteLineCircularIntersectionPoints(axisPoint, axisDirection,
     return [{
       x: axisPoint.x + axisDirection.x * factor,
       y: axisPoint.y + axisDirection.y * factor,
+      z: coordinateZ(axisPoint) + coordinateZ(axisDirection) * factor,
     }].filter((point) => !respectArc || pointOnCircularEntity(point, entity));
   }
 
@@ -129,6 +136,7 @@ export function infiniteLineCircularIntersectionPoints(axisPoint, axisDirection,
     .map((factor) => ({
       x: axisPoint.x + axisDirection.x * factor,
       y: axisPoint.y + axisDirection.y * factor,
+      z: coordinateZ(axisPoint) + coordinateZ(axisDirection) * factor,
     }))
     .filter((point) => !respectArc || pointOnCircularEntity(point, entity));
 }
@@ -187,15 +195,15 @@ export function circleCircleIntersectionPoints(first, second) {
   const baseX = first.center.x + a * (second.center.x - first.center.x) / centerDistance;
   const baseY = first.center.y + a * (second.center.y - first.center.y) / centerDistance;
   if (Math.abs(heightSquared) <= SNAP_THRESHOLD) {
-    return [{ x: baseX, y: baseY }];
+    return [{ x: baseX, y: baseY, z: coordinateZ(first.center) }];
   }
 
   const height = Math.sqrt(heightSquared);
   const offsetX = -(second.center.y - first.center.y) * height / centerDistance;
   const offsetY = (second.center.x - first.center.x) * height / centerDistance;
   return [
-    { x: baseX + offsetX, y: baseY + offsetY },
-    { x: baseX - offsetX, y: baseY - offsetY },
+    { x: baseX + offsetX, y: baseY + offsetY, z: coordinateZ(first.center) },
+    { x: baseX - offsetX, y: baseY - offsetY, z: coordinateZ(first.center) },
   ];
 }
 
@@ -203,6 +211,7 @@ export function lineFullCircleIntersectionPoints(line, circularEntity) {
   const direction = {
     x: line.end.x - line.start.x,
     y: line.end.y - line.start.y,
+    z: coordinateZ(line.end) - coordinateZ(line.start),
   };
   return infiniteLineCircularIntersectionPoints(line.start, direction, circularEntity, false);
 }

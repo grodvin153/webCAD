@@ -1,6 +1,7 @@
 /* webCAD - Entidad linea | SPDX-License-Identifier: GPL-3.0-or-later */
 
 import { createBounds, distance } from '../geometry.js';
+import { point3 } from '../coordinates/point3.js';
 import { DEFAULT_LAYER } from '../properties/layers.js';
 import { DEFAULT_LINE_COLOR, DEFAULT_LINE_STYLE, DEFAULT_LINE_TYPE } from '../properties/styles.js';
 
@@ -8,8 +9,8 @@ export function createLineEntityClass(style) {
   return class LineEntity {
     constructor(start, end, options = {}) {
       this.type = 'LINE';
-      this.start = { x: start.x, y: start.y };
-      this.end = { x: end.x, y: end.y };
+      this.start = point3(start);
+      this.end = point3(end);
       this.groupId = options.groupId || null;
       this.layer = options.layer || DEFAULT_LAYER.name;
       style.applyLineStyleToEntity(this, options.lineStyle || DEFAULT_LINE_STYLE);

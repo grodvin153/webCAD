@@ -5,6 +5,7 @@
  */
 
 import { SNAP_THRESHOLD } from './config.js';
+import { coordinateZ } from './coordinates/point3.js';
 
 export const TWO_PI = Math.PI * 2;
 
@@ -20,6 +21,7 @@ export function offsetPoint(point, vector) {
   return {
     x: point.x + vector.x,
     y: point.y + vector.y,
+    z: coordinateZ(point) + coordinateZ(vector),
   };
 }
 
@@ -27,23 +29,28 @@ export function orthoPoint(start, point) {
   const deltaX = point.x - start.x;
   const deltaY = point.y - start.y;
   if (Math.abs(deltaX) >= Math.abs(deltaY)) {
-    return { x: point.x, y: start.y };
+    return { x: point.x, y: start.y, z: coordinateZ(point, coordinateZ(start)) };
   }
-  return { x: start.x, y: point.y };
+  return { x: start.x, y: point.y, z: coordinateZ(point, coordinateZ(start)) };
 }
 
 export function entityMidpoint(entity) {
   return {
     x: (entity.start.x + entity.end.x) * 0.5,
     y: (entity.start.y + entity.end.y) * 0.5,
+    z: (coordinateZ(entity.start) + coordinateZ(entity.end)) * 0.5,
   };
 }
 
 export function normalizedVector(start, end) {
-  const vector = { x: end.x - start.x, y: end.y - start.y };
+  const vector = {
+    x: end.x - start.x,
+    y: end.y - start.y,
+    z: coordinateZ(end) - coordinateZ(start),
+  };
   const length = Math.hypot(vector.x, vector.y);
   return length > SNAP_THRESHOLD
-    ? { x: vector.x / length, y: vector.y / length }
+    ? { x: vector.x / length, y: vector.y / length, z: vector.z / length }
     : null;
 }
 
@@ -75,6 +82,7 @@ export function pointAtLineParameter(entity, parameter) {
   return {
     x: entity.start.x + (entity.end.x - entity.start.x) * parameter,
     y: entity.start.y + (entity.end.y - entity.start.y) * parameter,
+    z: coordinateZ(entity.start) + (coordinateZ(entity.end) - coordinateZ(entity.start)) * parameter,
   };
 }
 
@@ -108,6 +116,7 @@ export function pointAtCircleAngle(entity, angle) {
   return {
     x: entity.center.x + Math.cos(angle) * entity.radius,
     y: entity.center.y + Math.sin(angle) * entity.radius,
+    z: coordinateZ(entity.center),
   };
 }
 
@@ -194,6 +203,8 @@ export function perpendicularFootOnSegment(origin, entity) {
   return {
     x: entity.start.x + clampedFactor * segmentX,
     y: entity.start.y + clampedFactor * segmentY,
+    z: coordinateZ(entity.start) +
+      (coordinateZ(entity.end) - coordinateZ(entity.start)) * clampedFactor,
   };
 }
 
@@ -224,6 +235,7 @@ export function distancePointToSegment(point, start, end) {
   const projectedPoint = {
     x: start.x + projection * segmentX,
     y: start.y + projection * segmentY,
+    z: coordinateZ(start) + (coordinateZ(end) - coordinateZ(start)) * projection,
   };
   return distance(point, projectedPoint);
 }

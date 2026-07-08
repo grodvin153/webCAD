@@ -7,6 +7,7 @@ import {
   normalizeAngle,
   pointAtCircleAngle,
 } from '../geometry.js';
+import { point3 } from '../coordinates/point3.js';
 import { DEFAULT_LAYER } from '../properties/layers.js';
 import { DEFAULT_LINE_COLOR, DEFAULT_LINE_STYLE, DEFAULT_LINE_TYPE } from '../properties/styles.js';
 
@@ -14,7 +15,7 @@ export function createArcEntityClass(style) {
   return class ArcEntity {
     constructor(center, radius, startAngle, endAngle, options = {}) {
       this.type = 'ARC';
-      this.center = { x: center.x, y: center.y };
+      this.center = point3(center);
       this.radius = radius;
       this.startAngle = normalizeAngle(startAngle);
       this.endAngle = normalizeAngle(endAngle);

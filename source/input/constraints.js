@@ -1,6 +1,7 @@
 /* webCAD - Restricciones de entrada y ghosts por teclado | SPDX-License-Identifier: GPL-3.0-or-later */
 
 import { parseDistanceInput } from './entry.js';
+import { coordinateZ } from '../coordinates/point3.js';
 import {
   pointFromDistance,
   pointFromPartialRelativeCoordinates,
@@ -30,6 +31,7 @@ export function rectangleTargetPoint(draft, cursor, value = '') {
     return {
       x: draft.firstPoint.x + direction * draft.fixedWidth,
       y: cursor.y,
+      z: coordinateZ(cursor, coordinateZ(draft.firstPoint)),
     };
   }
   const inputDistance = parseDistanceInput(value);

@@ -1,6 +1,7 @@
 /* webCAD - Entidad sombreado | SPDX-License-Identifier: GPL-3.0-or-later */
 
 import { createBounds, distance } from '../geometry.js';
+import { point3 } from '../coordinates/point3.js';
 import { DEFAULT_LAYER } from '../properties/layers.js';
 import { DEFAULT_LINE_COLOR, DEFAULT_LINE_STYLE, DEFAULT_LINE_TYPE } from '../properties/styles.js';
 
@@ -15,9 +16,9 @@ export function createHatchEntityClass(style) {
         : [boundary];
       this.loops = requestedLoops
         .filter((loop) => Array.isArray(loop) && loop.length >= 3)
-        .map((loop) => loop.map((point) => ({ x: point.x, y: point.y })));
+        .map((loop) => loop.map((point) => point3(point)));
       if (!this.loops.length) {
-        this.loops = [boundary.map((point) => ({ x: point.x, y: point.y }))];
+        this.loops = [boundary.map((point) => point3(point))];
       }
       this.boundary = this.loops[0];
       this.gripIndices = Array.isArray(requestedGripIndices)

@@ -1,6 +1,7 @@
 /* webCAD - Calibracion y alineacion de imagenes | SPDX-License-Identifier: GPL-3.0-or-later */
 
 import { SNAP_THRESHOLD } from '../config.js';
+import { coordinateZ } from '../coordinates/point3.js';
 import { distance } from '../geometry.js';
 
 function normalizeAngle(angle) {
@@ -18,6 +19,7 @@ function transformPoint(point, sourceStart, targetStart, scale, angle) {
   return {
     x: targetStart.x + (deltaX * cosine - deltaY * sine) * scale,
     y: targetStart.y + (deltaX * sine + deltaY * cosine) * scale,
+    z: coordinateZ(point),
   };
 }
 
@@ -65,6 +67,7 @@ export function calibrateImageLength(entity, sourceStart, sourceEnd, targetLengt
   entity.center = {
     x: sourceStart.x + (entity.center.x - sourceStart.x) * scale,
     y: sourceStart.y + (entity.center.y - sourceStart.y) * scale,
+    z: coordinateZ(entity.center),
   };
   entity.width *= scale;
   entity.height *= scale;

@@ -5,6 +5,7 @@
  */
 
 import { SNAP_THRESHOLD } from '../config.js';
+import { coordinateZ } from '../coordinates/point3.js';
 import { angleOfPoint, normalizedVector } from '../geometry.js';
 
 export function dotProduct(first, second) {
@@ -23,7 +24,7 @@ export function mirrorPointAcrossAxis(point, firstPoint, secondPoint) {
     x: firstPoint.x + axis.x * projection,
     y: firstPoint.y + axis.y * projection,
   };
-  return { x: foot.x * 2 - point.x, y: foot.y * 2 - point.y };
+  return { x: foot.x * 2 - point.x, y: foot.y * 2 - point.y, z: coordinateZ(point) };
 }
 
 export function mirrorAngleAcrossAxis(angle, firstPoint, secondPoint) {
@@ -49,6 +50,7 @@ export function mirrorEntityAcrossAxis(entity, firstPoint, secondPoint) {
     const directionPoint = {
       x: entity.basePoint.x + entity.direction.x,
       y: entity.basePoint.y + entity.direction.y,
+      z: entity.basePoint.z + entity.direction.z,
     };
     entity.basePoint = mirrorPoint(entity.basePoint);
     const mirroredDirectionPoint = mirrorPoint(directionPoint);
@@ -100,6 +102,7 @@ export function mirrorEntityAcrossAxis(entity, firstPoint, secondPoint) {
     const oldXAxis = {
       x: oldInsertion.x + Math.cos(angle),
       y: oldInsertion.y + Math.sin(angle),
+      z: oldInsertion.z,
     };
     entity.insertionPoint = mirrorPoint(oldInsertion);
     const mirroredXAxis = mirrorPoint(oldXAxis);
@@ -112,6 +115,7 @@ export function mirrorEntityAcrossAxis(entity, firstPoint, secondPoint) {
     const oldXAxis = {
       x: oldCenter.x + Math.cos(angle),
       y: oldCenter.y + Math.sin(angle),
+      z: oldCenter.z,
     };
     entity.center = mirrorPoint(oldCenter);
     const mirroredXAxis = mirrorPoint(oldXAxis);

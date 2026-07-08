@@ -52,6 +52,7 @@ export function createOffsetGeometry({
       basePoint: {
         x: line.basePoint.x + vector.x,
         y: line.basePoint.y + vector.y,
+        z: line.basePoint.z || 0,
       },
       direction: { ...line.direction },
     };
@@ -63,8 +64,8 @@ export function createOffsetGeometry({
     const vector = { x: -direction.y * offset * side, y: direction.x * offset * side };
     return {
       type: 'LINE',
-      start: { x: line.start.x + vector.x, y: line.start.y + vector.y },
-      end: { x: line.end.x + vector.x, y: line.end.y + vector.y },
+      start: { x: line.start.x + vector.x, y: line.start.y + vector.y, z: line.start.z || 0 },
+      end: { x: line.end.x + vector.x, y: line.end.y + vector.y, z: line.end.z || 0 },
       direction,
     };
   }

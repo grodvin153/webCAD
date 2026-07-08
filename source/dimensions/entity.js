@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+import { point3 } from '../coordinates/point3.js';
+
 export function createDimensionEntityServices(dependencies) {
   const {
     DEFAULT_LAYER,
@@ -46,10 +48,10 @@ export function createDimensionEntityServices(dependencies) {
     constructor(kind, points, placement, options = {}) {
       this.type = 'DIMENSION';
       this.kind = kind;
-      this.points = points.map((point) => ({ x: point.x, y: point.y }));
-      this.placement = { x: placement.x, y: placement.y };
+      this.points = points.map((point) => point3(point));
+      this.placement = point3(placement);
       this.textPosition = options.textPosition
-        ? { x: options.textPosition.x, y: options.textPosition.y }
+        ? point3(options.textPosition)
         : null;
       this.dimensionStyle = DIMENSION_STYLES[options.dimensionStyle]?.id || 'normal';
       this.groupId = null;
