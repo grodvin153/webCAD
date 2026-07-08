@@ -18,6 +18,7 @@ export function createPolylineTrimOperations(dependencies) {
     pointAtCircularParameter,
     pointAtLineParameter,
     polylineSegmentEntity,
+    uniqueSortedParameters,
   } = dependencies;
 
   function polylineSegmentSlice(entity, segmentIndex, startParameter, endParameter) {
@@ -162,8 +163,7 @@ export function createPolylineTrimOperations(dependencies) {
       return { trimmed: false, keptCount: 0, grouped: true };
     }
 
-    const breakDistances = [];
-    let pickDistance = 0;
+    let pickedParameter = 0;
     let pickedSegmentIndex = 0;
     let nearestPickDistance = Infinity;
     for (const component of path.components) {
@@ -186,67 +186,48 @@ export function createPolylineTrimOperations(dependencies) {
       const candidateDistance = distance(projectedPick, pickPoint);
       if (candidateDistance < nearestPickDistance) {
         nearestPickDistance = candidateDistance;
-        pickDistance = component.offset + component.length * componentPickParameter;
+        pickedParameter = componentPickParameter;
         pickedSegmentIndex = component.index;
       }
+    }
 
-      for (const otherEntity of doc.queryBounds(component.geometry.bounds())) {
-        if (otherEntity === entity || otherEntity.type === 'HATCH' || otherEntity.type === 'TEXT') {
-          continue;
-        }
-        for (const intersection of entityIntersectionPoints(component.geometry, otherEntity)) {
-          const parameter = component.geometry.type === 'LINE'
-            ? lineParameter(component.geometry, intersection)
-            : circularParameter(component.geometry, intersection);
-          let pathDistance = component.offset + component.length * parameter;
-          if (path.closed && path.totalLength - pathDistance <= SNAP_THRESHOLD) {
-            pathDistance = 0;
-          }
-          breakDistances.push(pathDistance);
+    const pickedComponent = path.components.find((component) => component.index === pickedSegmentIndex);
+    if (!pickedComponent) {
+      return { trimmed: false, keptCount: 0, grouped: true };
+    }
+
+    const breakParameters = [0, 1];
+    for (const otherEntity of doc.queryBounds(pickedComponent.geometry.bounds())) {
+      if (otherEntity === entity || otherEntity.type === 'HATCH' || otherEntity.type === 'TEXT') {
+        continue;
+      }
+      for (const intersection of entityIntersectionPoints(pickedComponent.geometry, otherEntity)) {
+        const parameter = pickedComponent.geometry.type === 'LINE'
+          ? lineParameter(pickedComponent.geometry, intersection)
+          : circularParameter(pickedComponent.geometry, intersection);
+        if (parameter > SNAP_THRESHOLD && parameter < 1 - SNAP_THRESHOLD) {
+          breakParameters.push(parameter);
         }
       }
     }
 
-    const sortedBreaks = breakDistances
-      .sort((first, second) => first - second)
-      .filter((value, index, values) => index === 0 || value - values[index - 1] > SNAP_THRESHOLD);
-    if ((path.closed && sortedBreaks.length < 2) || (!path.closed && !sortedBreaks.length)) {
+    const sortedBreaks = uniqueSortedParameters(breakParameters);
+    let localTrimStart = null;
+    let localTrimEnd = null;
+    for (let index = 0; index < sortedBreaks.length - 1; index += 1) {
+      if (pickedParameter >= sortedBreaks[index] - SNAP_THRESHOLD &&
+          pickedParameter <= sortedBreaks[index + 1] + SNAP_THRESHOLD) {
+        localTrimStart = sortedBreaks[index];
+        localTrimEnd = sortedBreaks[index + 1];
+        break;
+      }
+    }
+    if (localTrimStart === null || localTrimEnd === null) {
       return removePolylineSegmentAtIndex(doc, entity, pickedSegmentIndex);
     }
 
-    let trimStart = null;
-    let trimEnd = null;
-    if (path.closed) {
-      for (let index = 0; index < sortedBreaks.length; index += 1) {
-        const start = sortedBreaks[index];
-        const next = sortedBreaks[(index + 1) % sortedBreaks.length];
-        const end = index === sortedBreaks.length - 1 ? next + path.totalLength : next;
-        const adjustedPick = pickDistance < start - SNAP_THRESHOLD
-          ? pickDistance + path.totalLength
-          : pickDistance;
-        if (adjustedPick >= start - SNAP_THRESHOLD && adjustedPick <= end + SNAP_THRESHOLD) {
-          trimStart = start;
-          trimEnd = end;
-          break;
-        }
-      }
-    }
-    else {
-      const openBreaks = [0, ...sortedBreaks, path.totalLength]
-        .sort((first, second) => first - second)
-        .filter((value, index, values) => index === 0 || value - values[index - 1] > SNAP_THRESHOLD);
-      for (let index = 0; index < openBreaks.length - 1; index += 1) {
-        if (pickDistance >= openBreaks[index] - SNAP_THRESHOLD &&
-            pickDistance <= openBreaks[index + 1] + SNAP_THRESHOLD) {
-          trimStart = openBreaks[index];
-          trimEnd = openBreaks[index + 1];
-          break;
-        }
-      }
-    }
-    if (trimStart === null || trimEnd === null) {
-      return removePolylineSegmentAtIndex(doc, entity, pickedSegmentIndex);
-    }
+    const trimStart = pickedComponent.offset + pickedComponent.length * localTrimStart;
+    const trimEnd = pickedComponent.offset + pickedComponent.length * localTrimEnd;
 
     const replacements = [];
     if (path.closed) {
@@ -271,7 +252,11 @@ export function createPolylineTrimOperations(dependencies) {
     }
 
     const replaced = doc.replaceEntity(entity, replacements);
-    return { trimmed: replaced, keptCount: replacements.length, grouped: true };
+    return {
+      trimmed: replaced,
+      keptCount: replacements.length,
+      grouped: true,
+    };
   }
 
   return {

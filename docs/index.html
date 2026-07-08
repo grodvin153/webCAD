@@ -7,8 +7,8 @@
   <meta name="author" content="Gonzalo Rodriguez">
   <meta name="copyright" content="Copyright (C) 2026 Gonzalo Rodriguez">
   <title>webCAD</title>
-  <script type="module" crossorigin src="./assets/main-DfyklfAW.js"></script>
-  <link rel="stylesheet" crossorigin href="./assets/main-CNKGYpxM.css">
+  <script type="module" crossorigin src="./assets/main-BEmdDfzP.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/main-CHB2Njap.css">
 </head>
 <body>
   <header class="menu-bar">
@@ -19,6 +19,8 @@
           <button class="menu-title" type="button">Archivo</button>
           <div class="submenu" role="menu">
             <button class="submenu-item" type="button" data-command="new">Nuevo dibujo</button>
+            <button class="submenu-item" type="button" data-command="save">Guardar</button>
+            <button class="submenu-item" type="button" data-command="save-as">Guardar como...</button>
             <button class="submenu-item" type="button" data-command="drawing-profile">Tipo de dibujo...</button>
             <button class="submenu-item" type="button" data-command="settings">Configuracion...</button>
             <button class="submenu-item" type="button" data-command="import-dxf">Importar DXF</button>
@@ -42,6 +44,8 @@
           <div class="submenu" role="menu">
             <button class="submenu-item" type="button" data-command="line">Linea</button>
             <button class="submenu-item" type="button" data-command="tangent-line">Linea tangente a dos objetos</button>
+            <button class="submenu-item" type="button" data-command="point-tangent-line">Linea de punto a tangente</button>
+            <button class="submenu-item" type="button" data-command="xline">Linea infinita</button>
             <button class="submenu-item" type="button" data-command="polyline">Polilinea (P)</button>
             <button class="submenu-item" type="button" data-command="rectangle">Rectangulo</button>
             <button class="submenu-item" type="button" data-command="text">Texto</button>
@@ -58,12 +62,15 @@
           <div class="submenu" role="menu">
             <button class="submenu-item" type="button" data-command="copy">Copiar</button>
             <button class="submenu-item" type="button" data-command="move">Desplazar</button>
+            <button class="submenu-item" type="button" data-command="stretch">Estirar (E)</button>
+            <button class="submenu-item" type="button" data-command="polar-array">Matriz polar (MP)</button>
             <button class="submenu-item" type="button" data-command="rotate">Girar</button>
             <button class="submenu-item" type="button" data-command="scale">Escala (ES)</button>
             <button class="submenu-item" type="button" data-command="mirror">Simetria (S)</button>
             <button class="submenu-item" type="button" data-command="trim">Recortar</button>
             <button class="submenu-item" type="button" data-command="extend">Alargar</button>
             <button class="submenu-item" type="button" data-command="fillet">Empalme (F)</button>
+            <button class="submenu-item" type="button" data-command="offset">Equidistancia (Q)</button>
             <button class="submenu-item" type="button" data-command="chamfer">Chaflan</button>
             <button class="submenu-item" type="button" data-command="erase">Borrar</button>
             <button class="submenu-item" type="button" data-command="explode">Descomponer (X)</button>
@@ -120,12 +127,14 @@
           <div class="layer-options" role="menu" aria-label="Capas">
             <div id="layer-list" class="layer-list"></div>
             <button id="layer-create-open" class="layer-create-open" type="button">+ Crear capa</button>
+            <button id="layer-edit-open" class="layer-edit-open" type="button">Editar capa activa...</button>
           </div>
           <div class="layer-create-panel" aria-label="Crear capa">
-            <strong>Nueva capa</strong>
+            <strong id="layer-panel-title">Nueva capa</strong>
             <label>Nombre<input id="layer-name-input" type="text" maxlength="32" value="Capa 1"></label>
             <label>Grosor
               <select id="layer-style-input">
+                <option value="very-fine">Muy fino</option>
                 <option value="auxiliar">Fino</option>
                 <option value="normal" selected>Medio</option>
                 <option value="gruesa">Gruesa</option>
@@ -166,21 +175,26 @@
             </div>
           </div>
         </div>
-        <span>Grosor</span>
-        <div class="line-style-picker">
+        <span>Color</span>
+        <div class="line-color-picker">
           <button
-            id="line-style-toggle"
-            class="line-style-toggle"
+            id="line-color-toggle"
+            class="line-color-toggle"
             type="button"
-            aria-label="Grosor de linea activo"
+            aria-label="Color de linea activo"
             aria-expanded="false"
           >
-            <span id="line-style-label">Medio</span>
+            <span id="line-color-label" class="line-color-current is-bylayer" aria-hidden="true"></span>
           </button>
-          <div class="line-style-options" role="menu" aria-label="Grosores de linea">
-            <button class="line-style-option" type="button" data-line-style="auxiliar" role="menuitem">Fino</button>
-            <button class="line-style-option is-active" type="button" data-line-style="normal" role="menuitem">Medio</button>
-            <button class="line-style-option" type="button" data-line-style="gruesa" role="menuitem">Gruesa</button>
+          <div class="line-color-options" role="menu" aria-label="Colores de linea">
+            <button class="line-color-option is-active" type="button" data-line-color="bylayer" role="menuitem" aria-label="Por capa" title="Por capa"><span class="line-color-swatch is-bylayer"></span></button>
+            <button class="line-color-option" type="button" data-line-color="red" role="menuitem" aria-label="Rojo" title="Rojo"><span class="line-color-swatch is-red"></span></button>
+            <button class="line-color-option" type="button" data-line-color="yellow" role="menuitem" aria-label="Amarillo" title="Amarillo"><span class="line-color-swatch is-yellow"></span></button>
+            <button class="line-color-option" type="button" data-line-color="green" role="menuitem" aria-label="Verde" title="Verde"><span class="line-color-swatch is-green"></span></button>
+            <button class="line-color-option" type="button" data-line-color="cyan" role="menuitem" aria-label="Cian" title="Cian"><span class="line-color-swatch is-cyan"></span></button>
+            <button class="line-color-option" type="button" data-line-color="blue" role="menuitem" aria-label="Azul" title="Azul"><span class="line-color-swatch is-blue"></span></button>
+            <button class="line-color-option" type="button" data-line-color="magenta" role="menuitem" aria-label="Magenta" title="Magenta"><span class="line-color-swatch is-magenta"></span></button>
+            <button class="line-color-option" type="button" data-line-color="aci7" role="menuitem" aria-label="Blanco o negro" title="Blanco / negro"><span class="line-color-swatch is-aci7"></span></button>
           </div>
         </div>
         <span>Tipo</span>
@@ -192,10 +206,12 @@
             aria-label="Tipo de linea activo"
             aria-expanded="false"
           >
-            <svg id="line-type-label" class="line-type-current" viewBox="0 0 58 10" aria-hidden="true"><path d="M2 5h54"></path></svg>
+            <span id="line-type-text">Por capa</span>
+            <svg id="line-type-label" class="line-type-current" viewBox="0 0 58 10" aria-hidden="true" hidden><path d="M2 5h54"></path></svg>
           </button>
           <div class="line-type-options" role="menu" aria-label="Tipos de linea">
-            <button class="line-type-option is-active" type="button" data-line-type="continuous" role="menuitem" aria-label="Continua" title="Continua">
+            <button class="line-type-option is-active" type="button" data-line-type="bylayer" role="menuitem" aria-label="Por capa" title="Por capa">Por capa</button>
+            <button class="line-type-option" type="button" data-line-type="continuous" role="menuitem" aria-label="Continua" title="Continua">
               <svg class="line-type-sample" viewBox="0 0 72 10" aria-hidden="true"><path d="M2 5h68"></path></svg>
             </button>
             <button class="line-type-option" type="button" data-line-type="hidden" role="menuitem" aria-label="Oculta" title="Oculta">
@@ -206,26 +222,23 @@
             </button>
           </div>
         </div>
-        <span>Color</span>
-        <div class="line-color-picker">
+        <span>Grosor</span>
+        <div class="line-style-picker">
           <button
-            id="line-color-toggle"
-            class="line-color-toggle"
+            id="line-style-toggle"
+            class="line-style-toggle"
             type="button"
-            aria-label="Color de linea activo"
+            aria-label="Grosor de linea activo"
             aria-expanded="false"
           >
-            <span id="line-color-label" class="line-color-current is-default" aria-hidden="true"></span>
+            <span id="line-style-label">Por capa</span>
           </button>
-          <div class="line-color-options" role="menu" aria-label="Colores de linea">
-            <button class="line-color-option is-active" type="button" data-line-color="default" role="menuitem" aria-label="Por defecto" title="Por defecto"><span class="line-color-swatch is-default"></span></button>
-            <button class="line-color-option" type="button" data-line-color="red" role="menuitem" aria-label="Rojo" title="Rojo"><span class="line-color-swatch is-red"></span></button>
-            <button class="line-color-option" type="button" data-line-color="yellow" role="menuitem" aria-label="Amarillo" title="Amarillo"><span class="line-color-swatch is-yellow"></span></button>
-            <button class="line-color-option" type="button" data-line-color="green" role="menuitem" aria-label="Verde" title="Verde"><span class="line-color-swatch is-green"></span></button>
-            <button class="line-color-option" type="button" data-line-color="cyan" role="menuitem" aria-label="Cian" title="Cian"><span class="line-color-swatch is-cyan"></span></button>
-            <button class="line-color-option" type="button" data-line-color="blue" role="menuitem" aria-label="Azul" title="Azul"><span class="line-color-swatch is-blue"></span></button>
-            <button class="line-color-option" type="button" data-line-color="magenta" role="menuitem" aria-label="Magenta" title="Magenta"><span class="line-color-swatch is-magenta"></span></button>
-            <button class="line-color-option" type="button" data-line-color="aci7" role="menuitem" aria-label="Blanco o negro" title="Blanco / negro"><span class="line-color-swatch is-aci7"></span></button>
+          <div class="line-style-options" role="menu" aria-label="Grosores de linea">
+            <button class="line-style-option is-active" type="button" data-line-style="bylayer" role="menuitem">Por capa</button>
+            <button class="line-style-option" type="button" data-line-style="very-fine" role="menuitem">Muy fino</button>
+            <button class="line-style-option" type="button" data-line-style="auxiliar" role="menuitem">Fino</button>
+            <button class="line-style-option" type="button" data-line-style="normal" role="menuitem">Medio</button>
+            <button class="line-style-option" type="button" data-line-style="gruesa" role="menuitem">Gruesa</button>
           </div>
         </div>
       </div>
@@ -233,11 +246,19 @@
         <span>Empalme R</span>
         <input id="fillet-radius-input" type="number" min="0" step="1" value="10" inputmode="decimal" aria-label="Radio de empalme">
       </label>
+      <label id="offset-distance-control" class="fillet-radius-control" title="Distancia de equidistancia" hidden>
+        <span>Equidistancia</span>
+        <input id="offset-distance-input" type="number" min="0" step="1" value="10" inputmode="decimal" aria-label="Distancia de equidistancia">
+      </label>
       <div id="chamfer-distance-control" class="fillet-radius-control chamfer-distance-control" title="Distancias de chaflan" hidden>
         <span>Chaflan</span>
         <label>D1 <input id="chamfer-distance-first" type="number" min="0" step="1" value="10" inputmode="decimal" aria-label="Primera distancia de chaflan"></label>
         <label>D2 <input id="chamfer-distance-second" type="number" min="0" step="1" value="10" inputmode="decimal" aria-label="Segunda distancia de chaflan"></label>
       </div>
+      <label id="polar-array-count-control" class="fillet-radius-control" title="Numero total de elementos de la matriz polar" hidden>
+        <span>Matriz polar</span>
+        <input id="polar-array-count-input" type="number" min="2" max="360" step="1" value="6" inputmode="numeric" aria-label="Numero de elementos de la matriz polar">
+      </label>
       <div class="navigation-device-control" role="group" aria-label="Periferico de navegacion">
         <button
           id="navigation-mouse"
@@ -286,6 +307,12 @@
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <path d="M6 3h8l4 4v14H6z"></path>
           <path d="M14 3v5h5"></path>
+        </svg>
+      </button>
+      <button id="action-save" class="menu-button" type="button" title="Guardar archivo local" aria-label="Guardar archivo local">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M5 3h11l3 3v15H5z"></path>
+          <path d="M8 3v6h8V3M8 21v-7h8v7"></path>
         </svg>
       </button>
       <button id="action-import-dxf" class="menu-button" type="button" title="Importar DXF" aria-label="Importar DXF">
@@ -339,6 +366,7 @@
         class="tool-button"
         type="button"
         data-tool="line"
+        data-shortcut="L"
         title="Linea por dos puntos"
         aria-label="Linea por dos puntos"
       >
@@ -365,10 +393,42 @@
         </svg>
       </button>
       <button
+        id="tool-point-tangent-line"
+        class="tool-button"
+        type="button"
+        data-tool="point-tangent-line"
+        title="Linea de un punto a tangente a una curva"
+        aria-label="Linea de un punto a tangente a una curva"
+      >
+        <svg viewBox="0 0 48 48" aria-hidden="true">
+          <circle cx="34" cy="25" r="10"></circle>
+          <path d="M8 38 28 17"></path>
+          <circle cx="8" cy="38" r="2.4"></circle>
+          <circle cx="28" cy="17" r="1.8"></circle>
+        </svg>
+      </button>
+      <button
+        id="tool-xline"
+        class="tool-button"
+        type="button"
+        data-tool="xline"
+        data-shortcut="XL"
+        title="Linea infinita por dos puntos (XL)"
+        aria-label="Linea infinita por dos puntos"
+      >
+        <svg viewBox="0 0 48 48" aria-hidden="true">
+          <path d="M5 39 43 9"></path>
+          <circle cx="19" cy="28" r="2.8"></circle>
+          <circle cx="30" cy="19" r="2.8"></circle>
+          <path d="m5 39 5-1-3-4M43 9l-5 1 3 4"></path>
+        </svg>
+      </button>
+      <button
         id="tool-rectangle"
         class="tool-button"
         type="button"
         data-tool="rectangle"
+        data-shortcut="RC"
         title="Rectangulo"
         aria-label="Rectangulo"
       >
@@ -383,6 +443,7 @@
         class="tool-button"
         type="button"
         data-tool="polyline"
+        data-shortcut="P"
         title="Polilinea (P)"
         aria-label="Polilinea"
       >
@@ -399,6 +460,7 @@
         class="tool-button"
         type="button"
         data-tool="text"
+        data-shortcut="T"
         title="Texto (T)"
         aria-label="Texto"
       >
@@ -413,6 +475,7 @@
         class="tool-button"
         type="button"
         data-tool="hatch"
+        data-shortcut="H"
         title="Sombreado (H)"
         aria-label="Sombreado"
       >
@@ -427,6 +490,7 @@
           class="tool-button tool-button-main"
           type="button"
           data-tool="circle-center"
+          data-shortcut="CI"
           title="Circulo (CI)"
           aria-label="Circulo"
         >
@@ -486,68 +550,6 @@
           <button class="tool-flyout-item" type="button" data-command="arc-center-start-end">Centro-inicio-final</button>
         </div>
       </div>
-      <div class="tool-group" data-tool-group="block">
-        <button
-          id="tool-block"
-          class="tool-button tool-button-main"
-          type="button"
-          data-tool="block-insert"
-          title="Insertar bloque"
-          aria-label="Bloques"
-        >
-          <svg viewBox="0 0 48 48" aria-hidden="true">
-            <rect x="9" y="10" width="17" height="17" rx="2"></rect>
-            <rect x="22" y="21" width="17" height="17" rx="2"></rect>
-            <path d="M17.5 27v6.5H22M26 18.5h6.5V21"></path>
-          </svg>
-        </button>
-        <button
-          id="tool-block-menu"
-          class="tool-menu-button"
-          type="button"
-          title="Herramientas de bloque"
-          aria-label="Mas herramientas de bloque"
-          aria-expanded="false"
-        >
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 9 5 5 5-5"></path></svg>
-        </button>
-        <div class="tool-flyout" role="menu" aria-label="Herramientas de bloque">
-          <button class="tool-flyout-item" type="button" data-command="block-create">Crear bloque</button>
-          <button class="tool-flyout-item" type="button" data-command="block-insert">Insertar bloque</button>
-        </div>
-      </div>
-      </section>
-
-      <section class="tool-section tool-section-dimensions" aria-labelledby="tools-dimension-title">
-        <h2 id="tools-dimension-title" class="tool-section-title">Cotas</h2>
-        <label class="dimension-style-control" title="Tamaño del estilo de cota">
-          <span>Estilo</span>
-          <select id="dimension-style-select" aria-label="Estilo de cota">
-            <option value="normal" selected>Normal</option>
-            <option value="large">Grande</option>
-            <option value="xlarge">Muy grande</option>
-            <option value="small">Pequeño</option>
-            <option value="tiny">Muy pequeño</option>
-          </select>
-        </label>
-        <button class="tool-button dimension-tool-button" type="button" data-command="dimension-horizontal" title="Cota horizontal" aria-label="Cota horizontal">
-          <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M9 13v25M39 13v25M9 24h30M9 24l6-4v8zM39 24l-6-4v8z"></path></svg>
-        </button>
-        <button class="tool-button dimension-tool-button" type="button" data-command="dimension-vertical" title="Cota vertical" aria-label="Cota vertical">
-          <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M10 9h28M10 39h28M24 9v30M24 9l-4 6h8zM24 39l-4-6h8z"></path></svg>
-        </button>
-        <button class="tool-button dimension-tool-button" type="button" data-command="dimension-aligned" title="Cota alineada" aria-label="Cota alineada">
-          <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M10 36 36 10M7 29l12 12M29 7l12 12M12 34l3-7 5 5zM34 12l-3 7-5-5z"></path></svg>
-        </button>
-        <button class="tool-button dimension-tool-button" type="button" data-command="dimension-angular" title="Cota angular" aria-label="Cota angular">
-          <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M10 38 24 10 39 38M15 30a17 17 0 0 1 18 0"></path></svg>
-        </button>
-        <button class="tool-button dimension-tool-button" type="button" data-command="dimension-radius" title="Cota de radio" aria-label="Cota de radio">
-          <svg viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="24" r="14"></circle><path d="M24 24 36 15M36 15l-7 1 4 5z"></path><text x="7" y="14">R</text></svg>
-        </button>
-        <button class="tool-button dimension-tool-button" type="button" data-command="dimension-diameter" title="Cota de diámetro" aria-label="Cota de diámetro">
-          <svg viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="24" r="14"></circle><path d="m13 33 22-18M13 33l7-1-4-5zM35 15l-7 1 4 5z"></path></svg>
-        </button>
       </section>
 
       <section class="tool-section" aria-labelledby="tools-modify-title">
@@ -557,6 +559,7 @@
         class="tool-button"
         type="button"
         data-tool="trim"
+        data-shortcut="R"
         title="Recortar"
         aria-label="Recortar"
       >
@@ -573,6 +576,7 @@
         class="tool-button"
         type="button"
         data-tool="extend"
+        data-shortcut="A"
         title="Alargar"
         aria-label="Alargar"
       >
@@ -589,6 +593,7 @@
         class="tool-button"
         type="button"
         data-tool="fillet"
+        data-shortcut="F"
         title="Empalme con radio (F)"
         aria-label="Empalme con radio"
       >
@@ -616,10 +621,27 @@
         </svg>
       </button>
       <button
+        id="tool-offset"
+        class="tool-button"
+        type="button"
+        data-tool="offset"
+        data-shortcut="Q"
+        title="Equidistancia (Q)"
+        aria-label="Equidistancia"
+      >
+        <svg viewBox="0 0 48 48" aria-hidden="true">
+          <path d="M9 34 34 9"></path>
+          <path d="M15 40 40 15"></path>
+          <path d="m24 18 6 6"></path>
+          <path d="m22 21 2-3 3 2M27 22l3 2-2 3"></path>
+        </svg>
+      </button>
+      <button
         id="tool-copy"
         class="tool-button"
         type="button"
         data-tool="copy"
+        data-shortcut="C"
         title="Copiar"
         aria-label="Copiar"
       >
@@ -634,6 +656,7 @@
         class="tool-button"
         type="button"
         data-tool="move"
+        data-shortcut="D"
         title="Desplazar"
         aria-label="Desplazar"
       >
@@ -651,10 +674,28 @@
         </svg>
       </button>
       <button
+        id="tool-stretch"
+        class="tool-button"
+        type="button"
+        data-tool="stretch"
+        data-shortcut="E"
+        title="Estirar mediante captura (E)"
+        aria-label="Estirar"
+      >
+        <svg viewBox="0 0 48 48" aria-hidden="true">
+          <path d="M9 35h15V20h15"></path>
+          <path d="M24 35 37 22"></path>
+          <path d="m31 22 6 0 0 6"></path>
+          <rect x="7" y="33" width="4" height="4"></rect>
+          <rect x="37" y="18" width="4" height="4"></rect>
+        </svg>
+      </button>
+      <button
         id="tool-rotate"
         class="tool-button"
         type="button"
         data-tool="rotate"
+        data-shortcut="G"
         title="Girar (G)"
         aria-label="Girar"
       >
@@ -665,10 +706,30 @@
         </svg>
       </button>
       <button
+        id="tool-polar-array"
+        class="tool-button"
+        type="button"
+        data-tool="polar-array"
+        data-shortcut="MP"
+        title="Matriz polar (MP)"
+        aria-label="Matriz polar"
+      >
+        <svg viewBox="0 0 48 48" aria-hidden="true">
+          <circle cx="24" cy="24" r="4"></circle>
+          <rect x="21" y="7" width="6" height="6" rx="1"></rect>
+          <rect x="34" y="19" width="6" height="6" rx="1" transform="rotate(60 37 22)"></rect>
+          <rect x="29" y="33" width="6" height="6" rx="1" transform="rotate(120 32 36)"></rect>
+          <rect x="13" y="33" width="6" height="6" rx="1" transform="rotate(60 16 36)"></rect>
+          <rect x="8" y="19" width="6" height="6" rx="1" transform="rotate(120 11 22)"></rect>
+          <path d="M28 10a15 15 0 0 1 9 8M36 28a15 15 0 0 1-7 8M19 37a15 15 0 0 1-8-8"></path>
+        </svg>
+      </button>
+      <button
         id="tool-mirror"
         class="tool-button"
         type="button"
         data-tool="mirror"
+        data-shortcut="S"
         title="Simetria (S)"
         aria-label="Simetria"
       >
@@ -683,6 +744,7 @@
         class="tool-button"
         type="button"
         data-tool="scale"
+        data-shortcut="ES"
         title="Escala (ES)"
         aria-label="Escala"
       >
@@ -698,6 +760,7 @@
         class="tool-button"
         type="button"
         data-tool="erase"
+        data-shortcut="B"
         title="Borrar"
         aria-label="Borrar"
       >
@@ -712,6 +775,7 @@
         class="tool-button"
         type="button"
         data-tool="explode"
+        data-shortcut="X"
         title="Descomponer bloque o polilinea (X)"
         aria-label="Descomponer"
       >
@@ -789,10 +853,111 @@
         <span id="status-dxf">DXF: LINE</span>
       </footer>
     </section>
+
+    <aside class="toolbox toolbox-right" aria-label="Cotas y bloques">
+      <section class="tool-section tool-section-dimensions" aria-labelledby="tools-dimension-title">
+        <h2 id="tools-dimension-title" class="tool-section-title">Cotas</h2>
+        <label class="dimension-style-control" title="Tamaño del estilo de cota">
+          <span>Estilo</span>
+          <select id="dimension-style-select" aria-label="Estilo de cota">
+            <option value="normal" selected>Normal</option>
+            <option value="large">Grande</option>
+            <option value="xlarge">Muy grande</option>
+            <option value="small">Pequeño</option>
+            <option value="tiny">Muy pequeño</option>
+          </select>
+        </label>
+        <button class="tool-button dimension-tool-button" type="button" data-command="dimension-horizontal" title="Cota horizontal" aria-label="Cota horizontal">
+          <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M9 13v25M39 13v25M9 24h30M9 24l6-4v8zM39 24l-6-4v8z"></path></svg>
+        </button>
+        <button class="tool-button dimension-tool-button" type="button" data-command="dimension-vertical" title="Cota vertical" aria-label="Cota vertical">
+          <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M10 9h28M10 39h28M24 9v30M24 9l-4 6h8zM24 39l-4-6h8z"></path></svg>
+        </button>
+        <button class="tool-button dimension-tool-button" type="button" data-command="dimension-aligned" title="Cota alineada" aria-label="Cota alineada">
+          <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M10 36 36 10M7 29l12 12M29 7l12 12M12 34l3-7 5 5zM34 12l-3 7-5-5z"></path></svg>
+        </button>
+        <button class="tool-button dimension-tool-button" type="button" data-command="dimension-angular" title="Cota angular" aria-label="Cota angular">
+          <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M10 38 24 10 39 38M15 30a17 17 0 0 1 18 0"></path></svg>
+        </button>
+        <button class="tool-button dimension-tool-button" type="button" data-command="dimension-radius" title="Cota de radio" aria-label="Cota de radio">
+          <svg viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="24" r="14"></circle><path d="M24 24 36 15M36 15l-7 1 4 5z"></path><text x="7" y="14">R</text></svg>
+        </button>
+        <button class="tool-button dimension-tool-button" type="button" data-command="dimension-diameter" title="Cota de diámetro" aria-label="Cota de diámetro">
+          <svg viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="24" r="14"></circle><path d="m13 33 22-18M13 33l7-1-4-5zM35 15l-7 1 4 5z"></path></svg>
+        </button>
+      </section>
+
+      <section class="tool-section tool-section-blocks" aria-labelledby="tools-block-title">
+        <h2 id="tools-block-title" class="tool-section-title">Bloques</h2>
+        <div class="tool-group" data-tool-group="block">
+          <button
+            id="tool-block"
+            class="tool-button tool-button-main"
+            type="button"
+            data-tool="block-insert"
+            title="Insertar bloque"
+            aria-label="Bloques"
+          >
+            <svg viewBox="0 0 48 48" aria-hidden="true">
+              <rect x="9" y="10" width="17" height="17" rx="2"></rect>
+              <rect x="22" y="21" width="17" height="17" rx="2"></rect>
+              <path d="M17.5 27v6.5H22M26 18.5h6.5V21"></path>
+            </svg>
+          </button>
+          <button
+            id="tool-block-menu"
+            class="tool-menu-button"
+            type="button"
+            title="Herramientas de bloque"
+            aria-label="Mas herramientas de bloque"
+            aria-expanded="false"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 9 5 5 5-5"></path></svg>
+          </button>
+          <div class="tool-flyout" role="menu" aria-label="Herramientas de bloque">
+            <button class="tool-flyout-item" type="button" data-command="block-create">Crear bloque</button>
+            <button class="tool-flyout-item" type="button" data-command="block-insert">Insertar bloque</button>
+          </div>
+        </div>
+      </section>
+    </aside>
   </main>
 
   <input id="import-dxf-input" type="file" accept=".dxf,text/plain" hidden>
   <input id="import-png-input" type="file" accept=".png,image/png" hidden>
+  <div id="image-editor-dialog" class="cad-dialog-backdrop" hidden>
+    <section class="cad-dialog image-editor-dialog" role="dialog" aria-modal="true" aria-labelledby="image-editor-title">
+      <header>
+        <div>
+          <span class="cad-dialog-kicker">IMAGEN INSERTADA</span>
+          <h2 id="image-editor-title">Propiedades de imagen</h2>
+        </div>
+        <button id="image-editor-close" class="cad-dialog-close" type="button" aria-label="Cerrar">×</button>
+      </header>
+      <div class="image-editor-summary" aria-label="Imagen activa">
+        <span class="image-editor-thumbnail" aria-hidden="true">
+          <svg viewBox="0 0 32 32"><rect x="3" y="5" width="26" height="22" rx="2"></rect><path d="m6 23 7-7 5 4 3-3 5 6M21 11h.01"></path></svg>
+        </span>
+        <div><small>Archivo</small><strong id="image-editor-name">Imagen PNG</strong></div>
+      </div>
+      <label class="cad-dialog-field image-opacity-field" for="image-editor-opacity">
+        <span>Opacidad</span>
+        <div class="image-opacity-control">
+          <input id="image-editor-opacity" type="range" min="5" max="100" step="1" value="100">
+          <output id="image-editor-opacity-value" for="image-editor-opacity">100%</output>
+        </div>
+      </label>
+      <button id="image-editor-align" class="image-editor-action" type="button">
+        <span class="image-editor-action-icon" aria-hidden="true">↔</span>
+        <span><strong>Alinear y reescalar por segmento</strong><small>Marque dos puntos en la imagen y después elija un segmento CAD de referencia.</small></span>
+      </button>
+      <p class="cad-dialog-note">Las inferencias de eje y Shift están disponibles al marcar el segundo punto.</p>
+      <footer>
+        <button id="image-editor-cancel" type="button">Cancelar</button>
+        <button id="image-editor-save" class="is-primary" type="button">Guardar</button>
+      </footer>
+    </section>
+  </div>
   <div id="image-calibration-dialog" class="cad-dialog-backdrop" hidden>
     <section class="cad-dialog" role="dialog" aria-modal="true" aria-labelledby="image-calibration-title">
       <header>

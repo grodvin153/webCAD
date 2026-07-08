@@ -25,6 +25,7 @@ export function createMenuServices({
     lineTypePicker,
     lineTypeToggle,
     lineTypeLabel,
+    lineTypeText,
     lineTypeOptionButtons,
     lineColorPicker,
     lineColorToggle,
@@ -91,6 +92,9 @@ export function createMenuServices({
   function syncLineTypePicker() {
     const lineType = getLineType(getState().activeLineType);
     const previewPath = lineTypeLabel.querySelector('path');
+    const isByLayer = lineType.id === 'bylayer';
+    lineTypeText.hidden = !isByLayer;
+    lineTypeLabel.hidden = isByLayer;
     if (lineType.dash.length) {
       previewPath.setAttribute('stroke-dasharray', lineType.dash.join(' '));
     }
@@ -108,7 +112,7 @@ export function createMenuServices({
     const lineColor = getLineColor(getState().activeLineColor);
     lineColorLabel.className = `line-color-current is-${lineColor.id}`;
     const predefinedColorIds = new Set([
-      'default', 'red', 'yellow', 'green', 'cyan', 'blue', 'magenta', 'aci7',
+      'bylayer', 'default', 'red', 'yellow', 'green', 'cyan', 'blue', 'magenta', 'aci7',
     ]);
     lineColorLabel.style.background = predefinedColorIds.has(lineColor.id) ? '' : lineColor.color;
     lineColorToggle.title = lineColor.label;

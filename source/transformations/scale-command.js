@@ -6,12 +6,11 @@
 
 import { SNAP_THRESHOLD } from '../config.js';
 import { distance } from '../geometry.js';
+import { parseScalarExpression } from '../input/entry.js';
 import { scaleEntityAroundPoint } from './scale.js';
 
 export function parseScaleFactor(value) {
-  const normalized = String(value ?? '').trim().replace(',', '.');
-  if (!/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(normalized)) return null;
-  const factor = Number(normalized);
+  const factor = parseScalarExpression(value);
   return Number.isFinite(factor) && factor > SNAP_THRESHOLD ? factor : null;
 }
 

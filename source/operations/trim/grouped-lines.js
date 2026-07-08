@@ -4,9 +4,12 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+import { polylineFromLineGroupRange } from './rebuild.js';
+
 export function createGroupedLineTrimOperations(dependencies) {
   const {
     LineEntity,
+    PolylineEntity,
     SNAP_THRESHOLD,
     clamp,
     closestPointOnLineSegment,
@@ -186,35 +189,21 @@ export function createGroupedLineTrimOperations(dependencies) {
     return replacements;
   }
 
+  function lineGroupRangePolyline(path, startDistance, endDistance) {
+    return polylineFromLineGroupRange({
+      path,
+      startDistance,
+      endDistance,
+      PolylineEntity,
+      SNAP_THRESHOLD,
+      pointAt: lineGroupPointAt,
+    });
+  }
+
   function trimLineGroupAtPoint(doc, entity, pickPoint) {
     const groupEntities = doc.groupEntities(entity);
     const path = orderedLineGroup(groupEntities);
     if (!path || path.totalLength <= SNAP_THRESHOLD) {
-      return { trimmed: false, keptCount: groupEntities.length, grouped: true };
-    }
-
-    const breakDistances = [];
-    for (const component of path.components) {
-      for (const otherEntity of doc.queryBounds(component.entity.bounds())) {
-        if (otherEntity.groupId === entity.groupId) {
-          continue;
-        }
-        for (const intersection of entityIntersectionPoints(component.entity, otherEntity)) {
-          const entityParameter = lineParameter(component.entity, intersection);
-          const traversalParameter = component.reversed ? 1 - entityParameter : entityParameter;
-          let pathDistance = component.offset + component.length * traversalParameter;
-          if (path.closed && path.totalLength - pathDistance <= SNAP_THRESHOLD) {
-            pathDistance = 0;
-          }
-          breakDistances.push(pathDistance);
-        }
-      }
-    }
-
-    const sortedBreaks = [...breakDistances]
-      .sort((first, second) => first - second)
-      .filter((value, index, values) => index === 0 || value - values[index - 1] > SNAP_THRESHOLD);
-    if ((path.closed && sortedBreaks.length < 2) || (!path.closed && !sortedBreaks.length)) {
       return { trimmed: false, keptCount: groupEntities.length, grouped: true };
     }
 
@@ -226,40 +215,35 @@ export function createGroupedLineTrimOperations(dependencies) {
     const pickedTraversalParameter = pickedComponent.reversed
       ? 1 - pickedEntityParameter
       : pickedEntityParameter;
-    const pickDistance = pickedComponent.offset + pickedComponent.length * pickedTraversalParameter;
-
-    let trimStart = null;
-    let trimEnd = null;
-    if (path.closed) {
-      for (let index = 0; index < sortedBreaks.length; index += 1) {
-        const start = sortedBreaks[index];
-        const next = sortedBreaks[(index + 1) % sortedBreaks.length];
-        const end = index === sortedBreaks.length - 1 ? next + path.totalLength : next;
-        const adjustedPick = pickDistance < start - SNAP_THRESHOLD ? pickDistance + path.totalLength : pickDistance;
-        if (adjustedPick >= start - SNAP_THRESHOLD && adjustedPick <= end + SNAP_THRESHOLD) {
-          trimStart = start;
-          trimEnd = end;
-          break;
+    const breakParameters = [0, 1];
+    for (const otherEntity of doc.queryBounds(pickedComponent.entity.bounds())) {
+      if (otherEntity.groupId === entity.groupId) continue;
+      for (const intersection of entityIntersectionPoints(pickedComponent.entity, otherEntity)) {
+        const parameter = lineParameter(pickedComponent.entity, intersection);
+        const traversalParameter = pickedComponent.reversed ? 1 - parameter : parameter;
+        if (traversalParameter > SNAP_THRESHOLD && traversalParameter < 1 - SNAP_THRESHOLD) {
+          breakParameters.push(traversalParameter);
         }
       }
     }
-    else {
-      const openBreaks = [0, ...sortedBreaks, path.totalLength]
-        .sort((first, second) => first - second)
-        .filter((value, index, values) => index === 0 || value - values[index - 1] > SNAP_THRESHOLD);
-      for (let index = 0; index < openBreaks.length - 1; index += 1) {
-        if (pickDistance >= openBreaks[index] - SNAP_THRESHOLD &&
-            pickDistance <= openBreaks[index + 1] + SNAP_THRESHOLD) {
-          trimStart = openBreaks[index];
-          trimEnd = openBreaks[index + 1];
-          break;
-        }
+    const sortedBreaks = [...breakParameters]
+      .sort((first, second) => first - second)
+      .filter((value, index, values) => index === 0 || value - values[index - 1] > SNAP_THRESHOLD);
+    let localTrimStart = null;
+    let localTrimEnd = null;
+    for (let index = 0; index < sortedBreaks.length - 1; index += 1) {
+      if (pickedTraversalParameter >= sortedBreaks[index] - SNAP_THRESHOLD &&
+          pickedTraversalParameter <= sortedBreaks[index + 1] + SNAP_THRESHOLD) {
+        localTrimStart = sortedBreaks[index];
+        localTrimEnd = sortedBreaks[index + 1];
+        break;
       }
     }
-
-    if (trimStart === null || trimEnd === null) {
+    if (localTrimStart === null || localTrimEnd === null) {
       return { trimmed: false, keptCount: groupEntities.length, grouped: true };
     }
+    const trimStart = pickedComponent.offset + pickedComponent.length * localTrimStart;
+    const trimEnd = pickedComponent.offset + pickedComponent.length * localTrimEnd;
 
     let replacements = [];
     if (path.closed) {
@@ -268,14 +252,32 @@ export function createGroupedLineTrimOperations(dependencies) {
       if (keepEnd <= keepStart + SNAP_THRESHOLD) {
         keepEnd += path.totalLength;
       }
-      replacements = lineGroupRangeEntities(path, keepStart, keepEnd, entity.groupId);
+      const replacement = lineGroupRangePolyline(path, keepStart, keepEnd);
+      replacements = replacement
+        ? [replacement]
+        : lineGroupRangeEntities(path, keepStart, keepEnd, entity.groupId);
     }
     else {
-      replacements.push(...lineGroupRangeEntities(path, 0, trimStart, entity.groupId));
-      const trailingGroupId = replacements.length && trimEnd < path.totalLength - SNAP_THRESHOLD
-        ? createEntityGroupId('polyline')
-        : entity.groupId;
-      replacements.push(...lineGroupRangeEntities(path, trimEnd, path.totalLength, trailingGroupId));
+      const before = lineGroupRangePolyline(path, 0, trimStart);
+      const after = lineGroupRangePolyline(path, trimEnd, path.totalLength);
+      if (trimStart > SNAP_THRESHOLD) {
+        if (before) replacements.push(before);
+        else replacements.push(...lineGroupRangeEntities(path, 0, trimStart, entity.groupId));
+      }
+      if (trimEnd < path.totalLength - SNAP_THRESHOLD) {
+        if (after) replacements.push(after);
+        else {
+          const trailingGroupId = replacements.length
+            ? createEntityGroupId('polyline')
+            : entity.groupId;
+          replacements.push(...lineGroupRangeEntities(
+            path,
+            trimEnd,
+            path.totalLength,
+            trailingGroupId,
+          ));
+        }
+      }
     }
 
     const replaced = doc.replaceEntities(groupEntities, replacements);
@@ -284,6 +286,11 @@ export function createGroupedLineTrimOperations(dependencies) {
       keptCount: replacements.length,
       removedCount: groupEntities.length,
       grouped: true,
+      polylineSegment: replacements.some((replacement) => replacement.type === 'POLYLINE'),
+      remainingSegments: replacements.reduce(
+        (count, replacement) => count + (replacement.segments?.length || 1),
+        0,
+      ),
     };
   }
 
@@ -292,6 +299,7 @@ export function createGroupedLineTrimOperations(dependencies) {
     lineGroupPointAt,
     closedLineGroupPolygon,
     lineGroupRangeEntities,
+    lineGroupRangePolyline,
     trimLineGroupAtPoint,
   };
 }

@@ -45,6 +45,15 @@ export function mirrorEntityAcrossAxis(entity, firstPoint, secondPoint) {
     entity.start = mirrorPoint(entity.start);
     entity.end = mirrorPoint(entity.end);
   }
+  else if (entity.type === 'XLINE') {
+    const directionPoint = {
+      x: entity.basePoint.x + entity.direction.x,
+      y: entity.basePoint.y + entity.direction.y,
+    };
+    entity.basePoint = mirrorPoint(entity.basePoint);
+    const mirroredDirectionPoint = mirrorPoint(directionPoint);
+    entity.direction = normalizedVector(entity.basePoint, mirroredDirectionPoint);
+  }
   else if (entity.type === 'CIRCLE' || entity.type === 'ARC') {
     entity.center = mirrorPoint(entity.center);
     if (entity.type === 'ARC') {

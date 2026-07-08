@@ -17,6 +17,21 @@ export function scaleEntityByFactors(entity, scaleX, scaleY) {
     entity.end = scalePointFromOrigin(entity.end, scaleX, scaleY);
     return true;
   }
+  if (entity.type === 'XLINE') {
+    const directionPoint = {
+      x: entity.basePoint.x + entity.direction.x,
+      y: entity.basePoint.y + entity.direction.y,
+    };
+    entity.basePoint = scalePointFromOrigin(entity.basePoint, scaleX, scaleY);
+    const scaledDirectionPoint = scalePointFromOrigin(directionPoint, scaleX, scaleY);
+    const delta = {
+      x: scaledDirectionPoint.x - entity.basePoint.x,
+      y: scaledDirectionPoint.y - entity.basePoint.y,
+    };
+    const length = Math.hypot(delta.x, delta.y);
+    if (length > 0) entity.direction = { x: delta.x / length, y: delta.y / length };
+    return true;
+  }
   if (entity.type === 'DIMENSION') {
     entity.points = entity.points.map((point) => scalePointFromOrigin(point, scaleX, scaleY));
     entity.placement = scalePointFromOrigin(entity.placement, scaleX, scaleY);

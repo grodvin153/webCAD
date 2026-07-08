@@ -8,8 +8,7 @@ export function createDimensionPlacement(dependencies) {
   const {
     DimensionEntity,
     SNAP_THRESHOLD,
-    activeLayerName,
-    activeLineColorId,
+    dimensionLayerOptions,
     distance,
     distancePointToInfiniteLine,
     getState,
@@ -111,8 +110,7 @@ export function createDimensionPlacement(dependencies) {
       return null;
     }
     return new DimensionEntity(draft.kind, draft.points, placement, {
-      layer: activeLayerName(),
-      lineColor: activeLineColorId(),
+      ...dimensionLayerOptions(),
       dimensionStyle: state.dimensionStyle,
     });
   }

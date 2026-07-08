@@ -50,24 +50,26 @@ export function createLineTrimOperations(dependencies) {
       }
     }
 
+    const trimStart = sortedParameters[trimIndex];
+    const trimEnd = sortedParameters[trimIndex + 1];
     const replacements = [];
-    for (let index = 0; index < sortedParameters.length - 1; index += 1) {
-      if (index === trimIndex) {
-        continue;
-      }
-
-      const startParameter = sortedParameters[index];
-      const endParameter = sortedParameters[index + 1];
-      if (endParameter - startParameter <= SNAP_THRESHOLD) {
-        continue;
-      }
-
+    const addRemainder = (startParameter, endParameter) => {
+      if (endParameter - startParameter <= SNAP_THRESHOLD) return;
       replacements.push(new LineEntity(
         pointAtLineParameter(entity, startParameter),
         pointAtLineParameter(entity, endParameter),
-        { layer: entity.layer, lineStyle: entity.lineStyle, lineType: entity.lineType, lineColor: entity.lineColor },
+        {
+          layer: entity.layer,
+          lineStyle: entity.lineStyle,
+          lineType: entity.lineType,
+          lineColor: entity.lineColor,
+        },
       ));
-    }
+    };
+
+    // Intersecciones intermedias no dividen un resto que sigue siendo continuo.
+    addRemainder(0, trimStart);
+    addRemainder(trimEnd, 1);
 
     const replaced = doc.replaceEntity(entity, replacements);
     return { trimmed: replaced, keptCount: replacements.length };

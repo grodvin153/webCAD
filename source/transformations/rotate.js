@@ -25,6 +25,19 @@ export function rotateEntityByAngle(entity, basePoint, angleDegrees) {
     entity.end = rotatePointAround(entity.end, basePoint, angleDegrees);
     return true;
   }
+  if (entity.type === 'XLINE') {
+    const directionPoint = {
+      x: entity.basePoint.x + entity.direction.x,
+      y: entity.basePoint.y + entity.direction.y,
+    };
+    entity.basePoint = rotatePointAround(entity.basePoint, basePoint, angleDegrees);
+    const rotatedDirectionPoint = rotatePointAround(directionPoint, basePoint, angleDegrees);
+    entity.direction = {
+      x: rotatedDirectionPoint.x - entity.basePoint.x,
+      y: rotatedDirectionPoint.y - entity.basePoint.y,
+    };
+    return true;
+  }
 
   if (entity.type === 'CIRCLE' || entity.type === 'ARC') {
     entity.center = rotatePointAround(entity.center, basePoint, angleDegrees);

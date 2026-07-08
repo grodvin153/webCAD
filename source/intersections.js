@@ -247,6 +247,34 @@ export function entityIntersectionPoints(first, second, primitiveEntityParts) {
     return intersection ? [intersection] : [];
   }
 
+  if (first.type === 'XLINE' && second.type === 'XLINE') {
+    const intersection = infiniteLineLineIntersection(
+      first.basePoint,
+      first.direction,
+      second.basePoint,
+      second.direction,
+    );
+    return intersection ? [intersection] : [];
+  }
+
+  if (first.type === 'XLINE' && second.type === 'LINE') {
+    const intersection = infiniteLineSegmentIntersection(first.basePoint, first.direction, second);
+    return intersection ? [intersection] : [];
+  }
+
+  if (first.type === 'LINE' && second.type === 'XLINE') {
+    const intersection = infiniteLineSegmentIntersection(second.basePoint, second.direction, first);
+    return intersection ? [intersection] : [];
+  }
+
+  if (first.type === 'XLINE' && isCircularEntity(second)) {
+    return infiniteLineCircularIntersectionPoints(first.basePoint, first.direction, second, true);
+  }
+
+  if (isCircularEntity(first) && second.type === 'XLINE') {
+    return infiniteLineCircularIntersectionPoints(second.basePoint, second.direction, first, true);
+  }
+
   if (first.type === 'LINE' && isCircularEntity(second)) {
     return lineCircleIntersectionPoints(first, second)
       .filter((point) => pointOnCircularEntity(point, second));

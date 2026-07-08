@@ -11,7 +11,7 @@ import {
   distance,
   pointAtCircleAngle,
 } from '../geometry.js';
-import { parseRelativeCoordinateInput } from './entry.js';
+import { parsePartialRelativeCoordinateInput, parseRelativeCoordinateInput } from './entry.js';
 
 export function snap(value, step) {
   return Math.round(value / step) * step;
@@ -28,8 +28,17 @@ export function snapPoint(point, step) {
 export function pointFromRelativeCoordinates(origin, value) {
   const relative = parseRelativeCoordinateInput(value);
   return relative && origin
-    ? { x: origin.x + relative.x, y: origin.y + relative.y }
+    ? { x: origin.x + relative.x, y: origin.y - relative.y }
     : null;
+}
+
+export function pointFromPartialRelativeCoordinates(origin, cursor, value) {
+  const relative = parsePartialRelativeCoordinateInput(value);
+  if (!relative || !origin || !cursor) return null;
+  return {
+    x: relative.x === null ? cursor.x : origin.x + relative.x,
+    y: relative.y === null ? cursor.y : origin.y - relative.y,
+  };
 }
 
 

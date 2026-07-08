@@ -33,6 +33,12 @@ export function createHitTesting({ dimensionGeometry, polylineSegmentEntity }) {
 
   function entityDistanceToPoint(entity, point) {
     if (entity.type === 'LINE') return distancePointToSegment(point, entity.start, entity.end);
+    if (entity.type === 'XLINE') {
+      return Math.abs(
+        (point.x - entity.basePoint.x) * entity.direction.y -
+        (point.y - entity.basePoint.y) * entity.direction.x
+      );
+    }
     if (entity.type === 'CIRCLE') return distancePointToCircle(point, entity);
     if (entity.type === 'ARC') return distancePointToArc(point, entity);
     if (entity.type === 'TEXT') {
@@ -93,6 +99,7 @@ export function createHitTesting({ dimensionGeometry, polylineSegmentEntity }) {
   }
 
   function entityIsNearPoint(entity, point, tolerance) {
+    if (entity.type === 'XLINE') return entityDistanceToPoint(entity, point) <= tolerance;
     if (!boundsContainsPoint(expandBounds(entity.bounds(), tolerance), point)) return false;
     return entityDistanceToPoint(entity, point) <= tolerance;
   }

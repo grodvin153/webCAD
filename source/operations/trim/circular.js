@@ -88,16 +88,15 @@ export function createCircularTrimOperations(dependencies) {
         : pickParameter >= interval.startParameter - SNAP_THRESHOLD &&
           pickParameter <= interval.endParameter + SNAP_THRESHOLD);
 
-      const replacements = [];
-      intervals.forEach((interval, index) => {
-        if (index === trimIndex) {
-          return;
-        }
-        const arc = createArcFromParameters(entity, interval.startParameter, interval.endParameter);
-        if (arc) {
-          replacements.push(arc);
-        }
-      });
+      const trimmedInterval = intervals[trimIndex];
+      const remainder = trimmedInterval
+        ? createArcFromParameters(
+          entity,
+          trimmedInterval.endParameter,
+          trimmedInterval.startParameter,
+        )
+        : null;
+      const replacements = remainder ? [remainder] : [];
 
       const replaced = doc.replaceEntity(entity, replacements);
       return { trimmed: replaced, keptCount: replacements.length };
@@ -128,23 +127,12 @@ export function createCircularTrimOperations(dependencies) {
       }
     }
 
-    const replacements = [];
-    for (let index = 0; index < sortedParameters.length - 1; index += 1) {
-      if (index === trimIndex) {
-        continue;
-      }
-
-      const startParameter = sortedParameters[index];
-      const endParameter = sortedParameters[index + 1];
-      if (endParameter - startParameter <= SNAP_THRESHOLD) {
-        continue;
-      }
-
-      const arc = createArcFromParameters(entity, startParameter, endParameter);
-      if (arc) {
-        replacements.push(arc);
-      }
-    }
+    const trimStart = sortedParameters[trimIndex];
+    const trimEnd = sortedParameters[trimIndex + 1];
+    const replacements = [
+      createArcFromParameters(entity, 0, trimStart),
+      createArcFromParameters(entity, trimEnd, 1),
+    ].filter(Boolean);
 
     const replaced = doc.replaceEntity(entity, replacements);
     return { trimmed: replaced, keptCount: replacements.length };

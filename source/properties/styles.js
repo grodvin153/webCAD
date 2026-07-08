@@ -12,12 +12,29 @@ export const SNAP_COLOR = '#d05a1f';
 export const SNAP_MARKER_SIZE = 16;
 export const X_AXIS_COLOR = 'rgba(205, 55, 55, 0.62)';
 export const Y_AXIS_COLOR = 'rgba(34, 145, 82, 0.62)';
-export const DEFAULT_LINE_STYLE = 'normal';
-export const DEFAULT_LINE_TYPE = 'continuous';
-export const DEFAULT_LINE_COLOR = 'default';
+export const BY_LAYER = 'bylayer';
+export const DEFAULT_LINE_STYLE = BY_LAYER;
+export const DEFAULT_LINE_TYPE = BY_LAYER;
+export const DEFAULT_LINE_COLOR = BY_LAYER;
 export const CAD_TEXT_FONT = '"Arial Narrow", "Liberation Sans Narrow", "Nimbus Sans Narrow", sans-serif';
 
 export const LINE_STYLES = {
+  bylayer: {
+    id: BY_LAYER,
+    label: 'Por capa',
+    layer: 'BYLAYER',
+    color: LINE_COLOR,
+    width: 4,
+    dxfLineWeight: -1,
+  },
+  'very-fine': {
+    id: 'very-fine',
+    label: 'Muy fino',
+    layer: 'MUY_FINA',
+    color: '#4f6068',
+    width: 1,
+    dxfLineWeight: 13,
+  },
   auxiliar: {
     id: 'auxiliar',
     label: 'Fino',
@@ -62,6 +79,12 @@ export const DIMENSION_TOOLS = new Set([
 ]);
 
 export const LINE_TYPES = {
+  bylayer: {
+    id: BY_LAYER,
+    label: 'Por capa',
+    dxfName: 'BYLAYER',
+    dash: [],
+  },
   continuous: {
     id: 'continuous',
     label: 'Continua',
@@ -83,6 +106,7 @@ export const LINE_TYPES = {
 };
 
 export const LINE_COLORS = {
+  bylayer: { id: BY_LAYER, label: 'Por capa', color: null, aci: 256 },
   default: { id: 'default', label: 'Por defecto', color: null, aci: null },
   red: { id: 'red', label: 'Rojo', color: '#e53935', aci: 1 },
   yellow: { id: 'yellow', label: 'Amarillo', color: '#d9a900', aci: 2 },
@@ -140,6 +164,18 @@ for (let aci = 8; aci <= 255; aci += 1) {
 }
 
 export function createStyleServices(getState) {
+  function activeLayerProperty(property, fallback) {
+    const state = getState();
+    const layer = state.layers?.find((candidate) => candidate.name === state.activeLayer);
+    return layer?.[property] || fallback;
+  }
+
+  function entityLayerProperty(entity, property, fallback) {
+    const state = getState();
+    const layer = state.layers?.find((candidate) => candidate.name === entity?.layer);
+    return layer?.[property] || fallback;
+  }
+
   function normalizeLineStyleId(value) {
     const normalized = String(value || '').toLowerCase();
     const byLayer = Object.values(LINE_STYLES).find(
@@ -154,6 +190,9 @@ export function createStyleServices(getState) {
   function lineStyleFromDxf(record, fallbackStyle = null) {
     const lineWeight = Number(record['370']);
     if (Number.isFinite(lineWeight) && lineWeight > 0) {
+      if (lineWeight <= 18) {
+        return 'very-fine';
+      }
       if (lineWeight <= 37) {
         return 'auxiliar';
       }
@@ -173,7 +212,10 @@ export function createStyleServices(getState) {
   }
 
   function activeLineStyleId() {
-    return normalizeLineStyleId(getState().activeLineStyle);
+    const active = normalizeLineStyleId(getState().activeLineStyle);
+    return active === BY_LAYER
+      ? normalizeLineStyleId(activeLayerProperty('lineStyle', 'normal'))
+      : active;
   }
 
   function normalizeLineTypeId(value) {
@@ -189,11 +231,17 @@ export function createStyleServices(getState) {
   }
 
   function activeLineTypeId() {
-    return normalizeLineTypeId(getState().activeLineType);
+    const active = normalizeLineTypeId(getState().activeLineType);
+    return active === BY_LAYER
+      ? normalizeLineTypeId(activeLayerProperty('lineType', 'continuous'))
+      : active;
   }
 
   function applyLineTypeToEntity(entity, lineTypeId) {
-    entity.lineType = getLineType(lineTypeId).id;
+    const normalized = normalizeLineTypeId(lineTypeId);
+    entity.lineType = normalized === BY_LAYER
+      ? normalizeLineTypeId(entityLayerProperty(entity, 'lineType', 'continuous'))
+      : normalized;
   }
 
   function lineTypeFromDxf(record, fallbackType = null) {
@@ -218,17 +266,26 @@ export function createStyleServices(getState) {
   }
 
   function activeLineColorId() {
-    return normalizeLineColorId(getState().activeLineColor);
+    const active = normalizeLineColorId(getState().activeLineColor);
+    return active === BY_LAYER
+      ? normalizeLineColorId(activeLayerProperty('lineColor', 'aci7'))
+      : active;
   }
 
   function applyLineStyleToEntity(entity, styleId) {
-    const style = getLineStyle(styleId);
+    const normalized = normalizeLineStyleId(styleId);
+    const style = getLineStyle(normalized === BY_LAYER
+      ? entityLayerProperty(entity, 'lineStyle', 'normal')
+      : normalized);
     entity.lineStyle = style.id;
     entity.color = getLineColor(entity.lineColor).color || style.color;
   }
 
   function applyLineColorToEntity(entity, lineColorId) {
-    const lineColor = getLineColor(lineColorId);
+    const normalized = normalizeLineColorId(lineColorId);
+    const lineColor = getLineColor(normalized === BY_LAYER
+      ? entityLayerProperty(entity, 'lineColor', 'aci7')
+      : normalized);
     entity.lineColor = lineColor.id;
     entity.color = lineColor.color || getLineStyle(entity.lineStyle).color;
   }

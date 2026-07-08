@@ -4,30 +4,98 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+export function parseScalarExpression(value) {
+  const source = String(value || '').trim();
+  if (!source || !/^[0-9eE+\-*/().\s]+$/.test(source)) return null;
+  let index = 0;
+  const skipSpaces = () => {
+    while (/\s/.test(source[index] || '')) index += 1;
+  };
+  const parsePrimary = () => {
+    skipSpaces();
+    if (source[index] === '(') {
+      index += 1;
+      const result = parseExpression();
+      skipSpaces();
+      if (source[index] !== ')') throw new Error('parentesis');
+      index += 1;
+      return result;
+    }
+    const match = source.slice(index).match(/^(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?/);
+    if (!match) throw new Error('numero');
+    index += match[0].length;
+    return Number(match[0]);
+  };
+  const parseUnary = () => {
+    skipSpaces();
+    if (source[index] === '+' || source[index] === '-') {
+      const sign = source[index] === '-' ? -1 : 1;
+      index += 1;
+      return sign * parseUnary();
+    }
+    return parsePrimary();
+  };
+  const parseTerm = () => {
+    let result = parseUnary();
+    while (true) {
+      skipSpaces();
+      const operator = source[index];
+      if (operator !== '*' && operator !== '/') break;
+      index += 1;
+      const operand = parseUnary();
+      result = operator === '*' ? result * operand : result / operand;
+    }
+    return result;
+  };
+  function parseExpression() {
+    let result = parseTerm();
+    while (true) {
+      skipSpaces();
+      const operator = source[index];
+      if (operator !== '+' && operator !== '-') break;
+      index += 1;
+      const operand = parseTerm();
+      result = operator === '+' ? result + operand : result - operand;
+    }
+    return result;
+  }
+  try {
+    const result = parseExpression();
+    skipSpaces();
+    return index === source.length && Number.isFinite(result) ? result : null;
+  }
+  catch {
+    return null;
+  }
+}
+
 export function parseDistanceInput(value) {
-  const normalized = value.replace(',', '.');
-  const distanceValue = Number(normalized);
+  const distanceValue = parseScalarExpression(value);
   return Number.isFinite(distanceValue) && distanceValue > 0 ? distanceValue : null;
 }
 
 export function parseAngleInput(value) {
-  const normalized = value.trim().replace(',', '.');
-  if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(normalized)) {
-    return null;
-  }
-  const angle = Number(normalized);
+  const angle = parseScalarExpression(value);
   return Number.isFinite(angle) ? angle : null;
 }
 
 export function parseRelativeCoordinateInput(value) {
-  const match = value.trim().match(/^([+-]?(?:\d+(?:\.\d+)?|\.\d+))\s*,\s*([+-]?(?:\d+(?:\.\d+)?|\.\d+))$/);
-  if (!match) {
+  const parts = String(value || '').split(',');
+  if (parts.length !== 2 || !parts[0].trim() || !parts[1].trim()) return null;
+  const x = parseScalarExpression(parts[0]);
+  const y = parseScalarExpression(parts[1]);
+  return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null;
+}
+
+export function parsePartialRelativeCoordinateInput(value) {
+  const parts = String(value || '').split(',');
+  if (parts.length !== 2) return null;
+  const x = parts[0].trim() ? parseScalarExpression(parts[0]) : null;
+  const y = parts[1].trim() ? parseScalarExpression(parts[1]) : null;
+  if ((parts[0].trim() && x === null) || (parts[1].trim() && y === null) || (x === null && y === null)) {
     return null;
   }
-
-  const x = Number(match[1]);
-  const y = Number(match[2]);
-  return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null;
+  return { x, y };
 }
 
 

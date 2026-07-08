@@ -27,8 +27,10 @@ export function createLayerUi({
     label,
     list,
     createOpenButton,
+    editOpenButton,
     createCancelButton,
     createConfirmButton,
+    panelTitle,
     nameInput,
     styleInput,
     typeInput,
@@ -47,6 +49,7 @@ export function createLayerUi({
     normalizeLineTypeId,
   } = styleServices;
   let creationColor = 'aci7';
+  let editingLayerName = null;
 
   function layerDisplayColor(layer) {
     return getLineColor(layer.lineColor).color || getLineStyle(layer.lineStyle).color;
@@ -171,18 +174,25 @@ export function createLayerUi({
     const layer = state.layers.find((candidate) => candidate.name === layerName);
     if (!layer) return false;
     state.activeLayer = layer.name;
-    state.activeLineStyle = normalizeLineStyleId(layer.lineStyle);
+    state.activeLineStyle = 'bylayer';
     storePreference('webcad-active-line-style', state.activeLineStyle);
-    state.activeLineType = normalizeLineTypeId(layer.lineType);
-    state.activeLineColor = normalizeLineColorId(layer.lineColor);
+    state.activeLineType = 'bylayer';
+    state.activeLineColor = 'bylayer';
     const selectedEntities = state.selectedGrip?.entity
       ? doc.groupEntities(state.selectedGrip.entity)
       : [...doc.selectedEntities];
     if (state.tool === 'select' && selectedEntities.length) {
       doc.recordHistory();
-      selectedEntities.forEach((entity) => applyLayerToEntity(entity, layer));
+      const appliedLayers = new Set(
+        selectedEntities
+          .map((entity) => applyLayerToEntity(entity, layer)?.name)
+          .filter(Boolean),
+      );
       doc.markDirty();
-      state.statusText = `${selectedEntities.length} entidad${selectedEntities.length === 1 ? '' : 'es'} movida${selectedEntities.length === 1 ? '' : 's'} a capa ${layer.name}`;
+      const destination = appliedLayers.size === 1
+        ? [...appliedLayers][0]
+        : `${layer.name}; Cotas y XLINE permanecen en Auxiliar`;
+      state.statusText = `${selectedEntities.length} entidad${selectedEntities.length === 1 ? '' : 'es'} movida${selectedEntities.length === 1 ? '' : 's'} a capa ${destination}`;
     }
     else {
       state.statusText = `Capa activa: ${layer.name}`;
@@ -206,6 +216,10 @@ export function createLayerUi({
   }
 
   function openLayerCreation() {
+    editingLayerName = null;
+    panelTitle.textContent = 'Nueva capa';
+    createConfirmButton.textContent = 'Crear';
+    nameInput.disabled = false;
     nameInput.value = nextLayerName();
     styleInput.value = 'normal';
     typeInput.value = 'continuous';
@@ -221,7 +235,53 @@ export function createLayerUi({
     });
   }
 
+  function openLayerEditor() {
+    const layer = activeLayerDefinition();
+    if (!layer) return false;
+    editingLayerName = layer.name;
+    panelTitle.textContent = `Editar capa ${layer.name}`;
+    createConfirmButton.textContent = 'Guardar';
+    nameInput.value = layer.name;
+    nameInput.disabled = true;
+    styleInput.value = normalizeLineStyleId(layer.lineStyle);
+    typeInput.value = normalizeLineTypeId(layer.lineType);
+    colorInput.querySelectorAll('[data-custom-color]').forEach((option) => option.remove());
+    creationColor = normalizeLineColorId(layer.lineColor);
+    syncLayerCreationColorControl();
+    setLayerColorPaletteOpen(false);
+    picker.classList.add('is-open', 'is-creating');
+    toggle.setAttribute('aria-expanded', 'true');
+    requestAnimationFrame(() => styleInput.focus());
+    return true;
+  }
+
+  function updateLayerFromPanel() {
+    const state = getState();
+    const layer = state.layers.find((candidate) => candidate.name === editingLayerName);
+    if (!layer) return false;
+    doc.recordHistory();
+    layer.lineStyle = normalizeLineStyleId(styleInput.value);
+    layer.lineType = normalizeLineTypeId(typeInput.value);
+    layer.lineColor = normalizeLineColorId(creationColor);
+    doc.entities
+      .filter((entity) => entity.layer === layer.name)
+      .forEach((entity) => applyLayerToEntity(entity, layer));
+    doc.markDirty();
+    editingLayerName = null;
+    picker.classList.remove('is-creating');
+    syncLayerPicker();
+    menuServices.syncLineStylePicker();
+    menuServices.syncLineTypePicker();
+    menuServices.syncLineColorPicker();
+    state.statusText = `Capa ${layer.name} actualizada`;
+    controller.updateUiStatus();
+    renderer.draw();
+    setLayerPickerOpen(false);
+    return true;
+  }
+
   function createLayerFromPanel() {
+    if (editingLayerName) return updateLayerFromPanel();
     const state = getState();
     const name = nameInput.value.trim();
     if (!name) {
@@ -281,9 +341,9 @@ export function createLayerUi({
     });
     state.layers = layers;
     state.activeLayer = defaultLayer.name;
-    state.activeLineStyle = defaultLayer.lineStyle;
-    state.activeLineType = defaultLayer.lineType;
-    state.activeLineColor = defaultLayer.lineColor;
+    state.activeLineStyle = 'bylayer';
+    state.activeLineType = 'bylayer';
+    state.activeLineColor = 'bylayer';
     syncLayerPicker();
     menuServices.syncLineStylePicker();
     menuServices.syncLineTypePicker();
@@ -291,6 +351,8 @@ export function createLayerUi({
   }
 
   function cancelLayerCreation() {
+    editingLayerName = null;
+    nameInput.disabled = false;
     picker.classList.remove('is-creating', 'is-palette-open');
     colorPalette.hidden = true;
   }
@@ -301,6 +363,11 @@ export function createLayerUi({
       event.preventDefault();
       event.stopPropagation();
       openLayerCreation();
+    });
+    editOpenButton.addEventListener('pointerdown', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      openLayerEditor();
     });
     createCancelButton.addEventListener('pointerdown', (event) => {
       event.preventDefault();

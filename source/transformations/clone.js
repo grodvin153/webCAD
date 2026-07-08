@@ -24,6 +24,7 @@ export function createEntityTransformations({
   PolylineEntity,
   RasterImageEntity,
   TextEntity,
+  XLineEntity,
   createEntityGroupId,
 }) {
   function cloneBlockDefinition(definition, definitionMap = null) {
@@ -89,6 +90,14 @@ export function createEntityTransformations({
       return new LineEntity(
         offsetPoint(entity.start, vector),
         offsetPoint(entity.end, vector),
+        { layer: entity.layer, lineStyle: entity.lineStyle, lineType: entity.lineType, lineColor: entity.lineColor, groupId },
+      );
+    }
+
+    if (entity.type === 'XLINE') {
+      return new XLineEntity(
+        offsetPoint(entity.basePoint, vector),
+        entity.direction,
         { layer: entity.layer, lineStyle: entity.lineStyle, lineType: entity.lineType, lineColor: entity.lineColor, groupId },
       );
     }

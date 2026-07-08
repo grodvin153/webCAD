@@ -54,8 +54,8 @@ export function createDimensionEntityServices(dependencies) {
       this.dimensionStyle = DIMENSION_STYLES[options.dimensionStyle]?.id || 'normal';
       this.groupId = null;
       this.layer = options.layer || DEFAULT_LAYER.name;
-      applyLineStyleToEntity(this, 'auxiliar');
-      applyLineTypeToEntity(this, 'continuous');
+      applyLineStyleToEntity(this, options.lineStyle || 'auxiliar');
+      applyLineTypeToEntity(this, options.lineType || 'continuous');
       applyLineColorToEntity(this, options.lineColor || DEFAULT_LINE_COLOR);
     }
 

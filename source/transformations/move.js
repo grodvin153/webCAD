@@ -12,6 +12,10 @@ export function moveEntityByVector(entity, vector) {
     entity.end = offsetPoint(entity.end, vector);
     return true;
   }
+  if (entity.type === 'XLINE') {
+    entity.basePoint = offsetPoint(entity.basePoint, vector);
+    return true;
+  }
 
   if (entity.type === 'CIRCLE' || entity.type === 'ARC') {
     entity.center = offsetPoint(entity.center, vector);

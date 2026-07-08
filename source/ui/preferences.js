@@ -51,6 +51,18 @@ export function createPreferenceServices({ lineStyles, defaultLineStyle, dimensi
     }
   }
 
+  function loadNumberPreference(key, fallback, min = -Infinity, max = Infinity) {
+    try {
+      const storedValue = localStorage.getItem(key);
+      if (storedValue === null) return fallback;
+      const value = Number(storedValue);
+      return Number.isFinite(value) && value >= min && value <= max ? value : fallback;
+    }
+    catch {
+      return fallback;
+    }
+  }
+
   function loadDimensionStylePreference() {
     try {
       const styleId = localStorage.getItem('webcad-dimension-style');
@@ -76,6 +88,7 @@ export function createPreferenceServices({ lineStyles, defaultLineStyle, dimensi
     loadIntegerPreference,
     loadLineStylePreference,
     loadNavigationDevice,
+    loadNumberPreference,
     storePreference,
   };
 }

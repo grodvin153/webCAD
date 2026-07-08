@@ -35,19 +35,27 @@ import {
   Y_AXIS_COLOR,
   createStyleServices,
 } from './properties/styles.js';
-import { DEFAULT_LAYER, createLayerServices } from './properties/layers.js';
+import {
+  AUXILIARY_LAYER_NAME,
+  DEFAULT_LAYER,
+  DEFAULT_LAYERS,
+  createLayerServices,
+} from './properties/layers.js';
 import { createProfileServices } from './properties/profiles.js';
 import { bindDialogEvents } from './ui/dialogs.js';
 import { createLayerUi } from './ui/layers.js';
 import { createMenuServices } from './ui/menus.js';
 import { createPreferenceServices } from './ui/preferences.js';
+import { installViewportHeight } from './ui/viewport.js';
 import { createArcEntityClass } from './entities/arc.js';
 import { createCircleEntityClass } from './entities/circle.js';
 import { createHatchEntityClass } from './entities/hatch.js';
 import { createLineEntityClass } from './entities/line.js';
 import { createPolylineEntityClass } from './entities/polyline.js';
 import { createTextEntityClass } from './entities/text.js';
+import { createXLineEntityClass } from './entities/xline.js';
 import { createRasterImageEntityClass } from './images/entity.js';
+import { createImageEditor } from './images/editor.js';
 import { createPngImporter } from './images/importer.js';
 import {
   applyImageAlignment,
@@ -55,6 +63,11 @@ import {
   calibrateImageLength,
 } from './images/calibration.js';
 import { drawRasterImage } from './images/rendering.js';
+import {
+  appendEmbeddedImageToDxf,
+  embeddedImageAppId,
+  parseEmbeddedImageFromDxf,
+} from './images/dxf.js';
 import { createDimensionStyles } from './dimensions/styles.js';
 import { createLinearDimensionGeometry } from './dimensions/geometry/linear.js';
 import { createRadialDimensionGeometry } from './dimensions/geometry/radial.js';
@@ -69,7 +82,6 @@ import {
   angleParameter,
   arcMidAngle,
   arcSweep,
-  boundsContainsBounds,
   boundsIntersectsBounds,
   circularParameter,
   clamp,
@@ -120,6 +132,7 @@ import {
   arcFromCenterStartEnd,
   arcFromThreePoints,
   circleFromThreePoints,
+  pointFromPartialRelativeCoordinates,
   pointFromDistance,
   pointFromRelativeCoordinates,
   pointOnRadiusFromAngle,
@@ -128,7 +141,15 @@ import {
   circularReferencePoints,
   createInputResolvers,
 } from './input/snaps.js';
+import { createOrthogonalInference } from './input/inference.js';
+import { drawOrthogonalInference } from './input/inference-rendering.js';
 import { projectPointToLine, selectionWindowMode } from './selection/geometry.js';
+import {
+  anchorSelectionWindow,
+  completeAnchoredSelectionWindow,
+  entitiesFromSelectionWindow,
+  updateSelectionWindow,
+} from './selection/window.js';
 import { createHitTesting } from './selection/hit-testing.js';
 import { createSelectionIntersections } from './selection/intersections.js';
 import { createPolylineSelectionGeometry } from './selection/polyline.js';
@@ -155,29 +176,56 @@ import {
   rotatePointAround,
   rotationAngleFromPoint,
 } from './transformations/rotate.js';
+import { createPolarArrayCommand } from './transformations/polar-array/command.js';
+import { drawPolarArrayPreview as drawPolarArrayCommandPreview } from './transformations/polar-array/rendering.js';
 import { createFilletGeometry } from './operations/fillet/geometry.js';
 import { createFilletApplication } from './operations/fillet/application.js';
 import { createChamferGeometry } from './operations/chamfer/geometry.js';
 import { createChamferApplication } from './operations/chamfer/application.js';
+import { createOffsetGeometry } from './operations/offset/geometry.js';
+import { createOffsetApplication } from './operations/offset/application.js';
+import { createOffsetCommand } from './operations/offset/command.js';
+import { drawOffsetPreview as drawOffsetCommandPreview } from './operations/offset/rendering.js';
+import { createStretchCommand } from './operations/stretch/command.js';
 import { createLineTrimOperations } from './operations/trim/line.js';
 import { createCircularTrimOperations } from './operations/trim/circular.js';
 import { createPolylineTrimOperations } from './operations/trim/polyline.js';
 import { createGroupedLineTrimOperations } from './operations/trim/grouped-lines.js';
 import { createTrimOperations } from './operations/trim/index.js';
+import { createTrimCommand } from './operations/trim/command.js';
 import { createLineExtendOperations } from './operations/extend/line.js';
 import { createArcExtendOperations } from './operations/extend/arc.js';
 import { createPolylineExtendOperations } from './operations/extend/polyline.js';
+import { createExtendCommand } from './operations/extend/command.js';
 import { createHatchBoundaryGeometry } from './hatches/boundary.js';
 import { createHatchFaces } from './hatches/faces.js';
 import { createHatchFlood } from './hatches/flood.js';
 import { createHatchTrimOperations } from './hatches/trim.js';
+import { createHatchCommand } from './hatches/command.js';
+import { createHatchDialog } from './hatches/dialog.js';
 import { createTangentLineCommand } from './tools/tangent-line/command.js';
 import { drawTangentLinePreview as drawTangentLineCommandPreview } from './tools/tangent-line/rendering.js';
+import { createPointTangentLineCommand } from './tools/tangent-line/point-command.js';
+import { drawPointTangentLinePreview } from './tools/tangent-line/point-rendering.js';
+import { createXLineCommand } from './tools/xline/command.js';
+import { drawXLine, drawXLinePreview as drawXLineCommandPreview } from './tools/xline/rendering.js';
+import {
+  keyboardCoordinateTarget,
+  keyboardPointTarget,
+  rectangleTargetPoint,
+} from './input/constraints.js';
+import { createCadFormatRegistry } from './files/formats/registry.js';
+import { createLocalFileManager } from './files/local-file-manager.js';
+import { createAutosaveController } from './files/autosave.js';
+import { createUnsupportedLocalSaveNotifier } from './files/browser-support.js';
 
 const canvas = document.getElementById('cad-canvas');
+installViewportHeight();
 const selectToolButton = document.getElementById('tool-select');
 const lineToolButton = document.getElementById('tool-line');
 const tangentLineToolButton = document.getElementById('tool-tangent-line');
+const pointTangentLineToolButton = document.getElementById('tool-point-tangent-line');
+const xlineToolButton = document.getElementById('tool-xline');
 const polylineToolButton = document.getElementById('tool-polyline');
 const rectangleToolButton = document.getElementById('tool-rectangle');
 const textToolButton = document.getElementById('tool-text');
@@ -191,10 +239,13 @@ const blockToolMenuButton = document.getElementById('tool-block-menu');
 const trimToolButton = document.getElementById('tool-trim');
 const extendToolButton = document.getElementById('tool-extend');
 const filletToolButton = document.getElementById('tool-fillet');
+const offsetToolButton = document.getElementById('tool-offset');
 const chamferToolButton = document.getElementById('tool-chamfer');
 const copyToolButton = document.getElementById('tool-copy');
 const moveToolButton = document.getElementById('tool-move');
+const stretchToolButton = document.getElementById('tool-stretch');
 const rotateToolButton = document.getElementById('tool-rotate');
+const polarArrayToolButton = document.getElementById('tool-polar-array');
 const scaleToolButton = document.getElementById('tool-scale');
 const mirrorToolButton = document.getElementById('tool-mirror');
 const eraseToolButton = document.getElementById('tool-erase');
@@ -207,6 +258,7 @@ const navigationTrackpadButton = document.getElementById('navigation-trackpad');
 const undoButton = document.getElementById('action-undo');
 const redoButton = document.getElementById('action-redo');
 const newButton = document.getElementById('action-new');
+const saveButton = document.getElementById('action-save');
 const exportDxfButton = document.getElementById('action-export-dxf');
 const importDxfButton = document.getElementById('action-import-dxf');
 const importDxfInput = document.getElementById('import-dxf-input');
@@ -218,6 +270,7 @@ const lineStyleOptionButtons = document.querySelectorAll('[data-line-style]');
 const lineTypePicker = document.querySelector('.line-type-picker');
 const lineTypeToggle = document.getElementById('line-type-toggle');
 const lineTypeLabel = document.getElementById('line-type-label');
+const lineTypeText = document.getElementById('line-type-text');
 const lineTypeOptionButtons = document.querySelectorAll('[data-line-type]');
 const lineColorPicker = document.querySelector('.line-color-picker');
 const lineColorToggle = document.getElementById('line-color-toggle');
@@ -228,8 +281,10 @@ const layerToggle = document.getElementById('layer-toggle');
 const layerLabel = document.getElementById('layer-label');
 const layerList = document.getElementById('layer-list');
 const layerCreateOpenButton = document.getElementById('layer-create-open');
+const layerEditOpenButton = document.getElementById('layer-edit-open');
 const layerCreateCancelButton = document.getElementById('layer-create-cancel');
 const layerCreateConfirmButton = document.getElementById('layer-create-confirm');
+const layerPanelTitle = document.getElementById('layer-panel-title');
 const layerNameInput = document.getElementById('layer-name-input');
 const layerStyleInput = document.getElementById('layer-style-input');
 const layerTypeInput = document.getElementById('layer-type-input');
@@ -261,9 +316,13 @@ const statusMessage = document.getElementById('status-message');
 const statusDxf = document.getElementById('status-dxf');
 const filletRadiusControl = document.getElementById('fillet-radius-control');
 const filletRadiusInput = document.getElementById('fillet-radius-input');
+const offsetDistanceControl = document.getElementById('offset-distance-control');
+const offsetDistanceInput = document.getElementById('offset-distance-input');
 const chamferDistanceControl = document.getElementById('chamfer-distance-control');
 const chamferDistanceFirstInput = document.getElementById('chamfer-distance-first');
 const chamferDistanceSecondInput = document.getElementById('chamfer-distance-second');
+const polarArrayCountControl = document.getElementById('polar-array-count-control');
+const polarArrayCountInput = document.getElementById('polar-array-count-input');
 const drawingProfileDialog = document.getElementById('drawing-profile-dialog');
 const drawingProfileCloseButton = document.getElementById('drawing-profile-close');
 const drawingProfileCancelButton = document.getElementById('drawing-profile-cancel');
@@ -332,7 +391,19 @@ let DEFAULT_DRAWING_SIZE = DRAWING_PROFILES.engineering.defaultDrawingSize;
 let UNITS_LABEL = DRAWING_PROFILES.engineering.unitsLabel;
 let nextEntityGroupId = 1;
 let scaleCommand = null;
+let stretchCommand = null;
+let polarArrayCommand = null;
 let tangentLineCommand = null;
+let pointTangentLineCommand = null;
+let offsetCommand = null;
+let xlineCommand = null;
+let localFileManager = null;
+let autosaveController = null;
+let imageEditor = null;
+let trimCommand = null;
+let extendCommand = null;
+let hatchCommand = null;
+let hatchDialogController = null;
 
 const polylineSelectionGeometry = createPolylineSelectionGeometry({
   createArcEntity: (...args) => new ArcEntity(...args),
@@ -389,6 +460,8 @@ const { moveDimensionGrip } = createDimensionGripMovement({
   naturalDimensionTextNormal: (...args) => naturalDimensionTextNormal(...args),
 });
 
+const orthogonalInference = createOrthogonalInference();
+
 const {
   activeDraftOrigin,
   objectSnapPoint,
@@ -404,6 +477,7 @@ const {
   polylineReferencePoints,
   polylineSegmentEntities,
   primitiveEntityParts,
+  inference: orthogonalInference,
 });
 
 function createEntityGroupId(prefix = 'group') {
@@ -445,6 +519,7 @@ const {
   activeLayerName,
   applyLayerToEntity,
   dxfEntityOptions,
+  layerEntityOptions,
 } = createLayerServices({
   getState: () => state,
   applyLineColorToEntity,
@@ -456,6 +531,7 @@ const {
 });
 
 const LineEntity = createLineEntityClass(styleServices);
+const XLineEntity = createXLineEntityClass(styleServices);
 const CircleEntity = createCircleEntityClass(styleServices);
 const ArcEntity = createArcEntityClass(styleServices);
 const PolylineEntity = createPolylineEntityClass({
@@ -535,8 +611,7 @@ const {
 } = createDimensionPlacement({
   DimensionEntity,
   SNAP_THRESHOLD,
-  activeLayerName,
-  activeLineColorId,
+  dimensionLayerOptions: () => layerEntityOptions(AUXILIARY_LAYER_NAME),
   distance,
   distancePointToInfiniteLine,
   getState: () => state,
@@ -704,6 +779,7 @@ const {
   PolylineEntity,
   RasterImageEntity,
   TextEntity,
+  XLineEntity,
   createEntityGroupId,
 });
 
@@ -725,9 +801,11 @@ class CadDocument {
     this.spatialOrder = new Map();
     this.undoStack = [];
     this.redoStack = [];
+    this.revision = 0;
   }
 
   markDirty() {
+    this.revision += 1;
     if (this.editingBlockName) {
       const definition = this.blockDefinitions.get(this.editingBlockName.toLowerCase());
       if (definition) {
@@ -995,6 +1073,7 @@ class CadDocument {
 
     let bounds = null;
     for (const entity of this.entities) {
+      if (entity.type === 'XLINE') continue;
       bounds = mergeBounds(bounds, entity.bounds());
     }
     this.cachedBounds = bounds ? { ...bounds } : null;
@@ -1058,7 +1137,8 @@ class CadDocument {
     const range = this.spatialCellRange(bounds);
     const cellCount = (range.maxX - range.minX + 1) * (range.maxY - range.minY + 1);
     if (cellCount > SPATIAL_MAX_QUERY_CELLS) {
-      return this.entities.filter((entity) => boundsIntersectsBounds(this.spatialBounds.get(entity), bounds));
+      return this.entities.filter((entity) =>
+        entity.type === 'XLINE' || boundsIntersectsBounds(this.spatialBounds.get(entity), bounds));
     }
 
     const matches = new Set();
@@ -1080,6 +1160,10 @@ class CadDocument {
       if (boundsIntersectsBounds(this.spatialBounds.get(entity), bounds)) {
         matches.add(entity);
       }
+    });
+
+    this.entities.forEach((entity) => {
+      if (entity.type === 'XLINE') matches.add(entity);
     });
 
     return [...matches].sort((first, second) =>
@@ -1199,6 +1283,19 @@ const {
   setFilletOperandTangent,
 } = filletApplication;
 
+const offsetGeometry = createOffsetGeometry(operationDependencies);
+const offsetApplication = createOffsetApplication({
+  offsetEntity: offsetGeometry.offsetEntity,
+  factories: {
+    createLine: (start, end, options) => new LineEntity(start, end, options),
+    createXLine: (basePoint, direction, options) => new XLineEntity(basePoint, direction, options),
+    createCircle: (center, radius, options) => new CircleEntity(center, radius, options),
+    createArc: (center, radius, startAngle, endAngle, options) =>
+      new ArcEntity(center, radius, startAngle, endAngle, options),
+    createPolyline: (vertices, segments, options) => new PolylineEntity(vertices, segments, options),
+  },
+});
+
 const { chamferSolution } = createChamferGeometry({
   ...operationDependencies,
   filletRayDirection,
@@ -1278,6 +1375,16 @@ function appendEntityToDxf(lines, entity, options = {}) {
       '11', String(entity.end.x), '21', String(-entity.end.y), '31', '0',
     );
   }
+  if (entity.type === 'XLINE') {
+    lines.push(
+      '0', 'XLINE', '8', entity.layer,
+      '6', getLineType(entity.lineType).dxfName,
+      '62', String(getLineColor(entity.lineColor).aci || 256),
+      '370', String(getLineStyle(entity.lineStyle).dxfLineWeight),
+      '10', String(entity.basePoint.x), '20', String(-entity.basePoint.y), '30', '0',
+      '11', String(entity.direction.x), '21', String(-entity.direction.y), '31', '0',
+    );
+  }
   if (entity.type === 'POLYLINE') {
     lines.push(
       '0', 'LWPOLYLINE', '8', entity.layer,
@@ -1354,6 +1461,9 @@ function appendEntityToDxf(lines, entity, options = {}) {
     });
     lines.push('75', '0', '76', '1', '98', '0');
   }
+  if (entity.type === 'IMAGE') {
+    appendEmbeddedImageToDxf(lines, entity);
+  }
   if (entity.type === 'DIMENSION') {
     const typeCode = {
       horizontal: 0,
@@ -1378,7 +1488,7 @@ function appendEntityToDxf(lines, entity, options = {}) {
       '100', 'AcDbEntity',
       '8', entity.layer,
       '62', String(getLineColor(entity.lineColor).aci || 256),
-      '370', String(getLineStyle('auxiliar').dxfLineWeight),
+      '370', String(getLineStyle(entity.lineStyle).dxfLineWeight),
       '100', 'AcDbDimension',
       ...(options.dimensionBlockName ? ['2', options.dimensionBlockName] : []),
       '10', String(definitionPoint.x), '20', String(-definitionPoint.y), '30', '0',
@@ -1532,6 +1642,9 @@ function serializeDocumentToDxf(doc) {
   });
   lines.push(
     '0', 'ENDTAB',
+    '0', 'TABLE', '2', 'APPID', '70', '1',
+    '0', 'APPID', '2', embeddedImageAppId(), '70', '0',
+    '0', 'ENDTAB',
     '0', 'TABLE', '2', 'STYLE', '70', '1',
     '0', 'STYLE', '2', 'ROMANS', '70', '0', '40', '0', '41', '1', '50', '0', '71', '0',
     '42', '2.5', '3', 'romans.shx', '4', '',
@@ -1585,6 +1698,10 @@ function serializeDocumentToDxf(doc) {
         '21', String(-entity.end.y),
         '31', '0',
       );
+    }
+
+    if (entity.type === 'XLINE') {
+      appendEntityToDxf(lines, entity);
     }
 
     if (entity.type === 'POLYLINE') {
@@ -1685,6 +1802,9 @@ function serializeDocumentToDxf(doc) {
         lines.push('97', '0');
       });
       lines.push('75', '0', '76', '1', '98', '0');
+    }
+    if (entity.type === 'IMAGE') {
+      appendEmbeddedImageToDxf(lines, entity);
     }
     if (entity.type === 'INSERT') {
       appendEntityToDxf(lines, entity);
@@ -2330,6 +2450,35 @@ function parseDxf(text) {
       continue;
     }
 
+    if (code === '0' && value === 'XLINE') {
+      const record = {};
+      index += 1;
+      while (index < pairs.length && pairs[index][0] !== '0') {
+        record[pairs[index][0]] = pairs[index][1];
+        index += 1;
+      }
+      const basePoint = {
+        x: Number(record['10'] || 0),
+        y: -Number(record['20'] || 0),
+      };
+      const direction = {
+        x: Number(record['11'] || 0),
+        y: -Number(record['21'] || 0),
+      };
+      if (
+        Number.isFinite(basePoint.x) && Number.isFinite(basePoint.y) &&
+        Number.isFinite(direction.x) && Number.isFinite(direction.y) &&
+        Math.hypot(direction.x, direction.y) > SNAP_THRESHOLD
+      ) {
+        entities.push(new XLineEntity(
+          basePoint,
+          direction,
+          dxfEntityOptions(record, layerDefinitionMap),
+        ));
+      }
+      continue;
+    }
+
     if (code === '0' && value === 'CIRCLE') {
       const record = {};
       index += 1;
@@ -2428,6 +2577,41 @@ function parseDxf(text) {
           ...dxfEntityOptions(record, layerDefinitionMap),
           angle: Number(record['50'] || 0),
         }));
+      }
+      continue;
+    }
+
+    if (code === '0' && value === 'IMAGE') {
+      const record = {};
+      const imagePairs = [];
+      index += 1;
+      while (index < pairs.length && pairs[index][0] !== '0') {
+        const [groupCode, groupValue] = pairs[index];
+        imagePairs.push(pairs[index]);
+        record[groupCode] = groupValue;
+        index += 1;
+      }
+      const embedded = parseEmbeddedImageFromDxf(imagePairs);
+      if (
+        embedded &&
+        Number.isFinite(embedded.center.x) && Number.isFinite(embedded.center.y) &&
+        Number.isFinite(embedded.width) && embedded.width > SNAP_THRESHOLD &&
+        Number.isFinite(embedded.height) && embedded.height > SNAP_THRESHOLD
+      ) {
+        entities.push(new RasterImageEntity(
+          embedded.center,
+          embedded.width,
+          embedded.height,
+          embedded.source,
+          {
+            ...dxfEntityOptions(record, layerDefinitionMap),
+            name: embedded.name,
+            rotation: embedded.rotation,
+            opacity: embedded.opacity,
+            flipX: embedded.flipX,
+            flipY: embedded.flipY,
+          },
+        ));
       }
       continue;
     }
@@ -2727,6 +2911,16 @@ class CadRenderer {
     ctx.restore();
   }
 
+  drawXLineStroke(ctx, entity, options) {
+    drawXLine(ctx, entity, {
+      bounds: this.visibleWorldBounds(18 / this.state.viewScale),
+      color: options.color,
+      width: options.width,
+      viewScale: this.state.viewScale,
+      dash: profileLineTypeDash(entity.lineType),
+    });
+  }
+
   drawCircleStroke(ctx, entity, options) {
     if (entity.radius <= SNAP_THRESHOLD) {
       return;
@@ -2968,6 +3162,9 @@ class CadRenderer {
       if (entity.type === 'LINE') {
         this.drawLineStroke(ctx, entity, { color, width });
       }
+      if (entity.type === 'XLINE') {
+        this.drawXLineStroke(ctx, entity, { color, width });
+      }
       if (entity.type === 'CIRCLE') {
         this.drawCircleStroke(ctx, entity, { color, width });
       }
@@ -3018,6 +3215,9 @@ class CadRenderer {
     const width = options.width ?? this.displayLineWidth(entity);
     if (entity.type === 'LINE') {
       this.drawLineStroke(ctx, entity, { color, width });
+    }
+    if (entity.type === 'XLINE') {
+      this.drawXLineStroke(ctx, entity, { color, width });
     }
     if (entity.type === 'CIRCLE') {
       this.drawCircleStroke(ctx, entity, { color, width });
@@ -3202,6 +3402,31 @@ class CadRenderer {
     });
   }
 
+  drawPointTangentPreview(ctx) {
+    if (!pointTangentLineCommand || this.state.tool !== 'point-tangent-line') return;
+    drawPointTangentLinePreview(ctx, {
+      draft: this.state.tangentLineDraft,
+      hoveredEntity: this.state.hoveredEntity,
+      cursorPoint: this.state.mouseWorld,
+      command: pointTangentLineCommand,
+      drawOperand: (context, entity) =>
+        this.drawHighlightedEntity(context, entity, PREVIEW_COLOR, 2),
+      previewColor: PREVIEW_COLOR,
+      viewScale: this.state.viewScale,
+    });
+  }
+
+  drawXLinePreview(ctx) {
+    if (!xlineCommand || this.state.tool !== 'xline') return;
+    drawXLineCommandPreview(ctx, {
+      command: xlineCommand,
+      cursorPoint: this.state.mouseWorld,
+      bounds: this.visibleWorldBounds(18 / this.state.viewScale),
+      color: PREVIEW_COLOR,
+      viewScale: this.state.viewScale,
+    });
+  }
+
   drawChamferPreview(ctx) {
     const firstOperand = this.state.chamferDraft?.firstOperand;
     const secondEntity = this.state.hoveredEntity;
@@ -3223,6 +3448,17 @@ class CadRenderer {
     ctx.lineTo(solution.secondTangent.x, solution.secondTangent.y);
     ctx.stroke();
     ctx.restore();
+  }
+
+  drawOffsetPreview(ctx) {
+    if (!offsetCommand || this.state.tool !== 'offset' || !this.state.mouseWorld) return;
+    drawOffsetCommandPreview(ctx, {
+      entity: offsetCommand.previewAt(this.state.mouseWorld),
+      drawEntity: (context, entity, color, width) =>
+        this.drawHighlightedEntity(context, entity, color, width),
+      previewColor: PREVIEW_COLOR,
+      viewScale: this.state.viewScale,
+    });
   }
 
   drawEntities(ctx) {
@@ -3251,7 +3487,7 @@ class CadRenderer {
       if (entity.type === 'HATCH') {
         continue;
       }
-      if (!boundsIntersectsBounds(entity.bounds(), viewBounds)) {
+      if (entity.type !== 'XLINE' && !boundsIntersectsBounds(entity.bounds(), viewBounds)) {
         continue;
       }
       const style = getLineStyle(entity.lineStyle);
@@ -3271,6 +3507,9 @@ class CadRenderer {
       }
       if (entity.type === 'LINE') {
         this.drawLineStroke(ctx, entity, { color: entityColor, width: displayWidth });
+      }
+      if (entity.type === 'XLINE') {
+        this.drawXLineStroke(ctx, entity, { color: entityColor, width: displayWidth });
       }
       if (entity.type === 'CIRCLE') {
         this.drawCircleStroke(ctx, entity, { color: entityColor, width: displayWidth });
@@ -3331,14 +3570,16 @@ class CadRenderer {
     const hoveredEntity = this.state.hoveredEntity;
     if (hoveredEntity && !this.doc.isSelected(hoveredEntity)) {
       for (const entity of this.doc.expandEntityGroups([hoveredEntity])) {
-        if (!this.doc.isSelected(entity) && boundsIntersectsBounds(entity.bounds(), viewBounds)) {
+        if (!this.doc.isSelected(entity) &&
+            (entity.type === 'XLINE' || boundsIntersectsBounds(entity.bounds(), viewBounds))) {
           this.drawHighlightedEntity(ctx, entity, PREVIEW_COLOR, 2);
         }
       }
     }
 
     for (const selectedEntity of this.doc.selectedEntities) {
-      if (!selectedEntity || !boundsIntersectsBounds(selectedEntity.bounds(), viewBounds)) {
+      if (!selectedEntity ||
+          (selectedEntity.type !== 'XLINE' && !boundsIntersectsBounds(selectedEntity.bounds(), viewBounds))) {
         continue;
       }
       if (this.isExtendBoundary(selectedEntity)) {
@@ -3351,6 +3592,14 @@ class CadRenderer {
           { color: SELECTED_COLOR, width: Math.max(3, this.displayLineWidth(selectedEntity) + 1) },
         );
         this.drawLineGrips(ctx, selectedEntity);
+      }
+      if (selectedEntity?.type === 'XLINE') {
+        this.drawXLineStroke(
+          ctx,
+          selectedEntity,
+          { color: SELECTED_COLOR, width: Math.max(3, this.displayLineWidth(selectedEntity) + 1) },
+        );
+        this.drawXLineGrip(ctx, selectedEntity);
       }
       if (selectedEntity?.type === 'CIRCLE') {
         this.drawCircleStroke(
@@ -3504,6 +3753,24 @@ class CadRenderer {
     ctx.restore();
   }
 
+  drawXLineGrip(ctx, entity) {
+    const gripSize = 7 / this.state.viewScale;
+    ctx.save();
+    ctx.fillStyle = '#ffffff';
+    ctx.strokeStyle = SELECTED_COLOR;
+    ctx.lineWidth = 1.5 / this.state.viewScale;
+    ctx.beginPath();
+    ctx.rect(
+      entity.basePoint.x - gripSize * 0.5,
+      entity.basePoint.y - gripSize * 0.5,
+      gripSize,
+      gripSize,
+    );
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
+
   drawPolylineGrips(ctx, entity) {
     const gripSize = 7 / this.state.viewScale;
     ctx.save();
@@ -3584,8 +3851,12 @@ class CadRenderer {
       this.state.tool === 'arc-center-radius' ||
       this.state.tool === 'arc-3p' ||
       this.state.tool === 'arc-center-start-end' ||
+      this.state.tool === 'point-tangent-line' ||
+      this.state.tool === 'xline' ||
       (this.state.tool === 'copy' && !this.state.copyDraft?.selecting) ||
       (this.state.tool === 'move' && !this.state.moveDraft?.selecting) ||
+      (this.state.tool === 'stretch' && !this.state.stretchDraft?.selecting) ||
+      (this.state.tool === 'polar-array' && !this.state.polarArrayDraft?.selecting) ||
       (this.state.tool === 'rotate' && !this.state.rotateDraft?.selecting) ||
       (this.state.tool === 'scale' && !this.state.scaleDraft?.selecting) ||
       (this.state.tool === 'mirror' && !this.state.mirrorDraft?.selecting) ||
@@ -3679,8 +3950,16 @@ class CadRenderer {
 
     if (this.state.pendingLineStart) {
       let endPoint = resolveCursorPoint(this.state.mouseWorld, this.state);
+      const coordinateTarget = keyboardCoordinateTarget(
+        this.state.pendingLineStart,
+        endPoint,
+        this.state.distanceInput,
+      );
       const inputDistance = parseDistanceInput(this.state.distanceInput);
-      if (inputDistance !== null) {
+      if (coordinateTarget) {
+        endPoint = coordinateTarget;
+      }
+      else if (inputDistance !== null) {
         const distancePoint = pointFromDistance(
           this.state.pendingLineStart,
           endPoint,
@@ -3709,7 +3988,7 @@ class CadRenderer {
       const draft = this.state.polylineDraft;
       let previewPoint = resolveCursorPoint(this.state.mouseWorld, this.state);
       const origin = activeDraftOrigin(this.state);
-      const coordinateTarget = pointFromRelativeCoordinates(origin, this.state.distanceInput);
+      const coordinateTarget = keyboardCoordinateTarget(origin, previewPoint, this.state.distanceInput);
       const inputDistance = parseDistanceInput(this.state.distanceInput);
       if (coordinateTarget) {
         previewPoint = coordinateTarget;
@@ -3775,25 +4054,12 @@ class CadRenderer {
     }
 
     if (this.state.rectangleDraft?.firstPoint) {
-      let oppositePoint = resolveCursorPoint(this.state.mouseWorld, this.state);
-      const coordinateTarget = pointFromRelativeCoordinates(
-        this.state.rectangleDraft.firstPoint,
+      const cursor = resolveCursorPoint(this.state.mouseWorld, this.state);
+      const oppositePoint = rectangleTargetPoint(
+        this.state.rectangleDraft,
+        cursor,
         this.state.distanceInput,
       );
-      const inputDistance = parseDistanceInput(this.state.distanceInput);
-      if (coordinateTarget) {
-        oppositePoint = coordinateTarget;
-      }
-      else if (inputDistance !== null) {
-        const distancePoint = pointFromDistance(
-          this.state.rectangleDraft.firstPoint,
-          oppositePoint,
-          inputDistance,
-        );
-        if (distancePoint) {
-          oppositePoint = distancePoint;
-        }
-      }
 
       const bounds = normalizeBoundsFromPoints(this.state.rectangleDraft.firstPoint, oppositePoint);
       ctx.beginPath();
@@ -3810,8 +4076,13 @@ class CadRenderer {
     }
 
     if (this.state.circleDraft?.points.length) {
-      const previewPoint = resolveCursorPoint(this.state.mouseWorld, this.state);
+      let previewPoint = resolveCursorPoint(this.state.mouseWorld, this.state);
       const points = this.state.circleDraft.points;
+      previewPoint = keyboardCoordinateTarget(
+        activeDraftOrigin(this.state),
+        previewPoint,
+        this.state.distanceInput,
+      ) || previewPoint;
       let previewCircle = null;
 
       if (this.state.circleDraft.mode === 'center-radius' && points.length === 1) {
@@ -3857,9 +4128,14 @@ class CadRenderer {
     }
 
     if (this.state.arcDraft?.points.length) {
-      const previewPoint = resolveCursorPoint(this.state.mouseWorld, this.state);
+      let previewPoint = resolveCursorPoint(this.state.mouseWorld, this.state);
       const draft = this.state.arcDraft;
       const points = draft.points;
+      previewPoint = keyboardCoordinateTarget(
+        activeDraftOrigin(this.state),
+        previewPoint,
+        this.state.distanceInput,
+      ) || previewPoint;
       let previewArc = null;
 
       if (draft.mode === '3p') {
@@ -4034,14 +4310,13 @@ class CadRenderer {
     }
 
     const origin = gripPoint(this.state.selectedGrip);
-    const coordinateTarget = pointFromRelativeCoordinates(origin, this.state.distanceInput);
+    const directionPoint = resolvePointForState(this.state.mouseWorld, this.state, gripReferencePoint(this.state.selectedGrip));
+    const coordinateTarget = keyboardCoordinateTarget(origin, directionPoint, this.state.distanceInput);
     const inputDistance = parseDistanceInput(this.state.distanceInput);
     if (inputDistance === null && !coordinateTarget) {
       return;
     }
 
-    const referencePoint = gripReferencePoint(this.state.selectedGrip);
-    const directionPoint = resolvePointForState(this.state.mouseWorld, this.state, referencePoint);
     const targetPoint = coordinateTarget || pointFromDistance(origin, directionPoint, inputDistance);
     if (!targetPoint) {
       return;
@@ -4066,12 +4341,9 @@ class CadRenderer {
       return null;
     }
 
-    const coordinateTarget = pointFromRelativeCoordinates(copyDraft.basePoint, this.state.distanceInput);
-    if (coordinateTarget) {
-      return coordinateTarget;
-    }
-
     const cursor = resolveCursorPoint(this.state.mouseWorld, this.state);
+    const coordinateTarget = keyboardCoordinateTarget(copyDraft.basePoint, cursor, this.state.distanceInput);
+    if (coordinateTarget) return coordinateTarget;
     const inputDistance = parseDistanceInput(this.state.distanceInput);
     if (inputDistance !== null && cursor) {
       return pointFromDistance(copyDraft.basePoint, cursor, inputDistance);
@@ -4085,12 +4357,9 @@ class CadRenderer {
       return null;
     }
 
-    const coordinateTarget = pointFromRelativeCoordinates(moveDraft.basePoint, this.state.distanceInput);
-    if (coordinateTarget) {
-      return coordinateTarget;
-    }
-
     const cursor = resolveCursorPoint(this.state.mouseWorld, this.state);
+    const coordinateTarget = keyboardCoordinateTarget(moveDraft.basePoint, cursor, this.state.distanceInput);
+    if (coordinateTarget) return coordinateTarget;
     const inputDistance = parseDistanceInput(this.state.distanceInput);
     if (inputDistance !== null && cursor) {
       return pointFromDistance(moveDraft.basePoint, cursor, inputDistance);
@@ -4235,6 +4504,38 @@ class CadRenderer {
     });
   }
 
+  drawStretchPreview(ctx) {
+    const draft = this.state.stretchDraft;
+    if (!draft?.basePoint || !this.state.mouseWorld || !stretchCommand) return;
+    const targetPoint = stretchCommandTargetPoint(this.state.mouseWorld, draft.basePoint);
+    if (!targetPoint) return;
+    ctx.save();
+    ctx.setLineDash([8 / this.state.viewScale, 6 / this.state.viewScale]);
+    stretchCommand.preview(targetPoint).forEach((entity) => {
+      this.drawEntityOverlay(ctx, entity, {
+        color: PREVIEW_COLOR,
+        alpha: 0.35,
+        outline: true,
+      });
+    });
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
+  drawPolarArrayPreview(ctx) {
+    const draft = this.state.polarArrayDraft;
+    if (!draft || draft.selecting || !this.state.mouseWorld || !polarArrayCommand) return;
+    const center = resolvePointForState(this.state.mouseWorld, this.state, null);
+    drawPolarArrayCommandPreview(ctx, {
+      entities: polarArrayCommand.previewAt(this.state.mouseWorld),
+      drawEntity: (context, entity, color) =>
+        this.drawHighlightedEntity(context, entity, color, 0),
+      center,
+      color: PREVIEW_COLOR,
+      viewScale: this.state.viewScale,
+    });
+  }
+
   drawSelectionWindow(ctx) {
     const selectionWindow = this.state.selectionWindow;
     if (!selectionWindow?.currentWorld) {
@@ -4267,6 +4568,13 @@ class CadRenderer {
     ctx.restore();
   }
 
+  drawInferenceGuide(ctx) {
+    drawOrthogonalInference(ctx, {
+      inference: this.state.activeInference,
+      viewScale: this.state.viewScale,
+    });
+  }
+
   drawImageInteractionPreview(ctx) {
     const insertionDraft = this.state.imageDraft;
     if (this.state.tool === 'image-insert' && insertionDraft?.preview && this.state.mouseWorld) {
@@ -4282,7 +4590,7 @@ class CadRenderer {
     const draft = this.state.imageCalibrationDraft;
     if (this.state.tool !== 'image-calibrate' || !draft) return;
     const cursor = this.state.mouseWorld;
-    const endPoint = draft.sourceEnd || cursor;
+    const endPoint = draft.sourceEnd || draft.previewPoint || cursor;
     if (draft.sourceStart && endPoint) {
       ctx.save();
       ctx.strokeStyle = PREVIEW_COLOR;
@@ -4335,6 +4643,8 @@ class CadRenderer {
       this.state.tool === 'select-set' ||
       (this.state.tool === 'copy' && this.state.copyDraft?.selecting) ||
       (this.state.tool === 'move' && this.state.moveDraft?.selecting) ||
+      (this.state.tool === 'stretch' && this.state.stretchDraft?.selecting) ||
+      (this.state.tool === 'polar-array' && this.state.polarArrayDraft?.selecting) ||
       (this.state.tool === 'rotate' && this.state.rotateDraft?.selecting) ||
       (this.state.tool === 'mirror' && this.state.mirrorDraft?.selecting) ||
       (this.state.dimensionDraft &&
@@ -4382,15 +4692,21 @@ class CadRenderer {
     this.drawCrosshair(ctx);
     this.drawEntities(ctx);
     this.drawTangentLinePreview(ctx);
+    this.drawPointTangentPreview(ctx);
+    this.drawXLinePreview(ctx);
     this.drawFilletPreview(ctx);
     this.drawChamferPreview(ctx);
+    this.drawOffsetPreview(ctx);
     this.drawPreview(ctx);
     this.drawGripMovePreview(ctx);
     this.drawCopyPreview(ctx);
+    this.drawStretchPreview(ctx);
+    this.drawPolarArrayPreview(ctx);
     this.drawRotatePreview(ctx);
     this.drawMirrorPreview(ctx);
     this.drawScalePreview(ctx);
     this.drawImageInteractionPreview(ctx);
+    this.drawInferenceGuide(ctx);
     this.drawSelectionWindow(ctx);
     this.drawObjectSnapMarker(ctx);
   }
@@ -4473,7 +4789,7 @@ class CadController {
     this.lastImagePointerDown = null;
   }
 
-  armShortcutPrefix(prefix) {
+  armShortcutPrefix(prefix, onTimeout = null) {
     if (this.shortcutTimer) {
       clearTimeout(this.shortcutTimer);
     }
@@ -4481,6 +4797,7 @@ class CadController {
     this.shortcutTimer = setTimeout(() => {
       if (this.shortcutPrefix === prefix) {
         this.clearShortcutPrefix();
+        if (onTimeout) onTimeout();
       }
     }, 420);
   }
@@ -4511,11 +4828,29 @@ class CadController {
     }
 
     const key = event.key.toLowerCase();
+    if (this.shortcutPrefix === 'x') {
+      this.clearShortcutPrefix();
+      if (key === 'l') {
+        event.preventDefault();
+        runCommand('xline');
+        return true;
+      }
+      return false;
+    }
     if (this.shortcutPrefix === 'e') {
       this.clearShortcutPrefix();
       if (key === 's') {
         event.preventDefault();
         runCommand('scale');
+        return true;
+      }
+      return false;
+    }
+    if (this.shortcutPrefix === 'm') {
+      this.clearShortcutPrefix();
+      if (key === 'p') {
+        event.preventDefault();
+        runCommand('polar-array');
         return true;
       }
       return false;
@@ -4577,8 +4912,26 @@ class CadController {
     if (key === 'e' && this.state.tool === 'select') {
       event.preventDefault();
       this.clearShortcutPrefix();
-      this.armShortcutPrefix('e');
-      this.state.statusText = 'Atajo ES: pulse S para Escala';
+      this.armShortcutPrefix('e', () => runCommand('stretch'));
+      this.state.statusText = 'E: Estirar · pulse S para Escala (ES)';
+      this.updateUiStatus();
+      return true;
+    }
+
+    if (key === 'm' && this.state.tool === 'select') {
+      event.preventDefault();
+      this.clearShortcutPrefix();
+      this.armShortcutPrefix('m');
+      this.state.statusText = 'Atajo MP: pulse P para Matriz polar';
+      this.updateUiStatus();
+      return true;
+    }
+
+    if (key === 'x' && this.state.tool === 'select') {
+      event.preventDefault();
+      this.clearShortcutPrefix();
+      this.armShortcutPrefix('x', () => runCommand('explode'));
+      this.state.statusText = 'Atajo XL: pulse L para XLINE · X para descomponer';
       this.updateUiStatus();
       return true;
     }
@@ -4597,8 +4950,11 @@ class CadController {
     this.state.circleDraft = null;
     this.state.arcDraft = null;
     this.state.tangentLineDraft = null;
+    this.state.xlineDraft = null;
     this.state.copyDraft = null;
     this.state.moveDraft = null;
+    this.state.stretchDraft = null;
+    this.state.polarArrayDraft = null;
     this.state.rotateDraft = null;
     this.state.scaleDraft = null;
     this.state.mirrorDraft = null;
@@ -4608,6 +4964,7 @@ class CadController {
     this.state.chamferDraft = tool === 'chamfer'
       ? { firstOperand: null }
       : null;
+    this.state.offsetDraft = null;
     this.state.selectionSetDraft = null;
     this.state.eraseDraft = null;
     this.state.explodeDraft = null;
@@ -4620,6 +4977,7 @@ class CadController {
     this.state.distanceInput = '';
     this.state.selectedGrip = null;
     this.state.activeObjectSnap = null;
+    orthogonalInference.clear(this.state);
     this.state.hoveredEntity = null;
     this.state.selectionWindow = null;
     this.gripDragState = null;
@@ -4635,17 +4993,22 @@ class CadController {
       tool === 'arc-3p' ||
       tool === 'arc-center-start-end' ||
       tool === 'tangent-line' ||
+      tool === 'point-tangent-line' ||
+      tool === 'xline' ||
       tool === 'block-create' ||
       tool === 'block-insert' ||
       DIMENSION_TOOLS.has(tool) ||
       tool === 'copy' ||
       tool === 'move' ||
+      tool === 'stretch' ||
+      tool === 'polar-array' ||
       tool === 'rotate' ||
       tool === 'scale' ||
       tool === 'mirror' ||
       tool === 'select-set' ||
       tool === 'trim' ||
       tool === 'fillet' ||
+      tool === 'offset' ||
       tool === 'chamfer' ||
       tool === 'extend' ||
       tool === 'erase' ||
@@ -4653,17 +5016,25 @@ class CadController {
       || tool === 'image-insert'
       || tool === 'image-calibrate'
     ) {
-      if (tool !== 'copy' && tool !== 'move' && tool !== 'rotate' && tool !== 'scale' && tool !== 'mirror' && tool !== 'select-set' && tool !== 'erase' && tool !== 'explode' && tool !== 'extend' && tool !== 'block-create') {
+      if (tool !== 'copy' && tool !== 'move' && tool !== 'stretch' && tool !== 'polar-array' && tool !== 'rotate' && tool !== 'scale' && tool !== 'mirror' && tool !== 'select-set' && tool !== 'erase' && tool !== 'explode' && tool !== 'extend' && tool !== 'block-create') {
         this.doc.selectEntity(null);
       }
     }
     filletRadiusControl.hidden = tool !== 'fillet';
+    offsetDistanceControl.hidden = tool !== 'offset';
     chamferDistanceControl.hidden = tool !== 'chamfer';
+    polarArrayCountControl.hidden = tool !== 'polar-array';
     if (tool === 'fillet') {
       syncFilletRadiusControl();
     }
+    if (tool === 'offset') {
+      syncOffsetDistanceControl();
+    }
     if (tool === 'chamfer') {
       syncChamferDistanceControl();
+    }
+    if (tool === 'polar-array') {
+      syncPolarArrayCountControl();
     }
     this.state.statusText = tool === 'select'
       ? 'Seleccionar entidad'
@@ -4671,6 +5042,8 @@ class CadController {
         ? 'Recortar: pique el tramo a eliminar'
         : tool === 'fillet'
           ? `Empalme R${formatNumber(activeFilletRadius())}: seleccione la primera linea`
+        : tool === 'offset'
+          ? `Equidistancia ${formatNumber(activeOffsetDistance())}: seleccione una entidad`
         : tool === 'chamfer'
           ? `Chaflan ${formatChamferDistances()}: seleccione la primera linea o tramo`
         : tool === 'extend'
@@ -4683,6 +5056,10 @@ class CadController {
             ? 'Copiar: indique punto origen'
             : tool === 'move'
               ? 'Desplazar: indique punto origen'
+            : tool === 'stretch'
+              ? 'Estirar: seleccione con ventana captura'
+            : tool === 'polar-array'
+              ? 'Matriz polar: seleccione objetos y confirme'
                 : tool === 'rotate'
                   ? 'Girar: indique punto base'
                 : tool === 'scale'
@@ -4699,6 +5076,10 @@ class CadController {
                   ? 'Imagen: indique primer punto de referencia'
                 : tool === 'tangent-line'
                   ? 'Linea tangente: seleccione el primer objeto'
+                : tool === 'point-tangent-line'
+                  ? 'Linea punto-tangente: indique el punto inicial'
+                : tool === 'xline'
+                  ? 'Linea infinita: indique un punto'
                 : tool === 'text'
                   ? 'Texto: indique contenido y altura'
                   : tool === 'select-set'
@@ -4723,6 +5104,8 @@ class CadController {
     selectToolButton.classList.toggle('is-active', tool === 'select');
     lineToolButton.classList.toggle('is-active', tool === 'line');
     tangentLineToolButton.classList.toggle('is-active', tool === 'tangent-line');
+    pointTangentLineToolButton.classList.toggle('is-active', tool === 'point-tangent-line');
+    xlineToolButton.classList.toggle('is-active', tool === 'xline');
     polylineToolButton.classList.toggle('is-active', tool === 'polyline');
     rectangleToolButton.classList.toggle('is-active', tool === 'rectangle');
     textToolButton.classList.toggle('is-active', tool === 'text');
@@ -4735,10 +5118,13 @@ class CadController {
     blockToolButton.classList.toggle('is-active', tool === 'block-create' || tool === 'block-insert');
     trimToolButton.classList.toggle('is-active', tool === 'trim');
     filletToolButton.classList.toggle('is-active', tool === 'fillet');
+    offsetToolButton.classList.toggle('is-active', tool === 'offset');
     chamferToolButton.classList.toggle('is-active', tool === 'chamfer');
     extendToolButton.classList.toggle('is-active', tool === 'extend');
     copyToolButton.classList.toggle('is-active', tool === 'copy');
     moveToolButton.classList.toggle('is-active', tool === 'move');
+    stretchToolButton.classList.toggle('is-active', tool === 'stretch');
+    polarArrayToolButton.classList.toggle('is-active', tool === 'polar-array');
     rotateToolButton.classList.toggle('is-active', tool === 'rotate');
     scaleToolButton.classList.toggle('is-active', tool === 'scale');
     mirrorToolButton.classList.toggle('is-active', tool === 'mirror');
@@ -4753,7 +5139,7 @@ class CadController {
     this.canvas.classList.toggle('is-select-tool', tool === 'select');
     this.canvas.classList.toggle(
       'is-line-tool',
-      tool === 'line' || tool === 'tangent-line' || tool === 'polyline' || tool === 'rectangle' || DIMENSION_TOOLS.has(tool),
+      tool === 'line' || tool === 'tangent-line' || tool === 'point-tangent-line' || tool === 'xline' || tool === 'polyline' || tool === 'rectangle' || DIMENSION_TOOLS.has(tool),
     );
     this.canvas.classList.toggle('is-text-tool', tool === 'text');
     this.canvas.classList.toggle('is-hatch-tool', tool === 'hatch');
@@ -4762,9 +5148,12 @@ class CadController {
       'is-arc-tool',
       tool === 'arc-center-radius' || tool === 'arc-3p' || tool === 'arc-center-start-end',
     );
-    this.canvas.classList.toggle('is-trim-tool', tool === 'trim' || tool === 'fillet' || tool === 'chamfer');
+    this.canvas.classList.toggle('is-trim-tool', tool === 'trim' || tool === 'fillet' || tool === 'offset' || tool === 'chamfer');
     this.canvas.classList.toggle('is-extend-tool', tool === 'extend');
-    this.canvas.classList.toggle('is-copy-tool', tool === 'copy' && this.state.copyDraft?.selecting);
+    this.canvas.classList.toggle('is-copy-tool',
+      tool === 'copy' && this.state.copyDraft?.selecting ||
+      tool === 'stretch' && this.state.stretchDraft?.selecting ||
+      tool === 'polar-array' && this.state.polarArrayDraft?.selecting);
     this.canvas.classList.toggle('is-move-tool', tool === 'move' && this.state.moveDraft?.selecting);
     this.canvas.classList.toggle('is-rotate-tool',
       tool === 'rotate' && this.state.rotateDraft?.selecting ||
@@ -4780,6 +5169,8 @@ class CadController {
       'is-point-input-tool',
       (tool === 'copy' && this.state.copyDraft && !this.state.copyDraft.selecting) ||
         (tool === 'move' && this.state.moveDraft && !this.state.moveDraft.selecting) ||
+        (tool === 'stretch' && this.state.stretchDraft && !this.state.stretchDraft.selecting) ||
+        (tool === 'polar-array' && this.state.polarArrayDraft && !this.state.polarArrayDraft.selecting) ||
         (tool === 'rotate' && this.state.rotateDraft && !this.state.rotateDraft.selecting) ||
         (tool === 'scale' && this.state.scaleDraft && !this.state.scaleDraft.selecting) ||
         (tool === 'mirror' && this.state.mirrorDraft && !this.state.mirrorDraft.selecting) ||
@@ -4819,6 +5210,7 @@ class CadController {
       phase: 'source-start',
       sourceStart: null,
       sourceEnd: null,
+      previewPoint: null,
       targetSegment: null,
     };
     this.doc.selectEntity(entity);
@@ -4860,18 +5252,22 @@ class CadController {
     const draft = this.state.imageCalibrationDraft;
     if (this.state.tool !== 'image-calibrate' || !draft) return false;
     if (draft.phase === 'source-start') {
-      draft.sourceStart = { ...worldPoint };
+      const sourceStart = this.resolveInputPoint(worldPoint) || worldPoint;
+      draft.sourceStart = { ...sourceStart };
       draft.phase = 'source-end';
-      this.state.statusText = 'Calibrar imagen: indique el segundo punto de referencia';
+      this.state.statusText = 'Calibrar imagen: indique el segundo punto · Shift bloquea la inferencia de eje';
       return true;
     }
     if (draft.phase === 'source-end') {
-      if (distance(draft.sourceStart, worldPoint) <= SNAP_THRESHOLD) {
+      const sourceEnd = this.resolveInputPoint(worldPoint) || worldPoint;
+      if (distance(draft.sourceStart, sourceEnd) <= SNAP_THRESHOLD) {
         this.state.statusText = 'Los dos puntos de referencia deben ser distintos';
         return false;
       }
-      draft.sourceEnd = { ...worldPoint };
+      draft.sourceEnd = { ...sourceEnd };
+      draft.previewPoint = null;
       draft.phase = 'target';
+      orthogonalInference.clear(this.state);
       this.state.statusText = 'Pique una linea o tramo de polilinea para alinear y escalar · Enter para indicar longitud';
       return true;
     }
@@ -4905,6 +5301,9 @@ class CadController {
       if (entity === options.exclude) continue;
       if (entity.type === 'LINE' &&
           distancePointToSegment(point, entity.start, entity.end) <= tolerance) {
+        return entity;
+      }
+      if (entity.type === 'XLINE' && entityDistanceToPoint(entity, point) <= tolerance) {
         return entity;
       }
       if (entity.type === 'CIRCLE' && distancePointToCircle(point, entity) <= tolerance) {
@@ -4948,8 +5347,17 @@ class CadController {
     if (this.state.tool === 'fillet') {
       return true;
     }
+    if (this.state.tool === 'offset') {
+      return !this.state.offsetDraft?.entity;
+    }
     if (this.state.tool === 'tangent-line') {
       return true;
+    }
+    if (this.state.tool === 'point-tangent-line') {
+      return Boolean(this.state.tangentLineDraft?.startPoint);
+    }
+    if (this.state.tool === 'xline') {
+      return false;
     }
     if (this.state.tool === 'chamfer') {
       return true;
@@ -4965,6 +5373,12 @@ class CadController {
     }
     if (this.state.tool === 'move') {
       return Boolean(this.state.moveDraft?.selecting);
+    }
+    if (this.state.tool === 'stretch') {
+      return Boolean(this.state.stretchDraft?.selecting);
+    }
+    if (this.state.tool === 'polar-array') {
+      return Boolean(this.state.polarArrayDraft?.selecting);
     }
     if (this.state.tool === 'rotate') {
       return Boolean(this.state.rotateDraft?.selecting);
@@ -5018,8 +5432,11 @@ class CadController {
   }
 
   updateCanvasCursorMode() {
-    this.canvas.classList.toggle('is-copy-tool', this.state.tool === 'copy' && this.state.copyDraft?.selecting);
     this.canvas.classList.toggle('is-move-tool', this.state.tool === 'move' && this.state.moveDraft?.selecting);
+    this.canvas.classList.toggle('is-copy-tool',
+      this.state.tool === 'copy' && this.state.copyDraft?.selecting ||
+      this.state.tool === 'stretch' && this.state.stretchDraft?.selecting ||
+      this.state.tool === 'polar-array' && this.state.polarArrayDraft?.selecting);
     this.canvas.classList.toggle('is-rotate-tool',
       this.state.tool === 'rotate' && this.state.rotateDraft?.selecting ||
       this.state.tool === 'scale' && this.state.scaleDraft?.selecting ||
@@ -5034,6 +5451,8 @@ class CadController {
       'is-point-input-tool',
       (this.state.tool === 'copy' && this.state.copyDraft && !this.state.copyDraft.selecting) ||
         (this.state.tool === 'move' && this.state.moveDraft && !this.state.moveDraft.selecting) ||
+        (this.state.tool === 'stretch' && this.state.stretchDraft && !this.state.stretchDraft.selecting) ||
+        (this.state.tool === 'polar-array' && this.state.polarArrayDraft && !this.state.polarArrayDraft.selecting) ||
         (this.state.tool === 'rotate' && this.state.rotateDraft && !this.state.rotateDraft.selecting) ||
         (this.state.tool === 'scale' && this.state.scaleDraft && !this.state.scaleDraft.selecting) ||
         (this.state.tool === 'mirror' && this.state.mirrorDraft && !this.state.mirrorDraft.selecting) ||
@@ -5053,9 +5472,12 @@ class CadController {
       !this.state.hatchDraft &&
       !this.state.copyDraft &&
       !this.state.moveDraft &&
+      !this.state.stretchDraft &&
+      !this.state.polarArrayDraft &&
       !this.state.rotateDraft &&
       !this.state.scaleDraft &&
       !this.state.filletDraft &&
+      !this.state.offsetDraft &&
       !this.state.selectionSetDraft &&
       !this.state.eraseDraft &&
       !this.state.explodeDraft &&
@@ -5082,6 +5504,8 @@ class CadController {
 
   cancelCurrentCommand() {
     const clearCommandSelection = this.state.tool === 'copy' ||
+      this.state.tool === 'stretch' ||
+      this.state.tool === 'polar-array' ||
       this.state.tool === 'mirror' ||
       this.state.tool === 'select-set';
     if (
@@ -5096,16 +5520,21 @@ class CadController {
       this.state.tool === 'arc-3p' ||
       this.state.tool === 'arc-center-start-end' ||
       this.state.tool === 'tangent-line' ||
+      this.state.tool === 'point-tangent-line' ||
+      this.state.tool === 'xline' ||
       this.state.tool === 'block-create' ||
       this.state.tool === 'block-insert' ||
       this.state.tool === 'copy' ||
       this.state.tool === 'move' ||
+      this.state.tool === 'stretch' ||
+      this.state.tool === 'polar-array' ||
       this.state.tool === 'rotate' ||
       this.state.tool === 'scale' ||
       this.state.tool === 'mirror' ||
       this.state.tool === 'select-set' ||
       this.state.tool === 'trim' ||
       this.state.tool === 'fillet' ||
+      this.state.tool === 'offset' ||
       this.state.tool === 'chamfer' ||
       this.state.tool === 'extend' ||
       this.state.tool === 'erase' ||
@@ -5120,12 +5549,16 @@ class CadController {
       this.state.circleDraft ||
       this.state.arcDraft ||
       this.state.tangentLineDraft ||
+      this.state.xlineDraft ||
       this.state.copyDraft ||
       this.state.moveDraft ||
+      this.state.stretchDraft ||
+      this.state.polarArrayDraft ||
       this.state.rotateDraft ||
       this.state.scaleDraft ||
       this.state.mirrorDraft ||
       this.state.filletDraft ||
+      this.state.offsetDraft ||
       this.state.chamferDraft ||
       this.state.selectionSetDraft ||
       this.state.eraseDraft ||
@@ -5176,6 +5609,12 @@ class CadController {
     if (this.state.tool === 'move' && this.state.moveDraft?.selecting) {
       return this.confirmMoveSelection();
     }
+    if (this.state.tool === 'stretch' && this.state.stretchDraft?.selecting) {
+      return stretchCommand.confirmSelection();
+    }
+    if (this.state.tool === 'polar-array' && this.state.polarArrayDraft?.selecting) {
+      return polarArrayCommand.confirmSelection();
+    }
     if (this.state.tool === 'rotate' && this.state.rotateDraft?.selecting) {
       return this.confirmRotateSelection();
     }
@@ -5211,14 +5650,8 @@ class CadController {
     if (this.state.tool === 'explode' && this.state.explodeDraft?.selecting) {
       return this.confirmExplodeSelection();
     }
-    if (this.state.tool === 'extend' && this.state.extendDraft?.phase === 'boundaries') {
-      return this.confirmExtendBoundaries();
-    }
-    if (this.state.tool === 'extend' && this.state.extendDraft?.phase === 'targets') {
-      this.setTool('select');
-      this.doc.clearSelection();
-      this.state.statusText = 'Alargar terminado';
-      return true;
+    if (this.state.tool === 'extend') {
+      return extendCommand.enter();
     }
     if (this.state.distanceInput && this.handleDistanceInputKey({ key: 'Enter' })) {
       return true;
@@ -5251,14 +5684,19 @@ class CadController {
       this.state.tool === 'arc-3p' ||
       this.state.tool === 'arc-center-start-end' ||
       this.state.tool === 'tangent-line' ||
+      this.state.tool === 'point-tangent-line' ||
+      this.state.tool === 'xline' ||
       this.state.tool === 'copy' ||
       this.state.tool === 'move' ||
+      this.state.tool === 'stretch' ||
+      this.state.tool === 'polar-array' ||
       this.state.tool === 'rotate' ||
       this.state.tool === 'scale' ||
       this.state.tool === 'mirror' ||
       this.state.tool === 'select-set' ||
       this.state.tool === 'trim' ||
       this.state.tool === 'fillet' ||
+      this.state.tool === 'offset' ||
       this.state.tool === 'chamfer' ||
       this.state.tool === 'extend' ||
       this.state.tool === 'erase' ||
@@ -5272,12 +5710,16 @@ class CadController {
       this.state.hatchDraft ||
       this.state.arcDraft ||
       this.state.tangentLineDraft ||
+      this.state.xlineDraft ||
       this.state.copyDraft ||
       this.state.moveDraft ||
+      this.state.stretchDraft ||
+      this.state.polarArrayDraft ||
       this.state.rotateDraft ||
       this.state.scaleDraft ||
       this.state.mirrorDraft ||
       this.state.filletDraft ||
+      this.state.offsetDraft ||
       this.state.chamferDraft ||
       this.state.selectionSetDraft ||
       this.state.eraseDraft ||
@@ -5321,6 +5763,12 @@ class CadController {
       if (entity.type === 'INSERT') {
         if (distance(point, entity.insertionPoint) <= tolerance) {
           return { entity, key: 'insertionPoint' };
+        }
+        continue;
+      }
+      if (entity.type === 'XLINE') {
+        if (distance(point, entity.basePoint) <= tolerance) {
+          return { entity, key: 'basePoint' };
         }
         continue;
       }
@@ -5536,6 +5984,8 @@ class CadController {
     else if (
       (this.state.tool === 'copy' && this.state.copyDraft?.selecting) ||
       (this.state.tool === 'move' && this.state.moveDraft?.selecting) ||
+      (this.state.tool === 'stretch' && this.state.stretchDraft?.selecting) ||
+      (this.state.tool === 'polar-array' && this.state.polarArrayDraft?.selecting) ||
       (this.state.tool === 'rotate' && this.state.rotateDraft?.selecting) ||
       (this.state.tool === 'scale' && this.state.scaleDraft?.selecting) ||
       (this.state.tool === 'erase' && this.state.eraseDraft?.selecting) ||
@@ -5543,7 +5993,15 @@ class CadController {
       (this.state.tool === 'extend' && this.state.extendDraft?.phase === 'boundaries') ||
       this.state.tool === 'select-set'
     ) {
-      this.doc.addSelectedEntities(entities);
+      if (this.state.tool === 'stretch') {
+        entities.forEach((entity) => stretchCommand.addEntity(entity));
+      }
+      else if (this.state.tool === 'polar-array') {
+        polarArrayCommand.addEntities(entities);
+      }
+      else {
+        this.doc.addSelectedEntities(entities);
+      }
     }
     else {
       this.state.statusText = 'La orden actual no espera una seleccion';
@@ -5592,9 +6050,7 @@ class CadController {
   }
 
   startHatch() {
-    this.setTool('hatch');
-    openHatchDialog();
-    return true;
+    return hatchCommand.start();
   }
 
   startBlockCreate() {
@@ -5704,23 +6160,7 @@ class CadController {
   }
 
   createHatch(boundary) {
-    if (!boundary || boundary.length < 3 || Math.abs(polygonSignedArea(boundary)) <= SNAP_THRESHOLD) {
-      this.state.statusText = 'No se encontro un contorno cerrado valido';
-      return false;
-    }
-    const draft = this.state.hatchDraft;
-    const layer = this.state.layers.find((candidate) => candidate.name === draft?.layer) ||
-      activeLayerDefinition();
-    this.doc.addEntity(new HatchEntity(boundary, {
-      layer: layer.name,
-      lineStyle: layer.lineStyle,
-      lineType: layer.lineType,
-      lineColor: draft?.lineColor || layer.lineColor,
-    }));
-    this.setTool('select');
-    this.doc.clearSelection();
-    this.state.statusText = 'Sombreado solido creado';
-    return true;
+    return hatchCommand.create(boundary);
   }
 
   createTextAt(insertionPoint) {
@@ -5850,24 +6290,7 @@ class CadController {
   }
 
   startExtend() {
-    const selectedBoundaries = [...this.doc.selectedEntities];
-    if (selectedBoundaries.length) {
-      this.rememberSelectionSet(selectedBoundaries);
-    }
-    this.setTool('extend');
-    if (selectedBoundaries.length) {
-      this.doc.selectEntities(selectedBoundaries);
-    }
-    this.state.extendDraft = {
-      phase: 'boundaries',
-      boundaries: selectedBoundaries,
-    };
-    this.state.statusText = selectedBoundaries.length
-      ? `Alargar: ${selectedBoundaries.length} limite${selectedBoundaries.length === 1 ? '' : 's'} seleccionado${selectedBoundaries.length === 1 ? '' : 's'} - confirme o seleccione mas`
-      : 'Alargar: seleccione limites y confirme';
-    this.updateUiStatus();
-    this.renderer.draw();
-    return true;
+    return extendCommand.start();
   }
 
   confirmCopySelection() {
@@ -6064,76 +6487,11 @@ class CadController {
   }
 
   confirmExtendBoundaries() {
-    if (!this.state.extendDraft || this.state.extendDraft.phase !== 'boundaries') {
-      return false;
-    }
-
-    const boundaries = [...this.doc.selectedEntities];
-    if (!boundaries.length) {
-      this.state.statusText = 'Seleccione entidades limite para alargar';
-      this.updateUiStatus();
-      this.renderer.draw();
-      return false;
-    }
-
-    this.rememberSelectionSet(boundaries);
-
-    this.state.extendDraft = {
-      phase: 'targets',
-      boundaries,
-    };
-    this.doc.clearSelection();
-    this.state.statusText = `Alargar: ${boundaries.length} limite${boundaries.length === 1 ? '' : 's'} - pique lineas, arcos o polilineas abiertas`;
-    this.updateUiStatus();
-    this.renderer.draw();
-    return true;
+    return extendCommand.confirmBoundaries();
   }
 
   extendEntities(entities, pickPoint = null) {
-    if (!this.state.extendDraft?.boundaries?.length) {
-      this.state.statusText = 'No hay limites para alargar';
-      return 0;
-    }
-
-    const targetEntities = entities.filter((entity) =>
-      (entity?.type === 'LINE' || entity?.type === 'ARC' ||
-        (entity?.type === 'POLYLINE' && !entity.closed)) &&
-      !this.state.extendDraft.boundaries.includes(entity),
-    );
-    if (!targetEntities.length) {
-      this.state.statusText = 'Seleccione lineas, arcos o polilineas abiertas para alargar';
-      return 0;
-    }
-
-    this.rememberSelectionSet(targetEntities);
-
-    const before = this.doc.snapshot();
-    let extendedCount = 0;
-    for (const entity of targetEntities) {
-      const extended = entity.type === 'LINE'
-        ? extendLineToBoundaries(entity, this.state.extendDraft.boundaries, pickPoint)
-        : entity.type === 'ARC'
-          ? extendArcToBoundaries(entity, this.state.extendDraft.boundaries, pickPoint)
-          : extendPolylineToBoundaries(entity, this.state.extendDraft.boundaries, pickPoint);
-      if (extended) {
-        extendedCount += 1;
-      }
-    }
-
-    if (!extendedCount) {
-      this.state.statusText = 'No se encontro limite valido para alargar';
-      return 0;
-    }
-
-    this.doc.undoStack.push(before);
-    if (this.doc.undoStack.length > HISTORY_LIMIT) {
-      this.doc.undoStack.shift();
-    }
-    this.doc.redoStack = [];
-    this.doc.markDirty();
-    this.doc.clearSelection();
-    this.state.statusText = `${extendedCount} entidad${extendedCount === 1 ? '' : 'es'} alargada${extendedCount === 1 ? '' : 's'}`;
-    return extendedCount;
+    return extendCommand.extendEntities(entities, pickPoint);
   }
 
   copySelectionTo(targetPoint) {
@@ -6255,19 +6613,7 @@ class CadController {
   }
 
   selectedEntitiesFromWindow(selectionWindow) {
-    if (!selectionWindow?.currentWorld) {
-      return [];
-    }
-
-    const selectionBounds = normalizeBoundsFromPoints(selectionWindow.startWorld, selectionWindow.currentWorld);
-    const mode = selectionWindowMode(selectionWindow);
-    const matchingEntities = this.doc.queryBounds(selectionBounds).filter((entity) => {
-      const entityBounds = entity.bounds();
-      return mode === 'window'
-        ? boundsContainsBounds(selectionBounds, entityBounds)
-        : boundsIntersectsBounds(selectionBounds, entityBounds);
-    });
-    return this.doc.expandEntityGroups(matchingEntities);
+    return entitiesFromSelectionWindow(this.doc, selectionWindow);
   }
 
   createLineTo(point, continueFromEnd = false) {
@@ -6276,7 +6622,6 @@ class CadController {
       return false;
     }
 
-    this.state.activeLineStyle = activeLineStyleId();
     const style = getLineStyle(activeLineStyleId());
     this.doc.addEntity(new LineEntity(this.state.pendingLineStart, point, {
       layer: activeLayerName(),
@@ -6663,7 +7008,6 @@ class CadController {
       return false;
     }
 
-    this.state.activeLineStyle = activeLineStyleId();
     const style = getLineStyle(activeLineStyleId());
     const topRight = { x: point.x, y: firstPoint.y };
     const bottomLeft = { x: firstPoint.x, y: point.y };
@@ -6696,7 +7040,6 @@ class CadController {
       return false;
     }
 
-    this.state.activeLineStyle = activeLineStyleId();
     const style = getLineStyle(activeLineStyleId());
     this.doc.addEntity(new CircleEntity(center, radius, {
       layer: activeLayerName(),
@@ -6715,7 +7058,6 @@ class CadController {
       return false;
     }
 
-    this.state.activeLineStyle = activeLineStyleId();
     const style = getLineStyle(activeLineStyleId());
     this.doc.addEntity(new ArcEntity(center, radius, startAngle, endAngle, {
       layer: activeLayerName(),
@@ -6934,6 +7276,7 @@ class CadController {
       this.state.rectangleDraft?.firstPoint ||
       this.state.circleDraft?.points.length ||
       this.state.arcDraft?.points.length ||
+      this.state.xlineDraft?.firstPoint ||
       this.state.copyDraft?.basePoint ||
       this.state.moveDraft?.basePoint ||
       this.state.rotateDraft?.basePoint ||
@@ -6946,7 +7289,10 @@ class CadController {
       return false;
     }
 
-    if ((event.key.toLowerCase() === 'x' && !this.state.distanceInput) || /^[0-9]$/.test(event.key) || event.key === '-') {
+    if (
+      (event.key.toLowerCase() === 'x' && !this.state.distanceInput) ||
+      /^[0-9+\-*/()]$/.test(event.key)
+    ) {
       this.state.distanceInput += event.key;
       const multiplier = parseCopyMultiplier(this.state.distanceInput);
       this.state.statusText = multiplier
@@ -6955,7 +7301,7 @@ class CadController {
         ? `Angulo: ${this.state.distanceInput}°`
         : this.state.scaleDraft?.basePoint
         ? `Factor de escala: x${this.state.distanceInput}`
-        : parseRelativeCoordinateInput(this.state.distanceInput)
+        : this.state.distanceInput.includes(',')
         ? `Coordenadas: ${this.state.distanceInput} ${UNITS_LABEL}`
         : radiusDraft
         ? `Radio: ${this.state.distanceInput} ${UNITS_LABEL}`
@@ -6967,7 +7313,7 @@ class CadController {
       if (event.key === '.' || !this.state.distanceInput.includes(',')) {
         this.state.distanceInput += event.key;
       }
-      this.state.statusText = parseRelativeCoordinateInput(this.state.distanceInput)
+      this.state.statusText = this.state.distanceInput.includes(',')
         ? this.state.rotateDraft?.basePoint
           ? `Angulo: ${this.state.distanceInput}°`
           : this.state.scaleDraft?.basePoint
@@ -7051,10 +7397,16 @@ class CadController {
         dimensionPlacementOrigin(this.state.dimensionDraft) ||
         null;
       const coordinateTarget = pointFromRelativeCoordinates(coordinateOrigin, this.state.distanceInput);
+      const cursorTarget = resolveCursorPoint(this.state.mouseWorld, this.state);
+      const partialCoordinateTarget = pointFromPartialRelativeCoordinates(
+        coordinateOrigin,
+        cursorTarget,
+        this.state.distanceInput,
+      );
 
       if (this.state.dimensionDraft?.phase === 'placement') {
         const cursor = resolveCursorPoint(this.state.mouseWorld, this.state);
-        const targetPoint = coordinateTarget || dimensionPlacementPoint(
+        const targetPoint = coordinateTarget || partialCoordinateTarget || dimensionPlacementPoint(
           this.state.dimensionDraft,
           cursor,
           this.state,
@@ -7069,7 +7421,7 @@ class CadController {
       }
 
       if (this.state.blockCreateDraft?.name) {
-        if (coordinateTarget && this.createBlockAt(coordinateTarget)) {
+        if ((coordinateTarget || partialCoordinateTarget) && this.createBlockAt(coordinateTarget || partialCoordinateTarget)) {
           this.state.distanceInput = '';
         }
         else {
@@ -7079,7 +7431,7 @@ class CadController {
       }
 
       if (this.state.blockInsertDraft) {
-        if (coordinateTarget && this.insertBlockAt(coordinateTarget)) {
+        if ((coordinateTarget || partialCoordinateTarget) && this.insertBlockAt(coordinateTarget || partialCoordinateTarget)) {
           this.state.distanceInput = '';
         }
         else {
@@ -7089,8 +7441,8 @@ class CadController {
       }
 
       if (this.state.copyDraft?.basePoint) {
-        const cursor = resolveCursorPoint(this.state.mouseWorld, this.state);
-        const targetPoint = coordinateTarget ||
+        const cursor = cursorTarget;
+        const targetPoint = coordinateTarget || partialCoordinateTarget ||
           (inputDistance !== null && cursor
             ? pointFromDistance(this.state.copyDraft.basePoint, cursor, inputDistance)
             : null);
@@ -7104,8 +7456,8 @@ class CadController {
       }
 
       if (this.state.moveDraft?.basePoint) {
-        const cursor = resolveCursorPoint(this.state.mouseWorld, this.state);
-        const targetPoint = coordinateTarget ||
+        const cursor = cursorTarget;
+        const targetPoint = coordinateTarget || partialCoordinateTarget ||
           (inputDistance !== null && cursor
             ? pointFromDistance(this.state.moveDraft.basePoint, cursor, inputDistance)
             : null);
@@ -7118,9 +7470,20 @@ class CadController {
         return true;
       }
 
+      if (this.state.stretchDraft?.basePoint) {
+        const targetPoint = stretchCommandTargetPoint(this.state.mouseWorld, this.state.stretchDraft.basePoint);
+        if (targetPoint && stretchCommand.apply(targetPoint)) {
+          this.state.distanceInput = '';
+        }
+        else {
+          this.state.statusText = 'Destino de estiramiento no valido';
+        }
+        return true;
+      }
+
       if (this.state.mirrorDraft?.firstPoint) {
         const cursor = this.resolveMirrorAxisPoint(this.state.mouseWorld);
-        const targetPoint = coordinateTarget ||
+        const targetPoint = coordinateTarget || partialCoordinateTarget ||
           (inputDistance !== null && cursor
             ? pointFromDistance(this.state.mirrorDraft.firstPoint, cursor, inputDistance)
             : null);
@@ -7134,11 +7497,12 @@ class CadController {
       }
 
       if (this.state.selectedGrip) {
-        if (coordinateTarget) {
+        if (coordinateTarget || partialCoordinateTarget) {
           const gripPoint = this.activeGripPoint();
-          if (distance(gripPoint, coordinateTarget) > SNAP_THRESHOLD) {
+          const targetPoint = coordinateTarget || partialCoordinateTarget;
+          if (distance(gripPoint, targetPoint) > SNAP_THRESHOLD) {
             this.doc.recordHistory();
-            this.moveActiveGripPointTo(coordinateTarget);
+            this.moveActiveGripPointTo(targetPoint);
           }
           this.state.distanceInput = '';
           this.state.statusText = 'Punto desplazado por coordenadas';
@@ -7154,7 +7518,9 @@ class CadController {
 
       if (circleCenterDraft) {
         const center = this.state.circleDraft.points[0];
-        const radius = coordinateTarget ? distance(center, coordinateTarget) : inputDistance;
+        const radius = coordinateTarget || partialCoordinateTarget
+          ? distance(center, coordinateTarget || partialCoordinateTarget)
+          : inputDistance;
         if (radius !== null && this.createCircle(center, radius)) {
           this.state.distanceInput = '';
         }
@@ -7166,10 +7532,12 @@ class CadController {
 
       if (arcRadiusDraft) {
         const center = this.state.arcDraft.points[0];
-        const radius = coordinateTarget ? distance(center, coordinateTarget) : inputDistance;
+        const radius = coordinateTarget || partialCoordinateTarget
+          ? distance(center, coordinateTarget || partialCoordinateTarget)
+          : inputDistance;
         if (radius !== null) {
           this.state.arcDraft.radius = radius;
-          this.state.arcDraft.points.push(coordinateTarget || { x: center.x + radius, y: center.y });
+          this.state.arcDraft.points.push(coordinateTarget || partialCoordinateTarget || { x: center.x + radius, y: center.y });
           this.state.distanceInput = '';
           this.state.statusText = 'Radio indicado - indique punto inicial';
         }
@@ -7179,22 +7547,26 @@ class CadController {
         return true;
       }
 
-      if (coordinateTarget && this.state.circleDraft?.points.length) {
-        this.handleCirclePoint(coordinateTarget);
+      if ((coordinateTarget || partialCoordinateTarget) && this.state.circleDraft?.points.length) {
+        this.handleCirclePoint(coordinateTarget || partialCoordinateTarget);
         this.state.distanceInput = '';
         return true;
       }
 
-      if (coordinateTarget && this.state.arcDraft?.points.length) {
-        this.handleArcPoint(coordinateTarget);
+      if ((coordinateTarget || partialCoordinateTarget) && this.state.arcDraft?.points.length) {
+        this.handleArcPoint(coordinateTarget || partialCoordinateTarget);
         this.state.distanceInput = '';
         return true;
+      }
+
+      if (this.state.xlineDraft?.firstPoint) {
+        return xlineCommand.pick(this.state.mouseWorld);
       }
 
       if (this.state.polylineDraft?.vertices.length) {
         const origin = activeDraftOrigin(this.state);
-        const directionPoint = resolveCursorPoint(this.state.mouseWorld, this.state);
-        const targetPoint = coordinateTarget || (inputDistance !== null && directionPoint
+        const directionPoint = cursorTarget;
+        const targetPoint = coordinateTarget || partialCoordinateTarget || (inputDistance !== null && directionPoint
           ? pointFromDistance(origin, directionPoint, inputDistance)
           : null);
         if (targetPoint && this.addPolylinePoint(targetPoint)) {
@@ -7207,10 +7579,17 @@ class CadController {
       }
 
       if (this.state.rectangleDraft?.firstPoint) {
-        const directionPoint = resolveCursorPoint(this.state.mouseWorld, this.state);
-        const targetPoint = coordinateTarget || (inputDistance !== null && directionPoint
-          ? pointFromDistance(this.state.rectangleDraft.firstPoint, directionPoint, inputDistance)
-          : null);
+        if (!this.state.distanceInput.includes(',') && inputDistance !== null && !this.state.rectangleDraft.fixedWidth) {
+          this.state.rectangleDraft.fixedWidth = inputDistance;
+          this.state.distanceInput = '';
+          this.state.statusText = `Ancho fijado: ${formatNumber(inputDistance)} ${UNITS_LABEL} · indique la altura con el cursor`;
+          return true;
+        }
+        const targetPoint = rectangleTargetPoint(
+          this.state.rectangleDraft,
+          cursorTarget,
+          this.state.distanceInput,
+        );
         if (targetPoint && this.createRectangleTo(targetPoint)) {
           this.state.distanceInput = '';
         }
@@ -7220,8 +7599,8 @@ class CadController {
         return true;
       }
 
-      const directionPoint = resolveCursorPoint(this.state.mouseWorld, this.state);
-      const endPoint = coordinateTarget || (inputDistance !== null && directionPoint
+      const directionPoint = cursorTarget;
+      const endPoint = coordinateTarget || partialCoordinateTarget || (inputDistance !== null && directionPoint
         ? pointFromDistance(this.state.pendingLineStart, directionPoint, inputDistance)
         : null);
 
@@ -7270,7 +7649,6 @@ class CadController {
     event.preventDefault();
     this.cancelMouseWheelZoom();
     this.cancelKeyboardRefresh();
-    this.state.activeLineStyle = activeLineStyleId();
     if (typeof this.canvas.setPointerCapture === 'function') {
       this.canvas.setPointerCapture(event.pointerId);
     }
@@ -7301,6 +7679,11 @@ class CadController {
       return;
     }
 
+    if (completeAnchoredSelectionWindow(this.state.selectionWindow, worldPoint)) {
+      this.renderer.draw();
+      return;
+    }
+
     if (this.state.tool === 'image-insert' || this.state.tool === 'image-calibrate') {
       this.handleImagePoint(worldPoint);
       this.updateUiStatus();
@@ -7311,7 +7694,7 @@ class CadController {
     if (this.state.tool === 'select') {
       const grip = this.findGripAt(worldPoint);
       if (grip) {
-        this.doc.selectEntity(grip.entity);
+        this.doc.addSelectedEntities([grip.entity]);
         this.rememberSelectionSet();
         this.state.selectedGrip = grip;
         const referencePoint = gripReferencePoint(grip);
@@ -7366,7 +7749,7 @@ class CadController {
         this.lastHatchPointerDown = entity.type === 'HATCH' ? { entity, time: now } : null;
         this.lastBlockPointerDown = entity.type === 'INSERT' ? { entity, time: now } : null;
         this.lastImagePointerDown = entity.type === 'IMAGE' ? { entity, time: now } : null;
-        this.doc.selectEntity(entity);
+        this.doc.addSelectedEntities([entity]);
         this.rememberSelectionSet();
         if (isBlockDoubleClick) {
           this.lastBlockPointerDown = null;
@@ -7390,7 +7773,7 @@ class CadController {
         }
         if (isHatchDoubleClick) {
           this.lastHatchPointerDown = null;
-          openHatchDialog(entity);
+          hatchDialogController.open(entity);
           this.state.statusText = 'Editando sombreado';
           this.updateUiStatus();
           this.renderer.draw();
@@ -7398,7 +7781,7 @@ class CadController {
         }
         if (isImageDoubleClick) {
           this.lastImagePointerDown = null;
-          this.startImageCalibration(entity);
+          imageEditor?.open(entity);
           return;
         }
         const selectedEntities = [...this.doc.selectedEntities];
@@ -7418,7 +7801,9 @@ class CadController {
               ? 'Texto'
               : entity.type === 'HATCH'
                 ? 'Sombreado'
-                : entity.type === 'IMAGE' ? 'Imagen' : 'Linea';
+                : entity.type === 'IMAGE'
+                  ? 'Imagen'
+                  : entity.type === 'XLINE' ? 'Linea guia' : 'Linea';
         const selectedLength = selectedEntities.reduce((total, selectedEntity) => total + selectedEntity.length(), 0);
         const selectionLabel = entity.type === 'INSERT' ? 'seleccionado' : 'seleccionada';
         this.state.statusText = `${entityLabel} ${selectionLabel} - capa ${entity.layer} - grosor ${getLineStyle(entity.lineStyle).label} - ${formatNumber(selectedLength)} ${UNITS_LABEL}`;
@@ -7541,7 +7926,7 @@ class CadController {
         this.state.statusText = 'Punto origen indicado - indique destino';
       }
       else {
-        this.copySelectionTo(point);
+        this.copySelectionTo(this.renderer.copyPreviewTargetPoint() || point);
       }
       this.state.distanceInput = '';
       this.updateUiStatus();
@@ -7582,9 +7967,57 @@ class CadController {
         this.state.statusText = 'Punto origen indicado - indique destino';
       }
       else {
-        this.moveSelectionTo(point);
+        this.moveSelectionTo(this.renderer.movePreviewTargetPoint() || point);
       }
       this.state.distanceInput = '';
+      this.updateUiStatus();
+      this.renderer.draw();
+      return;
+    }
+
+    if (this.state.tool === 'stretch') {
+      if (this.state.stretchDraft?.selecting) {
+        const entity = this.findEntityAt(worldPoint);
+        if (stretchCommand.addEntity(entity)) {
+          this.state.statusText = `${this.state.stretchDraft.targets.size} entidad${this.state.stretchDraft.targets.size === 1 ? '' : 'es'} preparada${this.state.stretchDraft.targets.size === 1 ? '' : 's'} para estirar`;
+        }
+        else {
+          this.state.selectionWindow = {
+            startWorld: { ...worldPoint },
+            currentWorld: { ...worldPoint },
+            startScreen: { ...this.state.mouseScreen },
+            dragging: false,
+            purpose: 'stretch',
+          };
+          this.state.statusText = 'Estirar: defina una ventana captura de derecha a izquierda';
+        }
+      }
+      else {
+        stretchCommand.point(worldPoint);
+        this.state.distanceInput = '';
+      }
+      this.updateUiStatus();
+      this.renderer.draw();
+      return;
+    }
+
+    if (this.state.tool === 'polar-array') {
+      if (this.state.polarArrayDraft?.selecting) {
+        const entity = this.findEntityAt(worldPoint);
+        if (!polarArrayCommand.addEntity(entity)) {
+          this.state.selectionWindow = {
+            startWorld: { ...worldPoint },
+            currentWorld: { ...worldPoint },
+            startScreen: { ...this.state.mouseScreen },
+            dragging: false,
+            purpose: 'polar-array',
+          };
+          this.state.statusText = 'Ventana de seleccion para matriz polar';
+        }
+      }
+      else {
+        polarArrayCommand.apply(worldPoint);
+      }
       this.updateUiStatus();
       this.renderer.draw();
       return;
@@ -7726,34 +8159,34 @@ class CadController {
       return;
     }
 
-    if (this.state.tool === 'trim') {
-      const entity = this.findEntityAt(worldPoint);
-      if (!entity) {
-        this.state.statusText = 'No hay entidad para recortar';
-        this.updateUiStatus();
-        this.renderer.draw();
-        return;
-      }
-
-      const result = trimEntityAtPoint(this.doc, entity, worldPoint);
-      this.state.selectedGrip = null;
-      this.state.distanceInput = '';
-      this.state.statusText = result.trimmed
-        ? result.hatch
-          ? 'Sombreado recortado'
-          : result.polylineSegment
-          ? `Tramo de polilinea eliminado · quedan ${result.remainingSegments} tramo${result.remainingSegments === 1 ? '' : 's'}`
-          : result.grouped
-          ? `Polilinea recortada en bloque - quedan ${result.keptCount} componente${result.keptCount === 1 ? '' : 's'}`
-          : `Tramo recortado - quedan ${result.keptCount} tramo${result.keptCount === 1 ? '' : 's'}`
-        : 'No se pudo recortar';
+    if (this.state.tool === 'point-tangent-line') {
+      pointTangentLineCommand.pick(worldPoint);
       this.updateUiStatus();
       this.renderer.draw();
       return;
     }
 
+    if (this.state.tool === 'xline') {
+      xlineCommand.pick(worldPoint);
+      this.updateUiStatus();
+      this.renderer.draw();
+      return;
+    }
+
+    if (this.state.tool === 'trim') {
+      trimCommand.pick(worldPoint);
+      return;
+    }
+
     if (this.state.tool === 'fillet') {
       this.handleFilletPoint(worldPoint);
+      this.updateUiStatus();
+      this.renderer.draw();
+      return;
+    }
+
+    if (this.state.tool === 'offset') {
+      offsetCommand.pick(worldPoint);
       this.updateUiStatus();
       this.renderer.draw();
       return;
@@ -7767,47 +8200,7 @@ class CadController {
     }
 
     if (this.state.tool === 'extend') {
-      if (!this.state.extendDraft) {
-        this.startExtend();
-        return;
-      }
-
-      const entity = this.findEntityAt(worldPoint);
-      if (this.state.extendDraft.phase === 'boundaries') {
-        if (entity) {
-          this.doc.addSelectedEntities([entity]);
-          this.state.statusText = `${this.doc.selectedEntities.size} limite${this.doc.selectedEntities.size === 1 ? '' : 's'} seleccionado${this.doc.selectedEntities.size === 1 ? '' : 's'} para alargar`;
-        }
-        else {
-          this.state.selectionWindow = {
-            startWorld: { ...worldPoint },
-            currentWorld: { ...worldPoint },
-            startScreen: { ...this.state.mouseScreen },
-            dragging: false,
-            purpose: 'extend-boundaries',
-          };
-          this.state.statusText = 'Ventana de limites para alargar';
-        }
-        this.updateUiStatus();
-        this.renderer.draw();
-        return;
-      }
-
-      if (entity) {
-        this.extendEntities([entity], worldPoint);
-      }
-      else {
-        this.state.selectionWindow = {
-          startWorld: { ...worldPoint },
-          currentWorld: { ...worldPoint },
-          startScreen: { ...this.state.mouseScreen },
-          dragging: false,
-          purpose: 'extend-targets',
-        };
-        this.state.statusText = 'Ventana de lineas o arcos a alargar';
-      }
-      this.updateUiStatus();
-      this.renderer.draw();
+      extendCommand.pick(worldPoint);
       return;
     }
 
@@ -7875,24 +8268,13 @@ class CadController {
     }
 
     if (this.state.tool === 'hatch') {
-      if (!this.state.hatchDraft) {
-        openHatchDialog();
-        return;
-      }
-      const boundary = hatchBoundaryAtPoint(this.doc, worldPoint);
-      if (!boundary) {
-        this.state.statusText = 'No se encontro un recinto cerrado en ese punto';
-      }
-      else {
-        this.createHatch(boundary);
-      }
-      this.updateUiStatus();
-      this.renderer.draw();
+      hatchCommand.pick(worldPoint);
       return;
     }
 
     if (this.state.tool === 'circle-center' || this.state.tool === 'circle-3p') {
-      const point = this.resolveInputPoint(worldPoint);
+      const cursor = this.resolveInputPoint(worldPoint);
+      const point = keyboardPointTarget(activeDraftOrigin(this.state), cursor, this.state.distanceInput) || cursor;
       this.handleCirclePoint(point);
       this.state.distanceInput = '';
       this.updateUiStatus();
@@ -7905,7 +8287,8 @@ class CadController {
       this.state.tool === 'arc-3p' ||
       this.state.tool === 'arc-center-start-end'
     ) {
-      const point = this.resolveInputPoint(worldPoint);
+      const cursor = this.resolveInputPoint(worldPoint);
+      const point = keyboardPointTarget(activeDraftOrigin(this.state), cursor, this.state.distanceInput) || cursor;
       this.handleArcPoint(point);
       this.state.distanceInput = '';
       this.updateUiStatus();
@@ -7931,7 +8314,11 @@ class CadController {
         this.state.statusText = 'Primera esquina indicada - indique esquina opuesta';
       }
       else {
-        this.createRectangleTo(point);
+        this.createRectangleTo(rectangleTargetPoint(
+          this.state.rectangleDraft,
+          point,
+          this.state.distanceInput,
+        ) || point);
       }
       this.state.distanceInput = '';
       this.updateUiStatus();
@@ -7941,7 +8328,8 @@ class CadController {
 
     if (this.state.tool === 'polyline') {
       const point = this.resolveInputPoint(worldPoint);
-      this.addPolylinePoint(point);
+      const origin = activeDraftOrigin(this.state);
+      this.addPolylinePoint(keyboardPointTarget(origin, point, this.state.distanceInput) || point);
       this.state.distanceInput = '';
       this.updateUiStatus();
       this.renderer.draw();
@@ -7960,7 +8348,11 @@ class CadController {
       return;
     }
 
-    this.createLineTo(point, true);
+    this.createLineTo(keyboardPointTarget(
+      this.state.pendingLineStart,
+      point,
+      this.state.distanceInput,
+    ) || point, true);
     this.state.distanceInput = '';
     this.updateUiStatus();
     this.renderer.draw();
@@ -7969,17 +8361,23 @@ class CadController {
   onPointerMove(event) {
     this.updateMouse(event);
 
+    const imageCalibration = this.state.imageCalibrationDraft;
+    if (this.state.tool === 'image-calibrate' && imageCalibration?.phase === 'source-end') {
+      imageCalibration.previewPoint = this.resolveInputPoint(this.state.mouseWorld);
+    }
+
     if (this.state.tool === 'mirror' && this.state.mirrorDraft && !this.state.mirrorDraft.selecting) {
       this.resolveMirrorAxisPoint(this.state.mouseWorld);
       this.updateMirrorStatusGuidance();
     }
 
     if (this.state.selectionWindow) {
-      const deltaX = this.state.mouseScreen.x - this.state.selectionWindow.startScreen.x;
-      const deltaY = this.state.mouseScreen.y - this.state.selectionWindow.startScreen.y;
-      this.state.selectionWindow.currentWorld = { ...this.state.mouseWorld };
-      this.state.selectionWindow.dragging = Math.hypot(deltaX, deltaY) > 4;
-      const mode = selectionWindowMode(this.state.selectionWindow) === 'window' ? 'ventana' : 'captura';
+      const windowMode = updateSelectionWindow(
+        this.state.selectionWindow,
+        this.state.mouseWorld,
+        this.state.mouseScreen,
+      );
+      const mode = windowMode === 'window' ? 'ventana' : 'captura';
       this.state.statusText = this.state.selectionWindow.purpose === 'copy'
         ? `Seleccion para copiar por ${mode}`
         : this.state.selectionWindow.purpose === 'block-create'
@@ -7988,6 +8386,10 @@ class CadController {
           ? `Seleccion de conjunto por ${mode}`
         : this.state.selectionWindow.purpose === 'move'
           ? `Seleccion para desplazar por ${mode}`
+        : this.state.selectionWindow.purpose === 'stretch'
+          ? `Seleccion para estirar por ${mode}`
+        : this.state.selectionWindow.purpose === 'polar-array'
+          ? `Seleccion para matriz polar por ${mode}`
           : this.state.selectionWindow.purpose === 'rotate'
             ? `Seleccion para girar por ${mode}`
           : this.state.selectionWindow.purpose === 'scale'
@@ -8028,6 +8430,9 @@ class CadController {
     if (this.state.tool === 'tangent-line') {
       tangentLineCommand.updateGuidance(this.state.hoveredEntity, this.state.mouseWorld);
     }
+    if (this.state.tool === 'point-tangent-line') {
+      pointTangentLineCommand.updateGuidance(this.state.hoveredEntity, this.state.mouseWorld);
+    }
 
     this.updateUiStatus();
     this.renderer.draw();
@@ -8054,6 +8459,12 @@ class CadController {
       this.renderer.draw();
     }
     if (this.state.selectionWindow) {
+      if (anchorSelectionWindow(this.state.selectionWindow)) {
+        this.state.statusText = 'Indique la esquina opuesta de la ventana de seleccion';
+        this.updateUiStatus();
+        this.renderer.draw();
+        return;
+      }
       const selectionWindow = this.state.selectionWindow;
       this.state.selectionWindow = null;
 
@@ -8063,6 +8474,8 @@ class CadController {
           selectionWindow.purpose !== 'block-create' &&
           selectionWindow.purpose !== 'select-set' &&
           selectionWindow.purpose !== 'move' &&
+          selectionWindow.purpose !== 'stretch' &&
+          selectionWindow.purpose !== 'polar-array' &&
           selectionWindow.purpose !== 'rotate' &&
           selectionWindow.purpose !== 'scale' &&
           selectionWindow.purpose !== 'mirror' &&
@@ -8081,6 +8494,10 @@ class CadController {
             ? 'Seleccione objetos para el conjunto'
           : selectionWindow.purpose === 'move'
             ? 'Seleccione objetos para desplazar'
+          : selectionWindow.purpose === 'stretch'
+            ? 'Seleccione lineas o polilineas para estirar'
+          : selectionWindow.purpose === 'polar-array'
+            ? 'Seleccione objetos para la matriz polar'
             : selectionWindow.purpose === 'rotate'
               ? 'Seleccione objetos para girar'
             : selectionWindow.purpose === 'scale'
@@ -8099,7 +8516,20 @@ class CadController {
       }
       else {
         const entities = this.selectedEntitiesFromWindow(selectionWindow);
-        if (
+        if (selectionWindow.purpose === 'stretch') {
+          stretchCommand.addWindow(selectionWindow, entities);
+        }
+        else if (selectionWindow.purpose === 'polar-array') {
+          polarArrayCommand.addEntities(entities);
+        }
+        else if (selectionWindow.purpose === 'extend-targets') {
+          extendCommand.completeWindow(selectionWindow.purpose, entities);
+          return;
+        }
+        else if (selectionWindow.purpose === 'extend-boundaries') {
+          extendCommand.completeWindow(selectionWindow.purpose, entities);
+        }
+        else if (
           selectionWindow.purpose === 'copy' ||
           selectionWindow.purpose === 'block-create' ||
           selectionWindow.purpose === 'select-set' ||
@@ -8108,20 +8538,13 @@ class CadController {
           selectionWindow.purpose === 'scale' ||
           selectionWindow.purpose === 'mirror' ||
           selectionWindow.purpose === 'erase' ||
-          selectionWindow.purpose === 'explode' ||
-          selectionWindow.purpose === 'extend-boundaries'
+          selectionWindow.purpose === 'explode'
         ) {
           this.doc.addSelectedEntities(entities);
         }
-        else if (selectionWindow.purpose === 'extend-targets') {
-          const count = this.extendEntities(entities);
-          this.updateUiStatus();
-          this.renderer.draw();
-          return;
-        }
         else {
-          this.doc.selectEntities(entities);
-          this.rememberSelectionSet(entities);
+          this.doc.addSelectedEntities(entities);
+          this.rememberSelectionSet();
         }
         const mode = selectionWindowMode(selectionWindow) === 'window' ? 'ventana' : 'captura';
         const selectedCount = selectionWindow.purpose === 'copy'
@@ -8131,6 +8554,10 @@ class CadController {
           : selectionWindow.purpose === 'select-set'
             ? this.doc.selectedEntities.size
           : selectionWindow.purpose === 'move'
+            ? this.doc.selectedEntities.size
+          : selectionWindow.purpose === 'stretch'
+            ? this.state.stretchDraft?.targets.size || 0
+          : selectionWindow.purpose === 'polar-array'
             ? this.doc.selectedEntities.size
             : selectionWindow.purpose === 'rotate'
               ? this.doc.selectedEntities.size
@@ -8144,7 +8571,7 @@ class CadController {
               ? this.doc.selectedEntities.size
               : selectionWindow.purpose === 'extend-boundaries'
                 ? this.doc.selectedEntities.size
-          : entities.length;
+          : this.doc.selectedEntities.size;
         this.state.statusText = selectedCount
           ? `${selectedCount} entidad${selectedCount === 1 ? '' : 'es'} seleccionada${selectedCount === 1 ? '' : 's'}${
               selectionWindow.purpose === 'copy'
@@ -8155,6 +8582,10 @@ class CadController {
                   ? ' para el conjunto'
                 : selectionWindow.purpose === 'move'
                   ? ' para desplazar'
+                : selectionWindow.purpose === 'stretch'
+                  ? ' para estirar'
+                : selectionWindow.purpose === 'polar-array'
+                  ? ' para matriz polar'
                   : selectionWindow.purpose === 'rotate'
                     ? ' para girar'
                   : selectionWindow.purpose === 'scale'
@@ -8217,6 +8648,7 @@ class CadController {
 
   onKeyDown(event) {
     if (!drawingProfileDialog.hidden || !settingsDialog.hidden || !textDialog.hidden || !hatchDialog.hidden ||
+        imageEditor?.isOpen() ||
         !imageCalibrationDialog.hidden ||
         !polylineWidthDialog.hidden || !blockCreateDialog.hidden ||
         !blockInsertDialog.hidden || !aboutDialog.hidden) {
@@ -8229,11 +8661,22 @@ class CadController {
     }
     if (event.key === 'Shift') {
       this.state.shiftKeyDown = true;
+      orthogonalInference.lock(this.state);
       if (this.gripDragState && this.state.mouseWorld) {
         this.moveSelectedGripTo(this.state.mouseWorld);
         this.updateUiStatus();
         this.renderer.draw();
       }
+    }
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
+      event.preventDefault();
+      if (event.shiftKey) {
+        void localFileManager?.saveAs();
+      }
+      else {
+        void localFileManager?.save();
+      }
+      return;
     }
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z') {
       event.preventDefault();
@@ -8333,6 +8776,8 @@ class CadController {
       const recallsSelection = this.state.tool !== 'select' ||
         this.state.copyDraft?.selecting ||
         this.state.moveDraft?.selecting ||
+        this.state.stretchDraft?.selecting ||
+        this.state.polarArrayDraft?.selecting ||
         this.state.rotateDraft?.selecting ||
         this.state.scaleDraft?.selecting ||
         this.state.mirrorDraft?.selecting ||
@@ -8391,6 +8836,11 @@ class CadController {
       runCommand('fillet');
       return;
     }
+    if (event.key.toLowerCase() === 'q' && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      event.preventDefault();
+      runCommand('offset');
+      return;
+    }
     if (event.key.toLowerCase() === 't' && !event.metaKey && !event.ctrlKey && !event.altKey) {
       event.preventDefault();
       runCommand('text');
@@ -8418,6 +8868,7 @@ class CadController {
   onKeyUp(event) {
     if (event.key === 'Shift') {
       this.state.shiftKeyDown = false;
+      orthogonalInference.unlock(this.state);
       if (this.gripDragState && this.state.mouseWorld) {
         this.moveSelectedGripTo(this.state.mouseWorld);
         this.updateUiStatus();
@@ -8445,6 +8896,7 @@ class CadController {
         this.state.arcDraft ||
         this.state.copyDraft ||
         this.state.moveDraft ||
+        this.state.stretchDraft ||
         this.state.rotateDraft ||
         this.state.scaleDraft ||
         this.state.mirrorDraft ||
@@ -8502,6 +8954,12 @@ class CadController {
     if (this.state.tool === 'tangent-line') {
       toolLabel = 'Linea tangente';
     }
+    if (this.state.tool === 'point-tangent-line') {
+      toolLabel = 'Linea punto-tangente';
+    }
+    if (this.state.tool === 'xline') {
+      toolLabel = 'Linea infinita';
+    }
     if (this.state.tool === 'polyline') {
       toolLabel = 'Polilinea';
     }
@@ -8535,6 +8993,9 @@ class CadController {
     if (this.state.tool === 'fillet') {
       toolLabel = `Empalme R${formatNumber(activeFilletRadius())}`;
     }
+    if (this.state.tool === 'offset') {
+      toolLabel = `Equidistancia ${formatNumber(activeOffsetDistance())}`;
+    }
     if (this.state.tool === 'chamfer') {
       toolLabel = `Chaflan ${formatChamferDistances()}`;
     }
@@ -8558,6 +9019,12 @@ class CadController {
     }
     if (this.state.tool === 'scale') {
       toolLabel = 'Escala';
+    }
+    if (this.state.tool === 'stretch') {
+      toolLabel = 'Estirar';
+    }
+    if (this.state.tool === 'polar-array') {
+      toolLabel = `Matriz polar ${this.state.polarArrayCount}`;
     }
     if (this.state.tool === 'mirror') {
       toolLabel = 'Simetria';
@@ -8584,6 +9051,7 @@ class CadController {
     const activeGripPoint = this.activeGripPoint();
     const coordinateOrigin = this.state.copyDraft?.basePoint ||
       this.state.moveDraft?.basePoint ||
+      this.state.stretchDraft?.basePoint ||
       this.state.mirrorDraft?.firstPoint ||
       activeGripPoint ||
       this.state.pendingLineStart ||
@@ -8595,6 +9063,11 @@ class CadController {
       (this.state.blockInsertDraft ? { x: 0, y: 0 } : null) ||
       null;
     const coordinateTarget = pointFromRelativeCoordinates(coordinateOrigin, this.state.distanceInput);
+    const partialCoordinateTarget = pointFromPartialRelativeCoordinates(
+      coordinateOrigin,
+      cursor,
+      this.state.distanceInput,
+    );
     const activeGripReferencePoint = this.activeGripReferencePoint();
     const activeGripAxisLine = this.state.shiftKeyDown && this.gripDragState?.axisPoint && this.gripDragState?.axisDirection
       ? {
@@ -8610,28 +9083,26 @@ class CadController {
           activeGripAxisLine ? { axisLine: activeGripAxisLine } : {},
         )
       : null;
-    const previewEnd = coordinateTarget ||
+    const previewEnd = coordinateTarget || partialCoordinateTarget ||
       (inputDistance !== null && this.state.pendingLineStart && cursor
       ? pointFromDistance(this.state.pendingLineStart, cursor, inputDistance)
       : cursor);
-    const gripPreviewEnd = coordinateTarget ||
+    const gripPreviewEnd = coordinateTarget || partialCoordinateTarget ||
       (inputDistance !== null && activeGripPoint && gripDirectionPoint
       ? pointFromDistance(activeGripPoint, gripDirectionPoint, inputDistance)
       : null);
     const copyPreviewTarget = this.state.copyDraft?.basePoint
-      ? (coordinateTarget || (inputDistance !== null && cursor
+      ? (coordinateTarget || partialCoordinateTarget || (inputDistance !== null && cursor
         ? pointFromDistance(this.state.copyDraft.basePoint, cursor, inputDistance)
         : cursor))
       : null;
     const movePreviewTarget = this.state.moveDraft?.basePoint
-      ? (coordinateTarget || (inputDistance !== null && cursor
+      ? (coordinateTarget || partialCoordinateTarget || (inputDistance !== null && cursor
         ? pointFromDistance(this.state.moveDraft.basePoint, cursor, inputDistance)
         : cursor))
       : null;
     const rectanglePreviewTarget = this.state.rectangleDraft?.firstPoint
-      ? (coordinateTarget || (inputDistance !== null && cursor
-        ? pointFromDistance(this.state.rectangleDraft.firstPoint, cursor, inputDistance)
-        : cursor))
+      ? rectangleTargetPoint(this.state.rectangleDraft, cursor, this.state.distanceInput)
       : null;
     const previewLength = this.state.pendingLineStart && previewEnd
       ? distance(this.state.pendingLineStart, previewEnd)
@@ -8649,6 +9120,8 @@ class CadController {
         ? distance(this.state.copyDraft.basePoint, copyPreviewTarget)
       : movePreviewTarget && this.state.moveDraft?.basePoint
         ? distance(this.state.moveDraft.basePoint, movePreviewTarget)
+      : this.state.stretchDraft?.basePoint && cursor
+        ? distance(this.state.stretchDraft.basePoint, coordinateTarget || partialCoordinateTarget || cursor)
       : null;
 
     if (this.state.distanceInput) {
@@ -8657,7 +9130,7 @@ class CadController {
         ? `Repetir copia: x${multiplier}`
         : this.state.rotateDraft?.basePoint
         ? `Angulo: ${this.state.distanceInput}°`
-        : coordinateTarget
+        : coordinateTarget || partialCoordinateTarget
         ? `Coordenadas: ${this.state.distanceInput} ${UNITS_LABEL}`
         : (
         this.state.circleDraft?.mode === 'center-radius' ||
@@ -8703,6 +9176,16 @@ class CadController {
     }
     else if (this.state.blockInsertDraft?.definition) {
       this.state.statusText = `Insertar ${this.state.blockInsertDraft.definition.name}: indique el punto de insercion`;
+    }
+    if (this.state.activeInference && !this.state.distanceInput) {
+      const axisLabel = this.state.activeInference.axis === 'horizontal' ? 'horizontal' : 'vertical';
+      const inferenceLabel = this.state.activeInference.locked
+        ? `Eje ${axisLabel} bloqueado con Shift`
+        : `En eje ${axisLabel} · Shift para bloquear`;
+      const baseStatus = (this.state.statusText || 'Inferencia')
+        .replace(/ · En eje (?:horizontal|vertical) · Shift para bloquear$/, '')
+        .replace(/ · Eje (?:horizontal|vertical) bloqueado con Shift$/, '');
+      this.state.statusText = `${baseStatus} · ${inferenceLabel}`;
     }
     if (!this.state.statusText) {
       this.state.statusText = 'Listo';
@@ -8765,8 +9248,8 @@ const {
   loadBooleanPreference,
   loadDimensionStylePreference,
   loadIntegerPreference,
-  loadLineStylePreference,
   loadNavigationDevice,
+  loadNumberPreference,
   storePreference,
 } = createPreferenceServices({
   lineStyles: LINE_STYLES,
@@ -8783,13 +9266,17 @@ const state = {
   hatchDraft: null,
   circleDraft: null,
   arcDraft: null,
+  xlineDraft: null,
   tangentLineDraft: null,
   copyDraft: null,
   moveDraft: null,
+  stretchDraft: null,
+  polarArrayDraft: null,
   rotateDraft: null,
   scaleDraft: null,
   mirrorDraft: null,
   filletDraft: null,
+  offsetDraft: null,
   chamferDraft: null,
   selectionSetDraft: null,
   eraseDraft: null,
@@ -8820,6 +9307,11 @@ const state = {
     engineering: 10,
     architecture: 0.25,
   },
+  offsetDistances: {
+    engineering: loadNumberPreference('webcad-offset-distance-engineering', 10, SNAP_THRESHOLD),
+    architecture: loadNumberPreference('webcad-offset-distance-architecture', 0.25, SNAP_THRESHOLD),
+  },
+  polarArrayCount: loadIntegerPreference('webcad-polar-array-count', 6, 2, 360),
   chamferDistances: {
     engineering: { first: 10, second: 10 },
     architecture: { first: 0.25, second: 0.25 },
@@ -8840,12 +9332,14 @@ const state = {
   selectedGrip: null,
   objectSnapEnabled: true,
   activeObjectSnap: null,
+  activeInference: null,
+  inferenceLock: null,
   hoveredEntity: null,
   snapPixelTolerance: 11,
-  activeLineStyle: loadLineStylePreference(),
+  activeLineStyle: DEFAULT_LINE_STYLE,
   activeLineType: DEFAULT_LINE_TYPE,
   activeLineColor: DEFAULT_LINE_COLOR,
-  layers: [{ ...DEFAULT_LAYER }],
+  layers: DEFAULT_LAYERS.map((layer) => ({ ...layer })),
   activeLayer: DEFAULT_LAYER.name,
   lastCommand: null,
   lastCircleTool: 'circle-center',
@@ -8859,6 +9353,47 @@ const state = {
 const renderer = new CadRenderer(canvas, doc, state);
 const controller = new CadController(canvas, doc, renderer, state);
 state.doc = doc;
+function stretchCommandTargetPoint(worldPoint, basePoint = null) {
+  const cursor = resolveCursorPoint(worldPoint, state);
+  if (!basePoint) return cursor;
+  const coordinateTarget = keyboardCoordinateTarget(basePoint, cursor, state.distanceInput);
+  if (coordinateTarget) return coordinateTarget;
+  const inputDistance = parseDistanceInput(state.distanceInput);
+  return inputDistance !== null && cursor
+    ? pointFromDistance(basePoint, cursor, inputDistance)
+    : cursor;
+}
+
+stretchCommand = createStretchCommand({
+  state,
+  doc,
+  cloneEntity,
+  rememberSelection: (entities) => controller.rememberSelectionSet(entities),
+  setTool: (tool) => controller.setTool(tool),
+  refresh: () => {
+    controller.updateUiStatus();
+    renderer.draw();
+  },
+  resolveTargetPoint: stretchCommandTargetPoint,
+});
+polarArrayCommand = createPolarArrayCommand({
+  state,
+  doc,
+  cloneEntities: (entities) => cloneEntitiesWithOffset(
+    entities,
+    { x: 0, y: 0 },
+    { remapGroups: true },
+  ),
+  rotateEntity: rotateEntityByAngle,
+  rememberSelection: (entities) => controller.rememberSelectionSet(entities),
+  resolvePoint: (point, origin) => resolvePointForState(point, state, origin),
+  setTool: (tool) => controller.setTool(tool),
+  refresh: () => {
+    controller.updateUiStatus();
+    renderer.draw();
+  },
+  countValue: () => state.polarArrayCount,
+});
 scaleCommand = createScaleCommand({
   state,
   doc,
@@ -8887,8 +9422,164 @@ tangentLineCommand = createTangentLineCommand({
     renderer.draw();
   },
 });
+pointTangentLineCommand = createPointTangentLineCommand({
+  state,
+  doc,
+  setTool: (tool) => controller.setTool(tool),
+  findEntityAt: (point) => controller.findEntityAt(point),
+  operandAt: filletOperandAt,
+  resolvePoint: (point, origin) => resolvePointForState(point, state, origin),
+  createLine: (start, end) => new LineEntity(start, end, {
+    layer: activeLayerName(),
+    lineStyle: activeLineStyleId(),
+    lineType: activeLineTypeId(),
+    lineColor: activeLineColorId(),
+  }),
+  refresh: () => {
+    controller.updateUiStatus();
+    renderer.draw();
+  },
+});
+offsetCommand = createOffsetCommand({
+  state,
+  setTool: (tool) => controller.setTool(tool),
+  findEntityAt: (point) => controller.findEntityAt(point),
+  distanceValue: activeOffsetDistance,
+  application: offsetApplication,
+  refresh: () => {
+    controller.updateUiStatus();
+    renderer.draw();
+  },
+});
+xlineCommand = createXLineCommand({
+  state,
+  doc,
+  setTool: (tool) => controller.setTool(tool),
+  resolvePoint: (point, origin) => resolvePointForState(point, state, origin),
+  keyboardPoint: keyboardPointTarget,
+  createXLine: (basePoint, direction) => new XLineEntity(basePoint, direction, {
+    ...layerEntityOptions(AUXILIARY_LAYER_NAME),
+  }),
+  refresh: () => {
+    controller.updateUiStatus();
+    renderer.draw();
+  },
+});
+trimCommand = createTrimCommand({
+  state,
+  doc,
+  setTool: (tool) => controller.setTool(tool),
+  findEntityAt: (point) => controller.findEntityAt(point),
+  trimEntityAtPoint,
+  refresh: () => {
+    controller.updateUiStatus();
+    renderer.draw();
+  },
+});
+extendCommand = createExtendCommand({
+  state,
+  doc,
+  historyLimit: HISTORY_LIMIT,
+  setTool: (tool) => controller.setTool(tool),
+  findEntityAt: (point) => controller.findEntityAt(point),
+  rememberSelection: (entities) => controller.rememberSelectionSet(entities),
+  extendLine: extendLineToBoundaries,
+  extendArc: extendArcToBoundaries,
+  extendPolyline: extendPolylineToBoundaries,
+  refresh: () => {
+    controller.updateUiStatus();
+    renderer.draw();
+  },
+});
+hatchDialogController = createHatchDialog({
+  state,
+  doc,
+  elements: {
+    dialog: hatchDialog,
+    title: hatchDialogTitle,
+    confirmButton: hatchDialogConfirmButton,
+    patternInput: hatchPatternInput,
+    layerInput: hatchLayerInput,
+    colorInput: hatchColorInput,
+    error: hatchDialogError,
+  },
+  createOption: () => document.createElement('option'),
+  normalizeLineStyle: normalizeLineStyleId,
+  normalizeLineType: normalizeLineTypeId,
+  normalizeLineColor: normalizeLineColorId,
+  applyLineStyle: applyLineStyleToEntity,
+  applyLineType: applyLineTypeToEntity,
+  applyLineColor: applyLineColorToEntity,
+  setTool: (tool) => controller.setTool(tool),
+  closePickers: () => {
+    setLayerPickerOpen(false);
+    setLineStylePickerOpen(false);
+    setLineTypePickerOpen(false);
+    setLineColorPickerOpen(false);
+  },
+  focusCanvas: () => requestAnimationFrame(() => canvas.focus({ preventScroll: true })),
+  refresh: () => {
+    controller.updateUiStatus();
+    renderer.draw();
+  },
+});
+hatchCommand = createHatchCommand({
+  state,
+  doc,
+  HatchEntity,
+  snapThreshold: SNAP_THRESHOLD,
+  polygonSignedArea,
+  boundaryAtPoint: hatchBoundaryAtPoint,
+  setTool: (tool) => controller.setTool(tool),
+  openDialog: (entity = null) => hatchDialogController.open(entity),
+  refresh: () => {
+    controller.updateUiStatus();
+    renderer.draw();
+  },
+});
+const cadFormatRegistry = createCadFormatRegistry();
+cadFormatRegistry.register({
+  id: 'dxf',
+  label: 'Dibujo DXF',
+  extension: '.dxf',
+  mimeType: 'application/dxf',
+  serialize: () => serializeDocumentToDxf(doc),
+});
+const notifyUnsupportedLocalSave = createUnsupportedLocalSaveNotifier({
+  onStatus: (message) => {
+    state.statusText = message;
+    controller.updateUiStatus();
+    renderer.draw();
+  },
+});
+localFileManager = createLocalFileManager({
+  registry: cadFormatRegistry,
+  defaultFormatId: 'dxf',
+  getRevision: () => doc.revision,
+  onStatus: (message) => {
+    state.statusText = message;
+    controller.updateUiStatus();
+    renderer.draw();
+  },
+  onError: (message) => {
+    state.statusText = message;
+    controller.updateUiStatus();
+    renderer.draw();
+  },
+  onUnsupported: notifyUnsupportedLocalSave,
+});
+autosaveController = createAutosaveController({
+  fileManager: localFileManager,
+  intervalMs: 30000,
+  isIdle: () => (
+    !state.selectionWindow &&
+    !controller.panState &&
+    !controller.gripDragState &&
+    !doc.isEditingBlock()
+  ),
+});
+autosaveController.start();
 let textDialogEntity = null;
-let hatchDialogEntity = null;
 
 const pngImporter = createPngImporter({
   input: importPngInput,
@@ -8899,6 +9590,20 @@ const pngImporter = createPngImporter({
     controller.updateUiStatus();
     renderer.draw();
   },
+});
+
+imageEditor = createImageEditor({
+  root: document,
+  recordHistory: () => doc.recordHistory(),
+  markDirty: () => doc.markDirty(),
+  selectEntity: (entity) => doc.selectEntity(entity),
+  requestDraw: () => renderer.draw(),
+  setStatus: (message) => {
+    state.statusText = message;
+    controller.updateUiStatus();
+  },
+  focusCanvas: () => canvas.focus({ preventScroll: true }),
+  startSegmentAlignment: (entity) => controller.startImageCalibration(entity),
 });
 
 function openImageCalibrationDialog() {
@@ -8992,6 +9697,7 @@ function setDrawingProfileRuntime(profileId) {
   UNITS_LABEL = profile.unitsLabel;
   state.lastTextHeight = profile.defaultTextHeight;
   syncFilletRadiusControl();
+  syncOffsetDistanceControl();
   syncChamferDistanceControl();
   return profile;
 }
@@ -9021,6 +9727,52 @@ function updateFilletRadiusFromInput() {
   state.filletRadii[state.drawingProfile] = radius;
   state.statusText = `Radio de empalme: ${formatNumber(radius)} ${UNITS_LABEL}`;
   controller.updateUiStatus();
+  return true;
+}
+
+function activeOffsetDistance() {
+  const offset = state.offsetDistances[state.drawingProfile];
+  return Number.isFinite(offset)
+    ? offset
+    : state.drawingProfile === 'architecture' ? 0.25 : 10;
+}
+
+function syncOffsetDistanceControl() {
+  if (!offsetDistanceInput) return;
+  offsetDistanceInput.step = state.drawingProfile === 'architecture' ? '0.01' : '1';
+  offsetDistanceInput.value = String(activeOffsetDistance());
+}
+
+function updateOffsetDistanceFromInput() {
+  const offset = Number(String(offsetDistanceInput.value).replace(',', '.'));
+  if (!Number.isFinite(offset) || offset <= SNAP_THRESHOLD) {
+    state.statusText = 'La distancia de equidistancia debe ser mayor que cero';
+    controller.updateUiStatus();
+    return false;
+  }
+  state.offsetDistances[state.drawingProfile] = offset;
+  storePreference(`webcad-offset-distance-${state.drawingProfile}`, offset);
+  state.statusText = `Distancia de equidistancia: ${formatNumber(offset)} ${UNITS_LABEL}`;
+  controller.updateUiStatus();
+  return true;
+}
+
+function syncPolarArrayCountControl() {
+  if (polarArrayCountInput) polarArrayCountInput.value = String(state.polarArrayCount);
+}
+
+function updatePolarArrayCountFromInput() {
+  const count = Math.trunc(Number(polarArrayCountInput.value));
+  if (!Number.isFinite(count) || count < 2 || count > 360) {
+    state.statusText = 'La matriz polar admite entre 2 y 360 elementos';
+    controller.updateUiStatus();
+    return false;
+  }
+  state.polarArrayCount = count;
+  storePreference('webcad-polar-array-count', count);
+  state.statusText = `Matriz polar: ${count} elementos`;
+  controller.updateUiStatus();
+  renderer.draw();
   return true;
 }
 
@@ -9409,96 +10161,15 @@ function confirmBlockInsertDialog() {
 }
 
 function openHatchDialog(entity = null) {
-  hatchDialogEntity = entity?.type === 'HATCH' ? entity : null;
-  hatchDialogTitle.textContent = hatchDialogEntity ? 'Editar sombreado' : 'Crear sombreado';
-  hatchDialogConfirmButton.textContent = hatchDialogEntity ? 'Aceptar' : 'Continuar';
-  hatchPatternInput.value = hatchDialogEntity?.pattern || 'solid';
-  hatchLayerInput.replaceChildren();
-  const selectedLayerName = hatchDialogEntity?.layer || state.activeLayer;
-  state.layers.forEach((layer) => {
-    const option = document.createElement('option');
-    option.value = layer.name;
-    option.textContent = layer.name;
-    option.selected = layer.name === selectedLayerName;
-    hatchLayerInput.append(option);
-  });
-  const selectedLayer = state.layers.find((layer) => layer.name === selectedLayerName);
-  hatchColorInput.value = hatchDialogEntity &&
-    normalizeLineColorId(hatchDialogEntity.lineColor) !== normalizeLineColorId(selectedLayer?.lineColor)
-    ? normalizeLineColorId(hatchDialogEntity.lineColor)
-    : 'bylayer';
-  hatchDialogError.textContent = '';
-  hatchDialog.hidden = false;
-  setLayerPickerOpen(false);
-  setLineStylePickerOpen(false);
-  setLineTypePickerOpen(false);
-  setLineColorPickerOpen(false);
+  return hatchDialogController.open(entity);
 }
 
 function closeHatchDialog(cancelled = true) {
-  const wasEditing = Boolean(hatchDialogEntity);
-  hatchDialog.hidden = true;
-  hatchDialogEntity = null;
-  hatchDialogError.textContent = '';
-  if (cancelled && !wasEditing && state.tool === 'hatch') {
-    controller.setTool('select');
-    state.statusText = 'Sombreado cancelado';
-  }
-  else if (cancelled && wasEditing) {
-    state.statusText = 'Edicion de sombreado cancelada';
-  }
-  controller.updateUiStatus();
-  renderer.draw();
-  requestAnimationFrame(() => canvas.focus({ preventScroll: true }));
+  return hatchDialogController.close(cancelled);
 }
 
 function confirmHatchDialog() {
-  const layer = state.layers.find((candidate) => candidate.name === hatchLayerInput.value);
-  if (!layer) {
-    hatchDialogError.textContent = 'Seleccione una capa de destino válida.';
-    return false;
-  }
-  const selectedColor = hatchColorInput.value === 'bylayer'
-    ? layer.lineColor
-    : normalizeLineColorId(hatchColorInput.value);
-
-  if (hatchDialogEntity) {
-    const entity = hatchDialogEntity;
-    const changed = entity.pattern !== hatchPatternInput.value ||
-      entity.layer !== layer.name ||
-      normalizeLineStyleId(entity.lineStyle) !== normalizeLineStyleId(layer.lineStyle) ||
-      normalizeLineTypeId(entity.lineType) !== normalizeLineTypeId(layer.lineType) ||
-      normalizeLineColorId(entity.lineColor) !== normalizeLineColorId(selectedColor);
-    if (changed) {
-      doc.recordHistory();
-      entity.pattern = hatchPatternInput.value;
-      entity.layer = layer.name;
-      applyLineStyleToEntity(entity, layer.lineStyle);
-      applyLineTypeToEntity(entity, layer.lineType);
-      applyLineColorToEntity(entity, selectedColor);
-      doc.markDirty();
-    }
-    hatchDialog.hidden = true;
-    hatchDialogEntity = null;
-    state.statusText = changed ? 'Sombreado actualizado' : 'Sombreado sin cambios';
-    controller.updateUiStatus();
-    renderer.draw();
-    requestAnimationFrame(() => canvas.focus({ preventScroll: true }));
-    return true;
-  }
-
-  state.hatchDraft = {
-    pattern: hatchPatternInput.value,
-    mode: 'point',
-    layer: layer.name,
-    lineColor: selectedColor,
-  };
-  hatchDialog.hidden = true;
-  state.statusText = 'Sombreado solido: indique un punto interior';
-  controller.updateUiStatus();
-  renderer.draw();
-  requestAnimationFrame(() => canvas.focus({ preventScroll: true }));
-  return true;
+  return hatchDialogController.confirm();
 }
 
 function toggleOrthoMode() {
@@ -9601,11 +10272,12 @@ function newDrawing() {
     return false;
   }
   doc.clear();
-  state.layers = [{ ...DEFAULT_LAYER }];
+  localFileManager?.clearCurrentFile();
+  state.layers = DEFAULT_LAYERS.map((layer) => ({ ...layer }));
   state.activeLayer = DEFAULT_LAYER.name;
-  state.activeLineStyle = DEFAULT_LAYER.lineStyle;
-  state.activeLineType = DEFAULT_LAYER.lineType;
-  state.activeLineColor = DEFAULT_LAYER.lineColor;
+  state.activeLineStyle = DEFAULT_LINE_STYLE;
+  state.activeLineType = DEFAULT_LINE_TYPE;
+  state.activeLineColor = DEFAULT_LINE_COLOR;
   state.pendingLineStart = null;
   state.polylineDraft = null;
   state.rectangleDraft = null;
@@ -9616,10 +10288,13 @@ function newDrawing() {
   state.tangentLineDraft = null;
   state.copyDraft = null;
   state.moveDraft = null;
+  state.stretchDraft = null;
+  state.polarArrayDraft = null;
   state.rotateDraft = null;
   state.scaleDraft = null;
   state.mirrorDraft = null;
   state.filletDraft = null;
+  state.offsetDraft = null;
   state.chamferDraft = null;
   state.selectionSetDraft = null;
   state.eraseDraft = null;
@@ -9635,6 +10310,7 @@ function newDrawing() {
   state.previousSelection = [];
   state.distanceInput = '';
   state.selectedGrip = null;
+  orthogonalInference.clear(state);
   state.statusText = `Nuevo dibujo · ${activeDrawingProfile().label} (${UNITS_LABEL})`;
   syncLayerPicker();
   syncLineStylePicker();
@@ -9694,10 +10370,13 @@ function resetInteractionState() {
   state.tangentLineDraft = null;
   state.copyDraft = null;
   state.moveDraft = null;
+  state.stretchDraft = null;
+  state.polarArrayDraft = null;
   state.rotateDraft = null;
   state.scaleDraft = null;
   state.mirrorDraft = null;
   state.filletDraft = null;
+  state.offsetDraft = null;
   state.chamferDraft = null;
   state.selectionSetDraft = null;
   state.eraseDraft = null;
@@ -9711,6 +10390,7 @@ function resetInteractionState() {
   state.distanceInput = '';
   state.selectedGrip = null;
   state.activeObjectSnap = null;
+  orthogonalInference.clear(state);
   controller.gripDragState = null;
   controller.panState = null;
   canvas.classList.remove('is-panning', 'is-dragging');
@@ -9757,6 +10437,7 @@ const menuServices = createMenuServices({
     lineTypePicker,
     lineTypeToggle,
     lineTypeLabel,
+    lineTypeText,
     lineTypeOptionButtons,
     lineColorPicker,
     lineColorToggle,
@@ -9794,8 +10475,10 @@ const layerUi = createLayerUi({
     label: layerLabel,
     list: layerList,
     createOpenButton: layerCreateOpenButton,
+    editOpenButton: layerEditOpenButton,
     createCancelButton: layerCreateCancelButton,
     createConfirmButton: layerCreateConfirmButton,
+    panelTitle: layerPanelTitle,
     nameInput: layerNameInput,
     styleInput: layerStyleInput,
     typeInput: layerTypeInput,
@@ -9833,10 +10516,14 @@ function runCommand(command) {
   }
   if (command === 'undo') undoDrawing();
   if (command === 'redo') redoDrawing();
+  if (command === 'save') void localFileManager.save();
+  if (command === 'save-as') void localFileManager.saveAs();
   if (command === 'select') controller.setTool('select');
   if (command === 'select-set') controller.startSelectionSet();
   if (command === 'line') controller.setTool('line');
   if (command === 'tangent-line') tangentLineCommand.start();
+  if (command === 'point-tangent-line') pointTangentLineCommand.start();
+  if (command === 'xline') xlineCommand.start();
   if (command === 'polyline') controller.setTool('polyline');
   if (command === 'rectangle') controller.setTool('rectangle');
   if (command === 'text') controller.startText();
@@ -9860,11 +10547,14 @@ function runCommand(command) {
   }
   if (command === 'copy') controller.startCopy();
   if (command === 'move') controller.startMove();
+  if (command === 'stretch') stretchCommand.start();
+  if (command === 'polar-array') polarArrayCommand.start();
   if (command === 'rotate') controller.startRotate();
   if (command === 'scale') scaleCommand.start();
   if (command === 'mirror') controller.startMirror();
-  if (command === 'trim') controller.setTool('trim');
+  if (command === 'trim') trimCommand.start();
   if (command === 'fillet') controller.setTool('fillet');
+  if (command === 'offset') offsetCommand.start();
   if (command === 'chamfer') controller.setTool('chamfer');
   if (command === 'extend') controller.startExtend();
   if (command === 'erase') controller.startErase();
@@ -9941,6 +10631,44 @@ filletRadiusInput.addEventListener('keydown', (event) => {
     canvas.focus({ preventScroll: true });
   }
 });
+offsetDistanceInput.addEventListener('change', () => {
+  updateOffsetDistanceFromInput();
+  renderer.draw();
+});
+offsetDistanceInput.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    if (updateOffsetDistanceFromInput()) {
+      canvas.focus({ preventScroll: true });
+      renderer.draw();
+    }
+  }
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    controller.cancelCurrentCommand();
+    controller.updateUiStatus();
+    renderer.draw();
+    canvas.focus({ preventScroll: true });
+  }
+});
+polarArrayCountInput.addEventListener('change', updatePolarArrayCountFromInput);
+polarArrayCountInput.addEventListener('input', () => {
+  const count = Math.trunc(Number(polarArrayCountInput.value));
+  if (count >= 2 && count <= 360) updatePolarArrayCountFromInput();
+});
+polarArrayCountInput.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    if (updatePolarArrayCountFromInput()) canvas.focus({ preventScroll: true });
+  }
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    controller.cancelCurrentCommand();
+    controller.updateUiStatus();
+    renderer.draw();
+    canvas.focus({ preventScroll: true });
+  }
+});
 [chamferDistanceFirstInput, chamferDistanceSecondInput].forEach((input) => {
   input.addEventListener('change', () => {
     updateChamferDistancesFromInput();
@@ -9967,6 +10695,8 @@ blockEditorDiscardButton.addEventListener('click', () => finishBlockEditor(false
 selectToolButton.addEventListener('click', () => runCommand('select'));
 lineToolButton.addEventListener('click', () => runCommand('line'));
 tangentLineToolButton.addEventListener('click', () => runCommand('tangent-line'));
+pointTangentLineToolButton.addEventListener('click', () => runCommand('point-tangent-line'));
+xlineToolButton.addEventListener('click', () => runCommand('xline'));
 polylineToolButton.addEventListener('click', () => runCommand('polyline'));
 rectangleToolButton.addEventListener('click', () => runCommand('rectangle'));
 textToolButton.addEventListener('click', () => runCommand('text'));
@@ -10012,9 +10742,12 @@ toolFlyoutCommandButtons.forEach((button) => {
 trimToolButton.addEventListener('click', () => runCommand('trim'));
 extendToolButton.addEventListener('click', () => runCommand('extend'));
 filletToolButton.addEventListener('click', () => runCommand('fillet'));
+offsetToolButton.addEventListener('click', () => runCommand('offset'));
 chamferToolButton.addEventListener('click', () => runCommand('chamfer'));
 copyToolButton.addEventListener('click', () => runCommand('copy'));
 moveToolButton.addEventListener('click', () => runCommand('move'));
+stretchToolButton.addEventListener('click', () => runCommand('stretch'));
+polarArrayToolButton.addEventListener('click', () => runCommand('polar-array'));
 rotateToolButton.addEventListener('click', () => runCommand('rotate'));
 scaleToolButton.addEventListener('click', () => runCommand('scale'));
 mirrorToolButton.addEventListener('click', () => runCommand('mirror'));
@@ -10024,6 +10757,7 @@ fitButton.addEventListener('click', () => runCommand('fit'));
 undoButton.addEventListener('click', () => runCommand('undo'));
 redoButton.addEventListener('click', () => runCommand('redo'));
 newButton.addEventListener('click', () => runCommand('new'));
+saveButton.addEventListener('click', () => runCommand('save'));
 exportDxfButton.addEventListener('click', () => runCommand('export-dxf'));
 importDxfButton.addEventListener('click', () => runCommand('import-dxf'));
 lineStyleToggle.addEventListener('click', () => {
@@ -10113,6 +10847,7 @@ importDxfInput.addEventListener('change', async (event) => {
   }
   syncLayersFromEntities(entities);
   doc.setEntities(entities);
+  localFileManager.setSuggestedName(file.name, 'dxf');
   state.pendingLineStart = null;
   state.polylineDraft = null;
   state.rectangleDraft = null;
@@ -10120,13 +10855,17 @@ importDxfInput.addEventListener('change', async (event) => {
   state.hatchDraft = null;
   state.circleDraft = null;
   state.arcDraft = null;
+  state.xlineDraft = null;
   state.tangentLineDraft = null;
   state.copyDraft = null;
   state.moveDraft = null;
+  state.stretchDraft = null;
+  state.polarArrayDraft = null;
   state.rotateDraft = null;
   state.scaleDraft = null;
   state.mirrorDraft = null;
   state.filletDraft = null;
+  state.offsetDraft = null;
   state.chamferDraft = null;
   state.selectionSetDraft = null;
   state.eraseDraft = null;
@@ -10141,6 +10880,7 @@ importDxfInput.addEventListener('change', async (event) => {
   state.previousSelection = [];
   state.distanceInput = '';
   state.selectedGrip = null;
+  orthogonalInference.clear(state);
   state.statusText = `Importadas ${entities.length} entidades DXF en ${state.layers.length} capas · ${activeDrawingProfile().label} (${UNITS_LABEL})${
     entities.drawingProfileDetected ? ' · perfil detectado automaticamente' : ''
   }${

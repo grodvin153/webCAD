@@ -18,11 +18,11 @@ import {
   pointAtCircleAngle,
 } from '../geometry.js';
 import {
-  infiniteLineSegmentIntersection,
   isCircularEntity,
   pointOnCircularEntity,
 } from '../intersections.js';
 import { snapPoint } from './coordinates.js';
+import { inferenceAxisLine as inferenceAxisLineFor } from './inference.js';
 
 export function addSnapCandidate(point, candidate, tolerance, currentBest) {
   const snapDistance = distance(point, candidate.point);
@@ -65,6 +65,22 @@ export function circularReferencePoints(entity) {
   return candidates.filter((candidate) => pointOnCircularEntity(candidate.point, entity));
 }
 
+function perpendicularFootOnInfiniteEntity(origin, entity) {
+  const direction = entity?.direction;
+  const basePoint = entity?.basePoint;
+  if (!origin || !basePoint || !direction) return null;
+  const lengthSquared = direction.x * direction.x + direction.y * direction.y;
+  if (lengthSquared <= 1e-12) return null;
+  const factor = (
+    (origin.x - basePoint.x) * direction.x +
+    (origin.y - basePoint.y) * direction.y
+  ) / lengthSquared;
+  return {
+    x: basePoint.x + direction.x * factor,
+    y: basePoint.y + direction.y * factor,
+  };
+}
+
 export function createInputResolvers({
   dimensionPlacementOrigin,
   dimensionReferencePoints,
@@ -75,6 +91,7 @@ export function createInputResolvers({
   polylineReferencePoints,
   polylineSegmentEntities,
   primitiveEntityParts,
+  inference,
 }) {
   function objectSnapPoint(point, state, options = {}) {
     if (!point || !state.objectSnapEnabled || !state.doc) {
@@ -88,7 +105,7 @@ export function createInputResolvers({
     const snapEntities = sourceSnapEntities
       .filter((entity) => entity !== options.ignoreEntity)
       .flatMap((entity) => entity.type === 'INSERT' ? primitiveEntityParts(entity) : [entity])
-      .filter((entity) => entity.type === 'LINE' || entity.type === 'POLYLINE' || isCircularEntity(entity));
+      .filter((entity) => entity.type === 'LINE' || entity.type === 'XLINE' || entity.type === 'POLYLINE' || isCircularEntity(entity));
     const nearbySnapEntities = snapEntities.filter((entity) =>
       entity !== options.ignoreEntity && entityIsNearPoint(entity, point, tolerance),
     );
@@ -140,6 +157,15 @@ export function createInputResolvers({
         }
         bestSnap = addSnapCandidate(point, candidate, tolerance, bestSnap);
       }
+    }
+
+    for (const entity of snapEntities.filter((candidate) => candidate.type === 'XLINE')) {
+      bestSnap = addSnapCandidate(
+        point,
+        { type: 'endpoint', key: 'basePoint', point: entity.basePoint, entity },
+        tolerance,
+        bestSnap,
+      );
     }
 
     for (const entity of snapEntities.filter((candidate) => candidate.type === 'POLYLINE')) {
@@ -216,22 +242,20 @@ export function createInputResolvers({
     }
 
     if (options.axisLine) {
-      for (const entity of nearbyLineEntities) {
-        const axisIntersection = infiniteLineSegmentIntersection(
-          options.axisLine.point,
-          options.axisLine.direction,
-          entity,
-        );
-        if (!axisIntersection) {
-          continue;
+      const inferenceAxis = {
+        type: 'XLINE',
+        basePoint: options.axisLine.point,
+        direction: options.axisLine.direction,
+      };
+      for (const entity of nearbySnapEntities) {
+        for (const axisIntersection of entityIntersectionPoints(inferenceAxis, entity)) {
+          bestSnap = addSnapCandidate(
+            point,
+            { type: 'intersection', point: axisIntersection },
+            tolerance,
+            bestSnap,
+          );
         }
-
-        bestSnap = addSnapCandidate(
-          point,
-          { type: 'intersection', point: axisIntersection },
-          tolerance,
-          bestSnap,
-        );
       }
     }
 
@@ -248,6 +272,17 @@ export function createInputResolvers({
           tolerance,
           bestSnap,
         );
+      }
+      for (const entity of nearbySnapEntities.filter((candidate) => candidate.type === 'XLINE')) {
+        const perpendicularFoot = perpendicularFootOnInfiniteEntity(options.origin, entity);
+        if (perpendicularFoot) {
+          bestSnap = addSnapCandidate(
+            point,
+            { type: 'perpendicular', point: perpendicularFoot, entity },
+            tolerance,
+            bestSnap,
+          );
+        }
       }
       for (const entity of nearbySnapEntities.filter((candidate) => candidate.type === 'POLYLINE')) {
         for (const segment of polylineSegmentEntities(entity).filter((candidate) => candidate.type === 'LINE')) {
@@ -325,11 +360,32 @@ export function createInputResolvers({
     if (state.moveDraft?.basePoint) {
       return state.moveDraft.basePoint;
     }
+    if (state.stretchDraft?.basePoint) {
+      return state.stretchDraft.basePoint;
+    }
+    if (state.scaleDraft?.basePoint) {
+      return state.scaleDraft.basePoint;
+    }
     if (state.rotateDraft?.basePoint) {
       return state.rotateDraft.basePoint;
     }
     if (state.mirrorDraft?.firstPoint) {
       return state.mirrorDraft.firstPoint;
+    }
+    if (state.imageCalibrationDraft?.phase === 'source-end') {
+      return state.imageCalibrationDraft.sourceStart;
+    }
+    if (state.xlineDraft?.firstPoint) {
+      return state.xlineDraft.firstPoint;
+    }
+    if (state.circleDraft?.mode === '3p' && state.circleDraft.points.length) {
+      return state.circleDraft.points[state.circleDraft.points.length - 1];
+    }
+    if (state.arcDraft?.mode === '3p' && state.arcDraft.points.length) {
+      return state.arcDraft.points[state.arcDraft.points.length - 1];
+    }
+    if (state.dimensionDraft?.points?.length && state.dimensionDraft.phase !== 'placement') {
+      return state.dimensionDraft.points[state.dimensionDraft.points.length - 1];
     }
     return null;
   }
@@ -340,7 +396,9 @@ export function createInputResolvers({
     }
 
     const origin = activeDraftOrigin(state);
-    const objectSnap = objectSnapPoint(point, state, { origin });
+    const axis = inference?.axisFor(point, state, origin) || null;
+    const axisLine = state.shiftKeyDown ? inferenceAxisLineFor(axis, origin) : null;
+    const objectSnap = objectSnapPoint(point, state, { origin, ...(axisLine ? { axisLine } : {}) });
     state.activeObjectSnap = objectSnap;
 
     let nextPoint = objectSnap
@@ -349,7 +407,7 @@ export function createInputResolvers({
     if (!objectSnap && state.orthoEnabled && origin) {
       nextPoint = orthoPoint(origin, nextPoint);
     }
-    return nextPoint;
+    return inference?.constrain(nextPoint, state, origin, axis, { objectSnap }) || nextPoint;
   }
 
   function resolvePointForState(point, state, origin = null, options = {}) {
@@ -359,7 +417,16 @@ export function createInputResolvers({
 
     const ignoreEntity = state.selectedGrip?.entity || null;
     const ignoreKey = state.selectedGrip?.key || null;
-    const objectSnap = objectSnapPoint(point, state, { ignoreEntity, ignoreKey, origin, ...options });
+    const inferenceDisabled = Boolean(options.axisLine || state.selectedGrip);
+    const axis = inference?.axisFor(point, state, origin, { disabled: inferenceDisabled }) || null;
+    const inferredAxisLine = state.shiftKeyDown ? inferenceAxisLineFor(axis, origin) : null;
+    const objectSnap = objectSnapPoint(point, state, {
+      ignoreEntity,
+      ignoreKey,
+      origin,
+      ...options,
+      ...(inferredAxisLine && !options.axisLine ? { axisLine: inferredAxisLine } : {}),
+    });
     state.activeObjectSnap = objectSnap;
 
     let nextPoint = objectSnap
@@ -368,7 +435,7 @@ export function createInputResolvers({
     if (!objectSnap && state.orthoEnabled && origin) {
       nextPoint = orthoPoint(origin, nextPoint);
     }
-    return nextPoint;
+    return inference?.constrain(nextPoint, state, origin, axis, { objectSnap }) || nextPoint;
   }
 
   return {
