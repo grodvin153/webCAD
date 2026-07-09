@@ -1798,6 +1798,8 @@ Object.assign(
     formatNumber,
     formatSnapType,
     getLineStyle,
+    gripPoint,
+    gripReferencePoint,
     hatchCommand,
     hatchDialogController,
     imageEditor,

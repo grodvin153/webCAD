@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 
 import { createCommandDispatcher } from '../source/app/command-dispatcher.js';
+import { createControllerPointerMethods } from '../source/controller/mouse/pointer.js';
 import { createControllerStatusMethods } from '../source/controller/status.js';
 import { createCadDocumentClass } from '../source/document/cad-document.js';
 import { createArcEntityClass } from '../source/entities/arc.js';
@@ -382,6 +383,55 @@ function testLineDraftStatus() {
   assert.match(statusMessage.textContent, /Segundo punto pendiente/);
 }
 
+function testPointerGripSelectionStartsDrag() {
+  const line = new LineEntity({ x: 0, y: 0 }, { x: 10, y: 0 });
+  const methods = createControllerPointerMethods({
+    DIMENSION_TOOLS: new Set(),
+    completeAnchoredSelectionWindow: () => false,
+    formatSnapType: (type) => type,
+    getLineStyle: () => ({ label: 'Por capa' }),
+    gripPoint: (grip) => grip.entity[grip.key],
+    gripReferencePoint: (grip) => (grip.key === 'start' ? grip.entity.end : grip.entity.start),
+    isCircularEntity: () => false,
+  });
+  const controller = {
+    cancelKeyboardRefresh() {},
+    cancelMouseWheelZoom() {},
+    canvas: {
+      classList: { add() {}, remove() {} },
+      setPointerCapture() {},
+    },
+    doc: {
+      addSelectedEntities(entities) {
+        this.selectedEntities = new Set(entities);
+      },
+      selectedEntities: new Set(),
+    },
+    findGripAt: () => ({ entity: line, key: 'start' }),
+    gripDragState: null,
+    rememberSelectionSet() {},
+    renderer: { draw() {} },
+    state: {
+      distanceInput: '',
+      mouseScreen: { x: 0, y: 0 },
+      tool: 'select',
+      viewOffset: { x: 0, y: 0 },
+    },
+    updateMouse: () => ({ x: 0, y: 0, z: 0 }),
+    updateUiStatus() {},
+  };
+
+  methods.onPointerDown.call(controller, {
+    button: 0,
+    pointerId: 1,
+    preventDefault() {},
+  });
+
+  assert.equal(controller.state.selectedGrip.key, 'start');
+  assert.deepEqual(controller.gripDragState.startPoint, { x: 0, y: 0, z: 0 });
+  assert.deepEqual(controller.gripDragState.axisPoint, { x: 10, y: 0, z: 0 });
+}
+
 testInputAndCoordinates();
 testEntitiesAndTransforms();
 testIntersectionsAndSelection();
@@ -390,5 +440,6 @@ testDocumentHistory();
 testDxfRoundTrip();
 testCommandDispatcher();
 testLineDraftStatus();
+testPointerGripSelectionStartsDrag();
 
 console.log('webCAD regression: OK');

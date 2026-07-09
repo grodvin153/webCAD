@@ -11,6 +11,8 @@ export function createControllerPointerDownMethods(dependencies) {
     formatNumber,
     formatSnapType,
     getLineStyle,
+    gripPoint,
+    gripReferencePoint,
     hatchCommand,
     hatchDialogController,
     imageEditor,

@@ -1,5 +1,12 @@
 # Historial de cambios
 
+## 0.6.0 - 2026-07-09
+
+- Añadida base experimental 3D aislada con Three.js, alternancia visual 2D/3D y estilo de referencia tipo SK.
+- Incorporadas utilidades 3D, sólidos, extrusión de perfiles, adaptador de polilíneas, visor alámbrico y pruebas.
+- Corregido el fallo general de pinzamientos 2D al iniciar el arrastre en líneas, círculos, arcos y otras entidades.
+- Añadidas regresiones para proteger el arranque de arrastre de pinzamientos y la base 3D.
+
 ## 0.5.1 - 2026-07-08
 
 - Corregida la dependencia de cálculo de distancia perdida al extraer el estado visual del controlador.

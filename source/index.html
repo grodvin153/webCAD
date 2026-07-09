@@ -800,7 +800,22 @@
           </div>
         </div>
         <canvas id="cad-canvas" class="cad-canvas" tabindex="0"></canvas>
+        <canvas id="three-canvas" class="three-canvas" tabindex="0" hidden></canvas>
         <div id="cursor-input" class="cursor-input" aria-hidden="true"></div>
+        <button
+          id="view-mode-3d"
+          class="view-mode-button"
+          type="button"
+          title="Cambiar a vista 3D experimental"
+        >3D</button>
+        <button
+          id="view-mode-2d"
+          class="view-mode-button is-return"
+          type="button"
+          title="Volver al editor 2D"
+          hidden
+        >2D</button>
+        <div id="three-mode-status" class="three-mode-status" hidden></div>
       </div>
       <footer class="status-bar" aria-label="Barra de estado">
         <button
@@ -1207,7 +1222,7 @@
       <header>
         <div>
           <span class="cad-dialog-kicker">AUTORIA Y VERSION</span>
-          <h2 id="about-dialog-title">webCAD 0.5.1</h2>
+          <h2 id="about-dialog-title">webCAD 0.6.0</h2>
         </div>
         <button id="about-dialog-close" class="cad-dialog-close" type="button" aria-label="Cerrar">×</button>
       </header>
@@ -1217,7 +1232,7 @@
         <div>
           <strong>Gonzalo Rodriguez</strong>
           <span>Autor y desarrollador de webCAD</span>
-          <small>Editor CAD 2D para navegador · Versión estable 0.5.1</small>
+          <small>gonzalorv@gmail.com · Editor CAD 2D/3D experimental para navegador · Versión estable 0.6.0</small>
         </div>
       </div>
 
@@ -1245,13 +1260,13 @@
           </ul>
         </section>
         <section class="about-feature-card is-release">
-          <h3>Novedades de 0.5.1</h3>
+          <h3>Novedades de 0.6.0</h3>
           <ul>
-            <li>Corregido el bloqueo al indicar el primer punto de líneas y otras órdenes con medida dinámica.</li>
-            <li>Arquitectura modular en 135 archivos para aislar entidades, operaciones, renderizado, controladores y formatos.</li>
-            <li>Modelo de coordenadas preparado para X, Y y Z, manteniendo el dibujo y la interacción actuales en el plano XY.</li>
-            <li>Importación y exportación DXF separadas, extensibles y con conservación de elevaciones Z.</li>
-            <li>Nueva batería de regresión para coordenadas, DXF, selección, recorte, historial y órdenes.</li>
+            <li>Base experimental 3D aislada con Three.js y cambio visual entre modo 2D y modo 3D.</li>
+            <li>Vista 3D con entidades 2D proyectadas en XY, ejes tipo SK y rejilla sincronizada.</li>
+            <li>Motor 3D modular con sólidos, extrusión de perfiles, adaptador de polilíneas y visor alámbrico.</li>
+            <li>Corregido el arranque de pinzamientos en líneas, círculos, arcos, polilíneas y entidades compatibles.</li>
+            <li>Pruebas de regresión ampliadas para proteger el flujo 2D y la base 3D.</li>
           </ul>
         </section>
       </div>
@@ -1263,5 +1278,6 @@
   </div>
 
   <script type="module" src="./main.js"></script>
+  <script type="module" src="./3d/three/three-mode-toggle.js"></script>
 </body>
 </html>

@@ -17,7 +17,6 @@ export default defineConfig({
         main: resolve(__dirname, 'source/index.html'),
       },
       output: {
-        inlineDynamicImports: true,
         format: 'es',
       },
     },
