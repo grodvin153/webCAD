@@ -94,6 +94,24 @@ export function createDxfExporter(dependencies) {
         '51', String(canvasAngleToDxfDegrees(dxfEndAngle)),
       );
     }
+    if (entity.type === 'ELLIPSE' || entity.type === 'ELLIPSE_ARC') {
+      const majorX = Math.cos(entity.rotation) * entity.radiusX;
+      const majorY = Math.sin(entity.rotation) * entity.radiusX;
+      const start = entity.type === 'ELLIPSE' ? 0
+        : entity.clockwise === false ? -entity.startParameter : -entity.endParameter;
+      const end = entity.type === 'ELLIPSE' ? Math.PI * 2
+        : entity.clockwise === false ? -entity.endParameter : -entity.startParameter;
+      lines.push(
+        '0', 'ELLIPSE', '8', entity.layer,
+        '6', getLineType(entity.lineType).dxfName,
+        '62', String(getLineColor(entity.lineColor).aci || 256),
+        '370', String(getLineStyle(entity.lineStyle).dxfLineWeight),
+        '10', String(entity.center.x), '20', String(-entity.center.y), '30', String(coordinateZ(entity.center)),
+        '11', String(majorX), '21', String(-majorY), '31', '0',
+        '40', String(entity.radiusY / entity.radiusX),
+        '41', String(start), '42', String(end),
+      );
+    }
     if (entity.type === 'TEXT') {
       lines.push(
         '0', 'TEXT', '8', entity.layer, '7', 'ROMANS',
@@ -425,6 +443,24 @@ export function createDxfExporter(dependencies) {
           '40', String(entity.radius),
           '50', String(canvasAngleToDxfDegrees(dxfStartAngle)),
           '51', String(canvasAngleToDxfDegrees(dxfEndAngle)),
+        );
+      }
+
+      if (entity.type === 'ELLIPSE' || entity.type === 'ELLIPSE_ARC') {
+        const majorX = Math.cos(entity.rotation) * entity.radiusX;
+        const majorY = Math.sin(entity.rotation) * entity.radiusX;
+        const start = entity.type === 'ELLIPSE' ? 0
+          : entity.clockwise === false ? -entity.startParameter : -entity.endParameter;
+        const end = entity.type === 'ELLIPSE' ? Math.PI * 2
+          : entity.clockwise === false ? -entity.endParameter : -entity.startParameter;
+        lines.push(
+          '0', 'ELLIPSE', '8', entity.layer,
+          '6', getLineType(entity.lineType).dxfName,
+          '62', String(getLineColor(entity.lineColor).aci || 256),
+          '370', String(getLineStyle(entity.lineStyle).dxfLineWeight),
+          '10', String(entity.center.x), '20', String(-entity.center.y), '30', String(coordinateZ(entity.center)),
+          '11', String(majorX), '21', String(-majorY), '31', '0',
+          '40', String(entity.radiusY / entity.radiusX), '41', String(start), '42', String(end),
         );
       }
 

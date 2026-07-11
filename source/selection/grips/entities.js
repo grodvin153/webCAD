@@ -15,6 +15,7 @@ import {
   pointAtCircleAngle,
 } from '../../geometry.js';
 import { circleFromThreePoints } from '../../input/coordinates.js';
+import { ellipseParameter, ellipseReferencePoints, isEllipseEntity } from '../../ellipse/geometry.js';
 
 export function moveCircularGrip(entity, key, targetPoint) {
   if (key === 'center') {
@@ -42,6 +43,45 @@ export function moveCircularGrip(entity, key, targetPoint) {
       entity[angleKey] = previousAngle;
       return false;
     }
+    return true;
+  }
+  return false;
+}
+
+export function moveEllipseGrip(entity, key, targetPoint) {
+  if (!isEllipseEntity(entity)) return false;
+  if (key === 'start' || key === 'end') {
+    const parameterKey = key === 'start' ? 'startParameter' : 'endParameter';
+    const previous = entity[parameterKey];
+    entity[parameterKey] = ellipseParameter(entity, targetPoint);
+    if (entity.type !== 'ELLIPSE_ARC' || Math.abs(entity.startParameter - entity.endParameter) <= SNAP_THRESHOLD) {
+      entity[parameterKey] = previous;
+      return false;
+    }
+    return true;
+  }
+  const reference = ellipseReferencePoints(entity).find((candidate) => candidate.key === key);
+  if (!reference) return false;
+  const deltaX = targetPoint.x - entity.center.x;
+  const deltaY = targetPoint.y - entity.center.y;
+  if (key.startsWith('major-')) {
+    const radius = Math.hypot(deltaX, deltaY);
+    if (radius <= Math.max(entity.radiusY, SNAP_THRESHOLD)) return false;
+    entity.radiusX = radius;
+    entity.rotation = Math.atan2(deltaY, deltaX) + (key === 'major-1' ? Math.PI : 0);
+    return true;
+  }
+  if (key.startsWith('minor-')) {
+    const normal = { x: -Math.sin(entity.rotation), y: Math.cos(entity.rotation) };
+    const radius = Math.abs(deltaX * normal.x + deltaY * normal.y);
+    if (radius <= SNAP_THRESHOLD || radius > entity.radiusX) return false;
+    entity.radiusY = radius;
+    return true;
+  }
+  if (key.startsWith('focus-')) {
+    const focalRadius = Math.hypot(deltaX, deltaY);
+    entity.radiusX = Math.sqrt(focalRadius ** 2 + entity.radiusY ** 2);
+    entity.rotation = Math.atan2(deltaY, deltaX) + (key === 'focus-1' ? Math.PI : 0);
     return true;
   }
   return false;

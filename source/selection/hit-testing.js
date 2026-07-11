@@ -16,6 +16,7 @@ import {
   polygonDistanceToPoint,
 } from '../geometry.js';
 import { rotatePointAround } from '../transformations/rotate.js';
+import { distancePointToEllipse, isEllipseEntity } from '../ellipse/geometry.js';
 
 export function createHitTesting({ dimensionGeometry, polylineSegmentEntity }) {
   function distancePointToCircle(point, entity) {
@@ -41,6 +42,7 @@ export function createHitTesting({ dimensionGeometry, polylineSegmentEntity }) {
     }
     if (entity.type === 'CIRCLE') return distancePointToCircle(point, entity);
     if (entity.type === 'ARC') return distancePointToArc(point, entity);
+    if (isEllipseEntity(entity)) return distancePointToEllipse(point, entity);
     if (entity.type === 'TEXT') {
       const localPoint = rotatePointAround(point, entity.insertionPoint, -entity.angle);
       const minX = entity.insertionPoint.x;

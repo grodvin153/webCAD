@@ -157,6 +157,7 @@ export function createControllerKeyboardEventMethods(dependencies) {
         this.state.mirrorDraft?.selecting ||
         this.state.eraseDraft?.selecting ||
         this.state.explodeDraft?.selecting ||
+        this.state.polylineJoinDraft?.selecting ||
         this.state.extendDraft?.phase === 'boundaries' ||
         this.state.selectionSetDraft?.selecting;
       if (recallsSelection) {
@@ -165,7 +166,10 @@ export function createControllerKeyboardEventMethods(dependencies) {
         this.renderer.draw();
       }
       else {
-        runCommand('polyline');
+        this.clearShortcutPrefix();
+        this.armShortcutPrefix('p');
+        this.state.statusText = 'Atajo PL: pulse L para Polilinea · PJ para Unir polilineas · PG para Poligono regular';
+        this.updateUiStatus();
       }
       return;
     }

@@ -48,6 +48,7 @@ import { createPreferenceServices } from './ui/preferences.js';
 import { installViewportHeight } from './ui/viewport.js';
 import { createArcEntityClass } from './entities/arc.js';
 import { createCircleEntityClass } from './entities/circle.js';
+import { createEllipseEntityClass } from './entities/ellipse.js';
 import { createHatchEntityClass } from './entities/hatch.js';
 import { createLineEntityClass } from './entities/line.js';
 import { createPolylineEntityClass } from './entities/polyline.js';
@@ -69,6 +70,11 @@ import { createDrawingPreviewMethods } from './renderer/previews/drawing.js';
 import { createTransformPreviewMethods } from './renderer/previews/transforms.js';
 import { createGripOverlayMethods } from './renderer/overlays/grips.js';
 import { createGuideOverlayMethods } from './renderer/overlays/guides.js';
+import {
+  isPolylineJoinCompatibleEntity,
+  joinClosedPolylineLoops,
+  joinPolylineEntities,
+} from './operations/polyline-join.js';
 import { createControllerSelectionMethods } from './controller/selection/methods.js';
 import { createControllerShortcutMethods } from './controller/keyboard/shortcuts.js';
 import { createControllerInputMethods } from './controller/keyboard/input.js';
@@ -167,7 +173,7 @@ import { createHitTesting } from './selection/hit-testing.js';
 import { createSelectionIntersections } from './selection/intersections.js';
 import { createPolylineSelectionGeometry } from './selection/polyline.js';
 import { createDimensionGripMovement } from './selection/grips/dimensions.js';
-import { createPolylineGripMovement, moveCircularGrip } from './selection/grips/entities.js';
+import { createPolylineGripMovement, moveCircularGrip, moveEllipseGrip } from './selection/grips/entities.js';
 import { moveHatchGrip } from './selection/grips/hatch.js';
 import { createGripReferences } from './selection/grips/references.js';
 import { entityCanExplode } from './transformations/clone.js';
@@ -219,14 +225,28 @@ import { createPointTangentLineCommand } from './tools/tangent-line/point-comman
 import { drawPointTangentLinePreview } from './tools/tangent-line/point-rendering.js';
 import { createXLineCommand } from './tools/xline/command.js';
 import { drawXLine, drawXLinePreview as drawXLineCommandPreview } from './tools/xline/rendering.js';
+import { createRegularPolygonCommand } from './tools/regular-polygon/command.js';
+import { createEllipseCommand } from './tools/ellipse/command.js';
+import {
+  ellipseNormalizedParameter,
+  ellipseParameterAtNormalized,
+  ellipsePoint,
+  ellipseReferencePoints,
+  ellipseSweep,
+  isEllipseEntity,
+  sampleEllipse,
+} from './ellipse/geometry.js';
+import { createEllipseTrimOperations } from './operations/trim/ellipse.js';
 import {
   keyboardCoordinateTarget,
   keyboardPointTarget,
   rectangleTargetPoint,
 } from './input/constraints.js';
+import { exportModel3dToAsciiStl } from './3d/stl-exporter.js';
 import { createCadFormatRegistry } from './files/formats/registry.js';
 import { createDxfExporter } from './files/formats/dxf/exporter.js';
 import { createDxfImporter } from './files/formats/dxf/importer.js';
+import { parseWebcadProject, serializeWebcadProject } from './files/formats/webcad-project.js';
 import { createLocalFileManager } from './files/local-file-manager.js';
 import { createAutosaveController } from './files/autosave.js';
 import { createUnsupportedLocalSaveNotifier } from './files/browser-support.js';
@@ -241,6 +261,7 @@ import { createRuntimeDialogs } from './ui/runtime-dialogs.js';
 import { APP_VERSION } from './version.js';
 import { createCommandDispatcher } from './app/command-dispatcher.js';
 import { bindDxfImportInput } from './files/formats/dxf/import-handler.js';
+import { bindWebcadProjectInput } from './files/formats/webcad-project-handler.js';
 import { bindApplicationEvents } from './app/event-wiring.js';
 import { createRuntimeControls } from './app/runtime-controls.js';
 import { createDocumentActions } from './app/document-actions.js';
@@ -251,14 +272,15 @@ const elements = createDomElements(document);
 const {
   canvas,
   selectToolButton, lineToolButton, tangentLineToolButton, pointTangentLineToolButton,
-  xlineToolButton, polylineToolButton, rectangleToolButton, textToolButton, hatchToolButton,
+  xlineToolButton, polylineToolButton, regularPolygonToolButton, rectangleToolButton, textToolButton, hatchToolButton,
   circleToolButton, circleToolMenuButton, arcToolButton, arcToolMenuButton,
+  ellipseToolButton,
   blockToolButton, blockToolMenuButton, trimToolButton, extendToolButton, filletToolButton,
   offsetToolButton, chamferToolButton, copyToolButton, moveToolButton, stretchToolButton,
   rotateToolButton, polarArrayToolButton, scaleToolButton, mirrorToolButton, eraseToolButton,
-  explodeToolButton, dimensionStyleSelect, dimensionToolButtons, fitButton,
+  explodeToolButton, polylineJoinToolButton, dimensionStyleSelect, dimensionToolButtons, fitButton,
   navigationMouseButton, navigationTrackpadButton, undoButton, redoButton, newButton,
-  saveButton, exportDxfButton, importDxfButton, importDxfInput, importPngInput,
+  saveButton, exportDxfButton, importDxfButton, importDxfInput, importWebcadInput, importPngInput,
   lineStylePicker, lineStyleToggle, lineStyleLabel, lineStyleOptionButtons,
   lineTypePicker, lineTypeToggle, lineTypeLabel, lineTypeText, lineTypeOptionButtons,
   lineColorPicker, lineColorToggle, lineColorLabel, lineColorOptionButtons,
@@ -273,6 +295,7 @@ const {
   statusDxf, filletRadiusControl, filletRadiusInput, offsetDistanceControl,
   offsetDistanceInput, chamferDistanceControl, chamferDistanceFirstInput,
   chamferDistanceSecondInput, polarArrayCountControl, polarArrayCountInput,
+  regularPolygonSidesControl, regularPolygonSidesInput,
   drawingProfileDialog, drawingProfileCloseButton, drawingProfileCancelButton,
   drawingProfileConfirmButton, drawingProfileInputs, settingsDialog,
   settingsDialogCloseButton, settingsDialogCancelButton, settingsDialogConfirmButton,
@@ -302,6 +325,8 @@ let nextEntityGroupId = 1;
 let scaleCommand = null;
 let stretchCommand = null;
 let polarArrayCommand = null;
+let regularPolygonCommand = null;
+let ellipseCommand = null;
 let tangentLineCommand = null;
 let pointTangentLineCommand = null;
 let offsetCommand = null;
@@ -451,6 +476,7 @@ const LineEntity = createLineEntityClass(styleServices);
 const XLineEntity = createXLineEntityClass(styleServices);
 const CircleEntity = createCircleEntityClass(styleServices);
 const ArcEntity = createArcEntityClass(styleServices);
+const EllipseEntity = createEllipseEntityClass(styleServices);
 const PolylineEntity = createPolylineEntityClass({
   style: styleServices,
   polylineSegmentEntity,
@@ -629,6 +655,7 @@ const {
 } = createBlockRuntime({
   ArcEntity,
   CircleEntity,
+  EllipseEntity,
   DEFAULT_LAYER,
   DEFAULT_LINE_COLOR,
   DEFAULT_LINE_STYLE,
@@ -660,6 +687,7 @@ const CadDocument = createCadDocumentClass({
 
 const operationDependencies = {
   ArcEntity,
+  EllipseEntity,
   HatchEntity,
   LineEntity,
   PolylineEntity,
@@ -681,10 +709,16 @@ const operationDependencies = {
   entityArcSweep,
   entityDistanceToPoint,
   entityIntersectionPoints,
+  ellipseNormalizedParameter,
+  ellipseParameterAtNormalized,
+  ellipsePoint,
+  ellipseReferencePoints,
+  ellipseSweep,
   fullCircleBoundaryIntersectionPoints,
   infiniteLineCircularIntersectionPoints,
   infiniteLineLineIntersection,
   isCircularEntity,
+  isEllipseEntity,
   lineParameter,
   normalizeAngle,
   normalizedVector,
@@ -699,6 +733,7 @@ const operationDependencies = {
   primitiveEntityParts,
   projectPointToLine,
   rawLineParameter,
+  sampleEllipse,
   uniqueSortedParameters,
 };
 
@@ -750,6 +785,10 @@ const {
   createArcFromParameters,
   trimCircularEntityAtPoint,
 } = createCircularTrimOperations(operationDependencies);
+const { trimEllipseEntityAtPoint } = createEllipseTrimOperations({
+  EllipseEntity,
+  entityIntersectionPoints,
+});
 const {
   trimPolylineEntityAtPoint,
 } = createPolylineTrimOperations({
@@ -762,6 +801,7 @@ const {
 } = createGroupedLineTrimOperations(operationDependencies);
 const {
   circlePolygon,
+  ellipsePolygon,
   curveGroupsFromFaceEdges,
 } = createHatchBoundaryGeometry(operationDependencies);
 const { curveArrangementFaces } = createHatchFaces({
@@ -771,12 +811,14 @@ const { curveArrangementFaces } = createHatchFaces({
 const { hatchBoundaryAtPoint } = createHatchFlood({
   ...operationDependencies,
   circlePolygon,
+  ellipsePolygon,
   closedLineGroupPolygon,
   curveArrangementFaces,
 });
 const { trimHatchEntityAtPoint } = createHatchTrimOperations(operationDependencies);
 const { trimEntityAtPoint } = createTrimOperations({
   trimCircularEntityAtPoint,
+  trimEllipseEntityAtPoint,
   trimHatchEntityAtPoint,
   trimLineEntityAtPoint,
   trimLineGroupAtPoint,
@@ -813,6 +855,7 @@ const { parseDxf } = createDxfImporter({
   ArcEntity,
   BlockReferenceEntity,
   CircleEntity,
+  EllipseEntity,
   DIMENSION_STYLES,
   DRAWING_PROFILES,
   DimensionEntity,
@@ -1108,6 +1151,7 @@ Object.assign(
     drawRasterImage,
     drawXLine,
     getLineStyle,
+    isEllipseEntity,
     pointAtCircleAngle,
     pointAtCircularParameter,
     pointAtLineParameter,
@@ -1119,6 +1163,7 @@ Object.assign(
     SELECTED_COLOR,
     boundsIntersectsBounds,
     getLineStyle,
+    isEllipseEntity,
   }),
 );
 
@@ -1218,6 +1263,7 @@ const {
   syncFilletRadiusControl,
   syncOffsetDistanceControl,
   syncPolarArrayCountControl,
+  syncRegularPolygonSidesControl,
   toggleGridSnap,
   toggleLineWeightDisplay,
   toggleOrthoMode,
@@ -1225,6 +1271,7 @@ const {
   updateFilletRadiusFromInput,
   updateOffsetDistanceFromInput,
   updatePolarArrayCountFromInput,
+  updateRegularPolygonSidesFromInput,
 } = runtimeControls;
 blockDialogs = createBlockDialogs({
   SNAP_THRESHOLD,
@@ -1317,6 +1364,41 @@ polarArrayCommand = createPolarArrayCommand({
     renderer.draw();
   },
   countValue: () => state.polarArrayCount,
+});
+regularPolygonCommand = createRegularPolygonCommand({
+  state,
+  doc,
+  PolylineEntity,
+  activeLayerName,
+  activeLineColorId,
+  activeLineStyleId,
+  activeLineTypeId,
+  getLineStyle,
+  resolvePoint: (point, origin) => resolvePointForState(point, state, origin),
+  setTool: (tool) => controller.setTool(tool),
+  refresh: () => {
+    controller.updateUiStatus();
+    renderer.draw();
+  },
+  sidesValue: () => state.regularPolygonSides,
+  snapThreshold: SNAP_THRESHOLD,
+  formatNumber,
+  unitsLabel: () => UNITS_LABEL,
+});
+ellipseCommand = createEllipseCommand({
+  state,
+  doc,
+  EllipseEntity,
+  activeLayerName,
+  activeLineColorId,
+  activeLineStyleId,
+  activeLineTypeId,
+  setTool: (tool) => controller.setTool(tool),
+  refresh: () => {
+    controller.updateUiStatus();
+    renderer.draw();
+  },
+  tolerance: SNAP_THRESHOLD,
 });
 scaleCommand = createScaleCommand({
   state,
@@ -1499,6 +1581,7 @@ Object.assign(
     dimensionDraftEntity,
     dimensionPlacementPoint,
     distance,
+    ellipseCommand,
     getLineStyle,
     keyboardCoordinateTarget,
     normalizeBoundsFromPoints,
@@ -1508,6 +1591,7 @@ Object.assign(
     polylineTangentArcToPoint,
     profileLineTypeDash,
     rectangleTargetPoint,
+    regularPolygonCommand,
     resolveCursorPoint,
   }),
   createTransformPreviewMethods({
@@ -1545,6 +1629,7 @@ Object.assign(
     SNAP_MARKER_SIZE,
     circularReferencePoints,
     dimensionReferencePoints,
+    ellipseReferencePoints,
     polylineReferencePoints,
   }),
   createGuideOverlayMethods({
@@ -1568,6 +1653,26 @@ cadFormatRegistry.register({
   mimeType: 'application/dxf',
   parse: (text) => parseDxf(text),
   serialize: () => serializeDocumentToDxf(doc),
+});
+cadFormatRegistry.register({
+  id: 'webcad',
+  label: 'Proyecto webCAD',
+  extension: '.webcad',
+  mimeType: 'application/json',
+  parse: (text) => parseWebcadProject(text),
+  serialize: () => serializeWebcadProject({
+    appVersion: APP_VERSION,
+    counters: { nextEntityGroupId },
+    doc,
+    state,
+  }),
+});
+cadFormatRegistry.register({
+  id: 'stl',
+  label: 'Malla STL',
+  extension: '.stl',
+  mimeType: 'model/stl',
+  serialize: () => exportModel3dToAsciiStl(doc.model3d, { name: 'webcad' }).text,
 });
 const notifyUnsupportedLocalSave = createUnsupportedLocalSaveNotifier({
   onStatus: (message) => {
@@ -1612,6 +1717,7 @@ const documentActions = createDocumentActions({
   canvas,
   localFileManager,
   importDxfInput,
+  importWebcadInput,
   defaultLayers: DEFAULT_LAYERS,
   defaultLayer: DEFAULT_LAYER,
   defaultLineStyle: DEFAULT_LINE_STYLE,
@@ -1630,9 +1736,12 @@ const documentActions = createDocumentActions({
 });
 const {
   exportDxf,
+  exportStl,
   importDxf,
   newDrawing,
+  openWebcadProject,
   redoDrawing,
+  saveWebcadProject,
   undoDrawing,
 } = documentActions;
 
@@ -1720,12 +1829,15 @@ Object.assign(
     distancePointToSegment,
     entitiesFromSelectionWindow,
     entityDistanceToPoint,
+    ellipseReferencePoints,
     expandBounds,
     formatNumber,
     gripPoint,
     gripReferencePoint,
     isCircularEntity,
+    isEllipseEntity,
     moveCircularGrip,
+    moveEllipseGrip,
     moveDimensionGrip,
     moveHatchGrip,
     movePolylineGrip,
@@ -1750,6 +1862,7 @@ Object.assign(
     dimensionPlacementOrigin,
     dimensionPlacementPoint,
     distance,
+    ellipseCommand,
     formatNumber,
     parseAngleInput,
     parseCopyMultiplier,
@@ -1759,6 +1872,7 @@ Object.assign(
     pointFromPartialRelativeCoordinates,
     pointFromRelativeCoordinates,
     rectangleTargetPoint,
+    regularPolygonCommand,
     resolveCursorPoint,
     scaleCommand,
     stretchCommand,
@@ -1794,6 +1908,7 @@ Object.assign(
     anchorSelectionWindow,
     completeAnchoredSelectionWindow,
     enterBlockEditor,
+    ellipseCommand,
     extendCommand,
     formatNumber,
     formatSnapType,
@@ -1803,6 +1918,7 @@ Object.assign(
     hatchCommand,
     hatchDialogController,
     imageEditor,
+    isPolylineJoinCompatibleEntity,
     isCircularEntity,
     keyboardPointTarget,
     offsetCommand,
@@ -1812,6 +1928,7 @@ Object.assign(
     pointTangentLineCommand,
     polarArrayCommand,
     rectangleTargetPoint,
+    regularPolygonCommand,
     rotationAngleFromPoint,
     scaleCommand,
     selectionWindowMode,
@@ -1837,6 +1954,8 @@ Object.assign(
     dimensionPlacementPoint,
     dimensionToolButtons,
     eraseToolButton,
+    ellipseCommand,
+    ellipseToolButton,
     explodeToolButton,
     extendCommand,
     extendToolButton,
@@ -1856,8 +1975,11 @@ Object.assign(
     polarArrayCommand,
     polarArrayCountControl,
     polarArrayToolButton,
+    polylineJoinToolButton,
     polylineToolButton,
     rectangleToolButton,
+    regularPolygonSidesControl,
+    regularPolygonToolButton,
     resolveCursorPoint,
     resolvePointForState,
     rotateToolButton,
@@ -1871,6 +1993,7 @@ Object.assign(
     syncFilletRadiusControl,
     syncOffsetDistanceControl,
     syncPolarArrayCountControl,
+    syncRegularPolygonSidesControl,
     tangentLineToolButton,
     textToolButton,
     toolFlyoutCommandButtons,
@@ -1891,11 +2014,16 @@ Object.assign(
   createControllerTransformMethods({
     SNAP_THRESHOLD,
     cloneEntitiesWithOffset,
+    distance,
     entityCanExplode,
     extendCommand,
     formatNumber,
+    isPolylineJoinCompatibleEntity,
+    joinClosedPolylineLoops,
+    joinPolylineEntities,
     mirrorEntityAcrossAxis,
     moveEntityByVector,
+    PolylineEntity,
     polylineSegmentEntities,
     rotateEntityByAngle,
     transformedBlockContents,
@@ -1951,6 +2079,7 @@ Object.assign(
     distance,
     formatNumber,
     infiniteLineLineIntersection,
+    objectSnapPoint,
     toolFlyoutCommandButtons,
     unitsLabel: () => UNITS_LABEL,
   }),
@@ -2110,6 +2239,8 @@ commandDispatcher = createCommandDispatcher({
     tangentLine: tangentLineCommand,
     pointTangentLine: pointTangentLineCommand,
     xline: xlineCommand,
+    regularPolygon: regularPolygonCommand,
+    ellipse: ellipseCommand,
     stretch: stretchCommand,
     polarArray: polarArrayCommand,
     scale: scaleCommand,
@@ -2128,7 +2259,10 @@ commandDispatcher = createCommandDispatcher({
     openDrawingProfileDialog,
     openSettingsDialog,
     exportDxf,
+    exportStl,
     importDxf,
+    openWebcadProject,
+    saveWebcadProject,
     importPng: () => pngImporter.importPng(),
     showAbout,
     closeToolGroups,
@@ -2148,6 +2282,7 @@ bindApplicationEvents({
     updateFilletRadiusFromInput,
     updateOffsetDistanceFromInput,
     updatePolarArrayCountFromInput,
+    updateRegularPolygonSidesFromInput,
     updateChamferDistancesFromInput,
   },
   blockEditor,
@@ -2171,6 +2306,30 @@ bindDxfImportInput({
   syncLayersFromEntities,
   activeDrawingProfile,
   getUnitsLabel: () => UNITS_LABEL,
+});
+
+bindWebcadProjectInput({
+  input: importWebcadInput,
+  state,
+  controller,
+  renderer,
+  registry: cadFormatRegistry,
+  doc,
+  localFileManager,
+  orthogonalInference,
+  setDrawingProfileRuntime,
+  setNextEntityGroupId: (value) => {
+    const nextValue = Number(value);
+    if (Number.isInteger(nextValue) && nextValue > 0) {
+      nextEntityGroupId = nextValue;
+    }
+  },
+  syncProperties: () => {
+    syncLayerPicker();
+    syncLineStylePicker();
+    syncLineTypePicker();
+    syncLineColorPicker();
+  },
 });
 
 initializeApplication({

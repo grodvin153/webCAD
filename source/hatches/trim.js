@@ -100,7 +100,7 @@ export function createHatchTrimOperations(dependencies) {
     const curveGroups = [];
     for (const sourceGroup of sourceEntity.curveGroups) {
       const sourceCurveEdges = new Set(
-        sourceGroup.type === 'CIRCLE'
+        sourceGroup.type === 'CIRCLE' || sourceGroup.type === 'ELLIPSE'
           ? sourceGroup.indices
           : sourceGroup.indices.slice(0, -1),
       );
@@ -119,7 +119,11 @@ export function createHatchTrimOperations(dependencies) {
           );
           if (indices.length >= 3) {
             curveGroups.push({
-              type: sourceGroup.type === 'CIRCLE' ? 'ARC' : sourceGroup.type,
+              type: sourceGroup.type === 'CIRCLE'
+                ? 'ARC'
+                : sourceGroup.type === 'ELLIPSE'
+                  ? 'ELLIPSE_ARC'
+                  : sourceGroup.type,
               indices,
             });
             gripIndices.add(indices[0]);

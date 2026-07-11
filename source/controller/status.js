@@ -63,7 +63,7 @@ export function createControllerStatusMethods(dependencies) {
       toolLabel = 'Linea tangente';
     }
     if (this.state.tool === 'point-tangent-line') {
-      toolLabel = 'Linea punto-tangente';
+      toolLabel = 'Punto a tangente';
     }
     if (this.state.tool === 'xline') {
       toolLabel = 'Linea infinita';
@@ -94,6 +94,9 @@ export function createControllerStatusMethods(dependencies) {
     }
     if (this.state.tool === 'arc-center-start-end') {
       toolLabel = 'Arco C-I-F';
+    }
+    if (this.state.tool === 'ellipse') {
+      toolLabel = 'Elipse';
     }
     if (this.state.tool === 'trim') {
       toolLabel = 'Recortar';
@@ -165,8 +168,10 @@ export function createControllerStatusMethods(dependencies) {
       this.state.pendingLineStart ||
       activeDraftOrigin(this.state) ||
       this.state.rectangleDraft?.firstPoint ||
+      this.state.regularPolygonDraft?.center ||
       this.state.circleDraft?.points[0] ||
       this.state.arcDraft?.points[0] ||
+      this.state.ellipseDraft?.points[0] ||
       (this.state.blockCreateDraft?.name ? { x: 0, y: 0 } : null) ||
       (this.state.blockInsertDraft ? { x: 0, y: 0 } : null) ||
       null;
@@ -218,6 +223,8 @@ export function createControllerStatusMethods(dependencies) {
         ? distance(activeDraftOrigin(this.state), cursor)
       : rectanglePreviewTarget && this.state.rectangleDraft?.firstPoint
         ? distance(this.state.rectangleDraft.firstPoint, rectanglePreviewTarget)
+      : this.state.regularPolygonDraft?.center && cursor
+        ? distance(this.state.regularPolygonDraft.center, cursor)
       : this.state.circleDraft?.mode === 'center-radius' && this.state.circleDraft.points.length === 1 && previewEnd
         ? (inputDistance !== null ? inputDistance : distance(this.state.circleDraft.points[0], previewEnd))
       : this.state.arcDraft?.mode === 'center-radius' && this.state.arcDraft.points.length === 1 && previewEnd
@@ -272,6 +279,9 @@ export function createControllerStatusMethods(dependencies) {
       const width = Math.abs(rectanglePreviewTarget.x - this.state.rectangleDraft.firstPoint.x);
       const height = Math.abs(rectanglePreviewTarget.y - this.state.rectangleDraft.firstPoint.y);
       this.state.statusText = `Esquina opuesta pendiente - ${formatNumber(width)} x ${formatNumber(height)} ${unitsLabel()}`;
+    }
+    else if (this.state.regularPolygonDraft?.center && previewLength !== null) {
+      this.state.statusText = `Radio de poligono pendiente - ${formatNumber(previewLength)} ${unitsLabel()}`;
     }
     else if (this.state.circleDraft?.mode === 'center-radius' && previewLength !== null) {
       this.state.statusText = `Radio pendiente - ${formatNumber(previewLength)} ${unitsLabel()}`;

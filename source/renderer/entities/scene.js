@@ -6,6 +6,7 @@ export function createEntitySceneMethods(dependencies) {
     SELECTED_COLOR,
     boundsIntersectsBounds,
     getLineStyle,
+    isEllipseEntity,
   } = dependencies;
 
   class EntitySceneMethods {
@@ -43,7 +44,7 @@ export function createEntitySceneMethods(dependencies) {
       const entityColor = entity.color || style.color;
       if (
         simplified &&
-        ['LINE', 'CIRCLE', 'ARC', 'POLYLINE'].includes(entity.type)
+        (['LINE', 'CIRCLE', 'ARC', 'POLYLINE'].includes(entity.type) || isEllipseEntity(entity))
       ) {
         if (this.entityPixelSpan(entity) >= minimumGeometryPixels) {
           if (!lodBatches.has(entityColor)) {
@@ -64,6 +65,9 @@ export function createEntitySceneMethods(dependencies) {
       }
       if (entity.type === 'ARC') {
         this.drawArcStroke(ctx, entity, { color: entityColor, width: displayWidth });
+      }
+      if (isEllipseEntity(entity)) {
+        this.drawEllipseStroke(ctx, entity, { color: entityColor, width: displayWidth });
       }
       if (entity.type === 'POLYLINE') {
         this.drawPolylineStroke(ctx, entity, { color: entityColor, width: displayWidth });
@@ -164,6 +168,14 @@ export function createEntitySceneMethods(dependencies) {
           { color: SELECTED_COLOR, width: Math.max(3, this.displayLineWidth(selectedEntity) + 1) },
         );
         this.drawCircleGrips(ctx, selectedEntity);
+      }
+      if (isEllipseEntity(selectedEntity)) {
+        this.drawEllipseStroke(
+          ctx,
+          selectedEntity,
+          { color: SELECTED_COLOR, width: Math.max(3, this.displayLineWidth(selectedEntity) + 1) },
+        );
+        this.drawEllipseGrips(ctx, selectedEntity);
       }
       if (selectedEntity?.type === 'POLYLINE') {
         this.drawPolylineStroke(

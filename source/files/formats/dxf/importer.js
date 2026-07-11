@@ -8,6 +8,7 @@ export function createDxfImporter(dependencies) {
     ArcEntity,
     BlockReferenceEntity,
     CircleEntity,
+    EllipseEntity,
     DIMENSION_STYLES,
     DRAWING_PROFILES,
     DimensionEntity,
@@ -792,6 +793,40 @@ export function createDxfImporter(dependencies) {
             endAngle,
             dxfEntityOptions(record, layerDefinitionMap),
           ));
+        }
+        continue;
+      }
+
+      if (code === '0' && value === 'ELLIPSE') {
+        const record = {};
+        index += 1;
+        while (index < pairs.length) {
+          const [groupCode, groupValue] = pairs[index];
+          if (groupCode === '0') break;
+          record[groupCode] = groupValue;
+          index += 1;
+        }
+        const center = {
+          x: Number(record['10'] || 0),
+          y: -Number(record['20'] || 0),
+          z: Number(record['30'] || 0),
+        };
+        const majorVector = { x: Number(record['11'] || 0), y: -Number(record['21'] || 0) };
+        const radiusX = Math.hypot(majorVector.x, majorVector.y);
+        const ratio = Math.abs(Number(record['40'] || 0));
+        const start = Number(record['41'] ?? 0);
+        const end = Number(record['42'] ?? (Math.PI * 2));
+        const full = Math.abs(Math.abs(end - start) - Math.PI * 2) <= 1e-7;
+        if (Number.isFinite(center.x) && Number.isFinite(center.y) && radiusX > SNAP_THRESHOLD &&
+            Number.isFinite(ratio) && ratio > SNAP_THRESHOLD) {
+          entities.push(new EllipseEntity(center, radiusX, radiusX * ratio, Math.atan2(majorVector.y, majorVector.x), {
+            ...dxfEntityOptions(record, layerDefinitionMap),
+            ...(full ? {} : {
+              startParameter: normalizeAngle(-start),
+              endParameter: normalizeAngle(-end),
+              clockwise: false,
+            }),
+          }));
         }
         continue;
       }

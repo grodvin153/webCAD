@@ -7,6 +7,7 @@ export function createControllerPointerDownMethods(dependencies) {
     anchorSelectionWindow,
     completeAnchoredSelectionWindow,
     enterBlockEditor,
+    ellipseCommand,
     extendCommand,
     formatNumber,
     formatSnapType,
@@ -16,6 +17,7 @@ export function createControllerPointerDownMethods(dependencies) {
     hatchCommand,
     hatchDialogController,
     imageEditor,
+    isPolylineJoinCompatibleEntity,
     isCircularEntity,
     keyboardPointTarget,
     offsetCommand,
@@ -25,6 +27,7 @@ export function createControllerPointerDownMethods(dependencies) {
     pointTangentLineCommand,
     polarArrayCommand,
     rectangleTargetPoint,
+    regularPolygonCommand,
     rotationAngleFromPoint,
     scaleCommand,
     selectionWindowMode,
@@ -189,6 +192,10 @@ export function createControllerPointerDownMethods(dependencies) {
           ? 'Circulo'
           : entity.type === 'ARC'
             ? 'Arco'
+            : entity.type === 'ELLIPSE'
+              ? 'Elipse'
+              : entity.type === 'ELLIPSE_ARC'
+                ? 'Arco de elipse'
             : entity.type === 'TEXT'
               ? 'Texto'
               : entity.type === 'HATCH'
@@ -647,6 +654,34 @@ export function createControllerPointerDownMethods(dependencies) {
       return;
     }
 
+    if (this.state.tool === 'polyline-join') {
+      if (!this.state.polylineJoinDraft) {
+        this.startPolylineJoin();
+        return;
+      }
+      const entity = this.findEntityAt(worldPoint);
+      if (isPolylineJoinCompatibleEntity(entity)) {
+        this.doc.addSelectedEntities([entity]);
+        this.state.statusText = `${this.doc.selectedEntities.size} entidad${this.doc.selectedEntities.size === 1 ? '' : 'es'} seleccionada${this.doc.selectedEntities.size === 1 ? '' : 's'} para unir`;
+      }
+      else if (entity) {
+        this.state.statusText = 'PJ admite lineas, arcos y polilineas';
+      }
+      else {
+        this.state.selectionWindow = {
+          startWorld: { ...worldPoint },
+          currentWorld: { ...worldPoint },
+          startScreen: { ...this.state.mouseScreen },
+          dragging: false,
+          purpose: 'polyline-join',
+        };
+        this.state.statusText = 'Ventana de seleccion para unir polilineas';
+      }
+      this.updateUiStatus();
+      this.renderer.draw();
+      return;
+    }
+
     if (this.state.tool === 'text') {
       if (!this.state.textDraft?.text) {
         openTextDialog();
@@ -715,6 +750,22 @@ export function createControllerPointerDownMethods(dependencies) {
       this.state.distanceInput = '';
       this.updateUiStatus();
       this.renderer.draw();
+      return;
+    }
+
+    if (this.state.tool === 'regular-polygon') {
+      const point = this.resolveInputPoint(worldPoint);
+      regularPolygonCommand.handlePoint(point);
+      this.state.distanceInput = '';
+      this.updateUiStatus();
+      this.renderer.draw();
+      return;
+    }
+
+    if (this.state.tool === 'ellipse') {
+      const point = this.resolveInputPoint(worldPoint);
+      ellipseCommand.pick(point);
+      this.state.distanceInput = '';
       return;
     }
 

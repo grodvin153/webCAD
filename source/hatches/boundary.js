@@ -7,8 +7,11 @@
 export function createHatchBoundaryGeometry(dependencies) {
   const {
     TWO_PI,
+    ellipseReferencePoints,
+    isEllipseEntity,
     isCircularEntity,
     pointAtCircleAngle,
+    sampleEllipse,
   } = dependencies;
 
   function circlePolygon(circle, segments = 96) {
@@ -23,10 +26,26 @@ export function createHatchBoundaryGeometry(dependencies) {
     return polygon;
   }
 
+  function ellipsePolygon(ellipse, segments = 128) {
+    const polygon = sampleEllipse(ellipse, segments).slice(0, -1);
+    const references = ellipseReferencePoints(ellipse);
+    polygon.gripIndices = references
+      .filter((reference) => reference.type === 'quadrant')
+      .map((reference) => polygon.reduce((best, point, index) => {
+        const squaredDistance = (point.x - reference.point.x) ** 2 + (point.y - reference.point.y) ** 2;
+        return squaredDistance < best.distance ? { index, distance: squaredDistance } : best;
+      }, { index: 0, distance: Infinity }).index);
+    polygon.curveGroups = [{
+      type: 'ELLIPSE',
+      indices: polygon.map((_, index) => index),
+    }];
+    return polygon;
+  }
+
   function curveGroupsFromFaceEdges(faceEdges) {
     const runs = [];
     faceEdges.forEach((edge, index) => {
-      if (!isCircularEntity(edge.sourceEntity)) {
+      if (!isCircularEntity(edge.sourceEntity) && !isEllipseEntity(edge.sourceEntity)) {
         return;
       }
       const previousRun = runs[runs.length - 1];
@@ -64,6 +83,7 @@ export function createHatchBoundaryGeometry(dependencies) {
 
   return {
     circlePolygon,
+    ellipsePolygon,
     curveGroupsFromFaceEdges,
   };
 }

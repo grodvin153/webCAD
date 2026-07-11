@@ -1,5 +1,13 @@
 /* webCAD - Modelo documental CAD | SPDX-License-Identifier: GPL-3.0-or-later */
 
+import {
+  addModel3dSolid,
+  cloneModel3d,
+  createModel3d,
+  removeModel3dSolid,
+  replaceModel3dSolid,
+} from '../3d/model3d.js';
+
 export function createCadDocumentClass(dependencies) {
   const {
     HISTORY_LIMIT,
@@ -27,6 +35,7 @@ export function createCadDocumentClass(dependencies) {
       this.spatialOverflow = new Set();
       this.spatialBounds = new Map();
       this.spatialOrder = new Map();
+      this.model3d = createModel3d();
       this.undoStack = [];
       this.redoStack = [];
       this.revision = 0;
@@ -106,12 +115,14 @@ export function createCadDocumentClass(dependencies) {
             : undefined,
         })).filter(Boolean),
         blockDefinitions: definitions,
+        model3d: cloneModel3d(this.model3d),
       };
     }
 
     restoreSnapshot(snapshot) {
       const snapshotEntities = Array.isArray(snapshot) ? snapshot : snapshot.entities || [];
       const snapshotDefinitions = Array.isArray(snapshot) ? [] : snapshot.blockDefinitions || [];
+      const snapshotModel3d = Array.isArray(snapshot) ? null : snapshot.model3d;
       const activeBlockName = this.editingBlockName;
       const definitionMap = new Map(snapshotDefinitions.map((definition) => [
         definition.name.toLowerCase(),
@@ -142,6 +153,7 @@ export function createCadDocumentClass(dependencies) {
         this.entities = restoredRootEntities;
       }
       this.clearSelection();
+      this.model3d = cloneModel3d(snapshotModel3d);
       this.markDirty();
     }
 
@@ -185,7 +197,8 @@ export function createCadDocumentClass(dependencies) {
     }
 
     clear(options = {}) {
-      if (options.recordHistory !== false && this.entities.length) {
+      const hasModel3d = Array.isArray(this.model3d?.solids) && this.model3d.solids.length > 0;
+      if (options.recordHistory !== false && (this.entities.length || hasModel3d)) {
         this.recordHistory();
       }
       this.entities = [];
@@ -193,8 +206,46 @@ export function createCadDocumentClass(dependencies) {
       this.editingBlockName = null;
       this.editHistoryFloor = null;
       this.blockDefinitions = new Map();
+      this.model3d = createModel3d();
       this.clearSelection();
       this.markDirty();
+    }
+
+    add3dSolid(solid, options = {}) {
+      if (options.recordHistory !== false) {
+        this.recordHistory();
+      }
+      const record = addModel3dSolid(this.model3d, solid, options);
+      this.markDirty();
+      return record;
+    }
+
+    replace3dSolid(id, solid, options = {}) {
+      if (!this.model3d?.solids?.some((record) => record?.id === id)) {
+        return null;
+      }
+      if (options.recordHistory !== false) {
+        this.recordHistory();
+      }
+      const record = replaceModel3dSolid(this.model3d, id, solid, options);
+      if (record) {
+        this.markDirty();
+      }
+      return record;
+    }
+
+    remove3dSolid(id, options = {}) {
+      if (!this.model3d?.solids?.some((record) => record?.id === id)) {
+        return false;
+      }
+      if (options.recordHistory !== false) {
+        this.recordHistory();
+      }
+      const removed = removeModel3dSolid(this.model3d, id);
+      if (removed) {
+        this.markDirty();
+      }
+      return removed;
     }
 
     addEntity(entity, options = {}) {

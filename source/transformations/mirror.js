@@ -6,7 +6,7 @@
 
 import { SNAP_THRESHOLD } from '../config.js';
 import { coordinateZ } from '../coordinates/point3.js';
-import { angleOfPoint, normalizedVector } from '../geometry.js';
+import { angleOfPoint, normalizeAngle, normalizedVector } from '../geometry.js';
 
 export function dotProduct(first, second) {
   return first.x * second.x + first.y * second.y;
@@ -61,6 +61,21 @@ export function mirrorEntityAcrossAxis(entity, firstPoint, secondPoint) {
     if (entity.type === 'ARC') {
       entity.startAngle = mirrorAngleAcrossAxis(entity.startAngle, firstPoint, secondPoint);
       entity.endAngle = mirrorAngleAcrossAxis(entity.endAngle, firstPoint, secondPoint);
+      entity.clockwise = entity.clockwise === false;
+    }
+  }
+  else if (entity.type === 'ELLIPSE' || entity.type === 'ELLIPSE_ARC') {
+    const directionPoint = {
+      x: entity.center.x + Math.cos(entity.rotation),
+      y: entity.center.y + Math.sin(entity.rotation),
+      z: entity.center.z,
+    };
+    entity.center = mirrorPoint(entity.center);
+    const mirroredDirection = mirrorPoint(directionPoint);
+    entity.rotation = angleOfPoint(entity.center, mirroredDirection);
+    if (entity.type === 'ELLIPSE_ARC') {
+      entity.startParameter = normalizeAngle(-entity.startParameter);
+      entity.endParameter = normalizeAngle(-entity.endParameter);
       entity.clockwise = entity.clockwise === false;
     }
   }

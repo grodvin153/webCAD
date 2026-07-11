@@ -14,6 +14,7 @@ export function createEntityStrokeMethods(dependencies) {
     distance,
     drawRasterImage,
     drawXLine,
+    isEllipseEntity,
     getLineStyle,
     pointAtCircleAngle,
     pointAtCircularParameter,
@@ -98,6 +99,30 @@ export function createEntityStrokeMethods(dependencies) {
       entity.startAngle,
       entity.endAngle,
       entity.clockwise === false,
+    );
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  drawEllipseStroke(ctx, entity, options) {
+    if (entity.radiusX <= SNAP_THRESHOLD || entity.radiusY <= SNAP_THRESHOLD) return;
+    ctx.save();
+    ctx.beginPath();
+    ctx.strokeStyle = options.color;
+    ctx.lineWidth = options.width / this.state.viewScale;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    const dash = profileLineTypeDash(entity.lineType);
+    if (dash.length) ctx.setLineDash(dash.map((length) => length / this.state.viewScale));
+    ctx.ellipse(
+      entity.center.x,
+      entity.center.y,
+      entity.radiusX,
+      entity.radiusY,
+      entity.rotation,
+      entity.type === 'ELLIPSE_ARC' ? entity.startParameter : 0,
+      entity.type === 'ELLIPSE_ARC' ? entity.endParameter : TWO_PI,
+      entity.type === 'ELLIPSE_ARC' && entity.clockwise === false,
     );
     ctx.stroke();
     ctx.restore();
@@ -306,6 +331,7 @@ export function createEntityStrokeMethods(dependencies) {
       if (entity.type === 'ARC') {
         this.drawArcStroke(ctx, entity, { color, width });
       }
+      if (isEllipseEntity(entity)) this.drawEllipseStroke(ctx, entity, { color, width });
       if (entity.type === 'POLYLINE') {
         this.drawPolylineStroke(ctx, entity, { color, width });
       }
@@ -360,6 +386,7 @@ export function createEntityStrokeMethods(dependencies) {
     if (entity.type === 'ARC') {
       this.drawArcStroke(ctx, entity, { color, width });
     }
+    if (isEllipseEntity(entity)) this.drawEllipseStroke(ctx, entity, { color, width });
     if (entity.type === 'POLYLINE') {
       this.drawPolylineStroke(ctx, entity, { color, width });
     }
@@ -422,7 +449,7 @@ export function createEntityStrokeMethods(dependencies) {
   }
 
   appendLodGeometry(batch, entity) {
-    if (entity.type === 'LINE' || entity.type === 'CIRCLE' || entity.type === 'ARC') {
+    if (entity.type === 'LINE' || entity.type === 'CIRCLE' || entity.type === 'ARC' || isEllipseEntity(entity)) {
       batch.push(entity);
       return;
     }
@@ -463,6 +490,20 @@ export function createEntityStrokeMethods(dependencies) {
             geometry.startAngle,
             geometry.endAngle,
             geometry.clockwise === false,
+          );
+        }
+        else if (isEllipseEntity(geometry)) {
+          const start = geometry.type === 'ELLIPSE_ARC' ? geometry.startParameter : 0;
+          const cosine = Math.cos(geometry.rotation);
+          const sine = Math.sin(geometry.rotation);
+          ctx.moveTo(
+            geometry.center.x + geometry.radiusX * Math.cos(start) * cosine - geometry.radiusY * Math.sin(start) * sine,
+            geometry.center.y + geometry.radiusX * Math.cos(start) * sine + geometry.radiusY * Math.sin(start) * cosine,
+          );
+          ctx.ellipse(
+            geometry.center.x, geometry.center.y, geometry.radiusX, geometry.radiusY, geometry.rotation,
+            start, geometry.type === 'ELLIPSE_ARC' ? geometry.endParameter : TWO_PI,
+            geometry.type === 'ELLIPSE_ARC' && geometry.clockwise === false,
           );
         }
       });

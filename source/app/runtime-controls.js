@@ -20,6 +20,7 @@ export function createRuntimeControls({
     filletRadiusInput,
     offsetDistanceInput,
     polarArrayCountInput,
+    regularPolygonSidesInput,
     chamferDistanceFirstInput,
     chamferDistanceSecondInput,
   } = elements;
@@ -43,6 +44,12 @@ export function createRuntimeControls({
       // El modo seleccionado sigue activo durante la sesion.
     }
     syncNavigationDeviceButtons();
+    const browserWindow = globalThis.window || null;
+    const event = typeof CustomEvent === 'function'
+      ? new CustomEvent('webcad:navigation-device-change', { detail: { device } })
+      : null;
+    if (event) browserWindow?.dispatchEvent?.(event);
+    browserWindow?.webcadThreeMode?.syncSettings?.();
     state.statusText = device === 'mouse'
       ? 'Modo raton: rueda para zoom · boton central para pan'
       : 'Modo trackpad: dos dedos para pan · Shift + dos dedos para zoom';
@@ -105,6 +112,10 @@ export function createRuntimeControls({
     if (polarArrayCountInput) polarArrayCountInput.value = String(state.polarArrayCount);
   }
 
+  function syncRegularPolygonSidesControl() {
+    if (regularPolygonSidesInput) regularPolygonSidesInput.value = String(state.regularPolygonSides);
+  }
+
   function updatePolarArrayCountFromInput() {
     const count = Math.trunc(Number(polarArrayCountInput.value));
     if (!Number.isFinite(count) || count < 2 || count > 360) {
@@ -115,6 +126,21 @@ export function createRuntimeControls({
     state.polarArrayCount = count;
     storePreference('webcad-polar-array-count', count);
     state.statusText = `Matriz polar: ${count} elementos`;
+    controller.updateUiStatus();
+    renderer.draw();
+    return true;
+  }
+
+  function updateRegularPolygonSidesFromInput() {
+    const sides = Math.trunc(Number(regularPolygonSidesInput.value));
+    if (!Number.isFinite(sides) || sides < 3 || sides > 360) {
+      state.statusText = 'El poligono regular admite entre 3 y 360 lados';
+      controller.updateUiStatus();
+      return false;
+    }
+    state.regularPolygonSides = sides;
+    storePreference('webcad-regular-polygon-sides', sides);
+    state.statusText = `Poligono regular: ${sides} lados`;
     controller.updateUiStatus();
     renderer.draw();
     return true;
@@ -228,6 +254,7 @@ export function createRuntimeControls({
     syncNavigationDeviceButtons,
     syncOffsetDistanceControl,
     syncPolarArrayCountControl,
+    syncRegularPolygonSidesControl,
     toggleGridSnap,
     toggleLineWeightDisplay,
     toggleOrthoMode,
@@ -235,5 +262,6 @@ export function createRuntimeControls({
     updateFilletRadiusFromInput,
     updateOffsetDistanceFromInput,
     updatePolarArrayCountFromInput,
+    updateRegularPolygonSidesFromInput,
   };
 }

@@ -1,5 +1,7 @@
 /* webCAD - Acciones del documento y su historial | SPDX-License-Identifier: GPL-3.0-or-later */
 
+import { visibleDocumentSolids } from '../3d/stl-exporter.js';
+
 export function createDocumentActions({
   state,
   doc,
@@ -8,6 +10,7 @@ export function createDocumentActions({
   canvas,
   localFileManager,
   importDxfInput,
+  importWebcadInput,
   defaultLayers,
   defaultLayer,
   defaultLineStyle,
@@ -34,8 +37,8 @@ export function createDocumentActions({
     state.activeLineType = defaultLineType;
     state.activeLineColor = defaultLineColor;
     [
-      'pendingLineStart', 'polylineDraft', 'rectangleDraft', 'textDraft', 'hatchDraft',
-      'circleDraft', 'arcDraft', 'tangentLineDraft', 'copyDraft', 'moveDraft', 'stretchDraft',
+      'pendingLineStart', 'polylineDraft', 'rectangleDraft', 'regularPolygonDraft', 'textDraft', 'hatchDraft',
+      'circleDraft', 'arcDraft', 'ellipseDraft', 'tangentLineDraft', 'copyDraft', 'moveDraft', 'stretchDraft',
       'polarArrayDraft', 'rotateDraft', 'scaleDraft', 'mirrorDraft', 'filletDraft',
       'offsetDraft', 'chamferDraft', 'selectionSetDraft', 'eraseDraft', 'explodeDraft',
       'extendDraft', 'blockCreateDraft', 'blockInsertDraft', 'dimensionDraft', 'imageDraft',
@@ -78,10 +81,46 @@ export function createDocumentActions({
     return true;
   }
 
+  function openWebcadProject() {
+    if (state.blockEditDraft) {
+      state.statusText = 'Guarde o descarte la edicion del bloque antes de abrir un proyecto';
+      controller.updateUiStatus();
+      renderer.draw();
+      return false;
+    }
+    importWebcadInput.value = '';
+    importWebcadInput.click();
+    return true;
+  }
+
+  function saveWebcadProject() {
+    void localFileManager.saveAs('webcad');
+    return true;
+  }
+
+  function exportStl() {
+    const visibleSolids = visibleDocumentSolids(doc.model3d);
+    if (!visibleSolids.length) {
+      state.statusText = 'No hay solidos 3D visibles para exportar a STL';
+      controller.updateUiStatus();
+      renderer.draw();
+      return false;
+    }
+    void localFileManager.saveAs('stl').then((saved) => {
+      if (!saved) return;
+      state.statusText =
+        `STL exportado · ${visibleSolids.length} solido${visibleSolids.length === 1 ? '' : 's'} · ` +
+        'no conserva unidades, curvas exactas, capas ni operaciones';
+      controller.updateUiStatus();
+      renderer.draw();
+    });
+    return true;
+  }
+
   function resetInteractionState() {
     [
-      'pendingLineStart', 'polylineDraft', 'rectangleDraft', 'textDraft', 'hatchDraft',
-      'circleDraft', 'arcDraft', 'tangentLineDraft', 'copyDraft', 'moveDraft', 'stretchDraft',
+      'pendingLineStart', 'polylineDraft', 'rectangleDraft', 'regularPolygonDraft', 'textDraft', 'hatchDraft',
+      'circleDraft', 'arcDraft', 'ellipseDraft', 'tangentLineDraft', 'copyDraft', 'moveDraft', 'stretchDraft',
       'polarArrayDraft', 'rotateDraft', 'scaleDraft', 'mirrorDraft', 'filletDraft',
       'offsetDraft', 'chamferDraft', 'selectionSetDraft', 'eraseDraft', 'explodeDraft',
       'extendDraft', 'blockCreateDraft', 'blockInsertDraft', 'dimensionDraft', 'imageDraft',
@@ -123,5 +162,15 @@ export function createDocumentActions({
     renderer.draw();
   }
 
-  return { exportDxf, importDxf, newDrawing, redoDrawing, resetInteractionState, undoDrawing };
+  return {
+    exportDxf,
+    exportStl,
+    importDxf,
+    newDrawing,
+    openWebcadProject,
+    redoDrawing,
+    resetInteractionState,
+    saveWebcadProject,
+    undoDrawing,
+  };
 }

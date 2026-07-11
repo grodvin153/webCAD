@@ -1,5 +1,34 @@
 /* webCAD - Entrada numerica y coordenadas | SPDX-License-Identifier: GPL-3.0-or-later */
 
+function ellipseDistanceTarget(draft, cursor, distance) {
+  const points = draft?.points || [];
+  if (!cursor || !Number.isFinite(distance) || distance <= 0 || !points.length) return null;
+  if (points.length === 1) {
+    const deltaX = cursor.x - points[0].x;
+    const deltaY = cursor.y - points[0].y;
+    const length = Math.hypot(deltaX, deltaY);
+    if (length <= 1e-12) return null;
+    return {
+      x: points[0].x + deltaX * distance / length,
+      y: points[0].y + deltaY * distance / length,
+      z: points[0].z || 0,
+    };
+  }
+  const [first, second] = points;
+  const center = { x: (first.x + second.x) * 0.5, y: (first.y + second.y) * 0.5 };
+  const majorX = second.x - first.x;
+  const majorY = second.y - first.y;
+  const majorLength = Math.hypot(majorX, majorY);
+  if (majorLength <= 1e-12) return null;
+  const normal = { x: -majorY / majorLength, y: majorX / majorLength };
+  const side = Math.sign((cursor.x - center.x) * normal.x + (cursor.y - center.y) * normal.y) || 1;
+  return {
+    x: center.x + normal.x * distance * side,
+    y: center.y + normal.y * distance * side,
+    z: ((first.z || 0) + (second.z || 0)) * 0.5,
+  };
+}
+
 export function createControllerInputMethods(dependencies) {
   const {
     SNAP_THRESHOLD,
@@ -9,6 +38,7 @@ export function createControllerInputMethods(dependencies) {
     dimensionPlacementOrigin,
     dimensionPlacementPoint,
     distance,
+    ellipseCommand,
     formatNumber,
     parseAngleInput,
     parseCopyMultiplier,
@@ -18,6 +48,7 @@ export function createControllerInputMethods(dependencies) {
     pointFromPartialRelativeCoordinates,
     pointFromRelativeCoordinates,
     rectangleTargetPoint,
+    regularPolygonCommand,
     resolveCursorPoint,
     scaleCommand,
     stretchCommand,
@@ -36,8 +67,10 @@ export function createControllerInputMethods(dependencies) {
     const pointDraft = Boolean(
       this.state.polylineDraft?.vertices.length ||
       this.state.rectangleDraft?.firstPoint ||
+      this.state.regularPolygonDraft?.center ||
       this.state.circleDraft?.points.length ||
       this.state.arcDraft?.points.length ||
+      this.state.ellipseDraft?.points.length ||
       this.state.xlineDraft?.firstPoint ||
       this.state.copyDraft?.basePoint ||
       this.state.moveDraft?.basePoint ||
@@ -154,6 +187,7 @@ export function createControllerInputMethods(dependencies) {
         this.state.rectangleDraft?.firstPoint ||
         this.state.circleDraft?.points[0] ||
         this.state.arcDraft?.points[0] ||
+        this.state.ellipseDraft?.points[0] ||
         (this.state.blockCreateDraft?.name ? { x: 0, y: 0 } : null) ||
         (this.state.blockInsertDraft ? { x: 0, y: 0 } : null) ||
         dimensionPlacementOrigin(this.state.dimensionDraft) ||
@@ -321,6 +355,18 @@ export function createControllerInputMethods(dependencies) {
         return true;
       }
 
+      if (this.state.ellipseDraft?.points.length) {
+        const targetPoint = coordinateTarget || partialCoordinateTarget ||
+          ellipseDistanceTarget(this.state.ellipseDraft, cursorTarget, inputDistance);
+        if (!targetPoint) {
+          this.state.statusText = 'Distancia o coordenadas no validas';
+          return true;
+        }
+        ellipseCommand.pick(targetPoint);
+        this.state.distanceInput = '';
+        return true;
+      }
+
       if (this.state.xlineDraft?.firstPoint) {
         return xlineCommand.pick(this.state.mouseWorld);
       }
@@ -361,6 +407,20 @@ export function createControllerInputMethods(dependencies) {
         return true;
       }
 
+      if (this.state.regularPolygonDraft?.center) {
+        const directionPoint = cursorTarget;
+        const targetPoint = coordinateTarget || partialCoordinateTarget || (inputDistance !== null && directionPoint
+          ? pointFromDistance(this.state.regularPolygonDraft.center, directionPoint, inputDistance)
+          : null);
+        if (targetPoint && regularPolygonCommand?.createAt?.(targetPoint)) {
+          this.state.distanceInput = '';
+        }
+        else {
+          this.state.statusText = 'Radio de poligono no valido';
+        }
+        return true;
+      }
+
       const directionPoint = cursorTarget;
       const endPoint = coordinateTarget || partialCoordinateTarget || (inputDistance !== null && directionPoint
         ? pointFromDistance(this.state.pendingLineStart, directionPoint, inputDistance)
@@ -393,9 +453,11 @@ export function createControllerInputMethods(dependencies) {
         this.state.pendingLineStart ||
         this.state.polylineDraft ||
         this.state.rectangleDraft ||
+        this.state.regularPolygonDraft ||
         this.state.selectedGrip ||
         this.state.circleDraft ||
         this.state.arcDraft ||
+        this.state.ellipseDraft ||
         this.state.copyDraft ||
         this.state.moveDraft ||
         this.state.stretchDraft ||

@@ -18,6 +18,7 @@ export function createControllerDimensionMethods(dependencies) {
     distance,
     formatNumber,
     infiniteLineLineIntersection,
+    objectSnapPoint,
     toolFlyoutCommandButtons,
     unitsLabel,
   } = dependencies;

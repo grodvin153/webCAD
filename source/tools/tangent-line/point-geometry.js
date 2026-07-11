@@ -3,10 +3,48 @@
 import { SNAP_THRESHOLD } from '../../config.js';
 import { distance, distancePointToSegment } from '../../geometry.js';
 import { isCircularEntity, pointOnCircularEntity } from '../../intersections.js';
+import {
+  ellipseParameterOnEntity,
+  ellipsePoint,
+  isEllipseEntity,
+} from '../../ellipse/geometry.js';
+
+function normalizedEllipsePoint(entity, point) {
+  const cosine = Math.cos(entity.rotation);
+  const sine = Math.sin(entity.rotation);
+  const deltaX = point.x - entity.center.x;
+  const deltaY = point.y - entity.center.y;
+  return {
+    x: (deltaX * cosine + deltaY * sine) / entity.radiusX,
+    y: (-deltaX * sine + deltaY * cosine) / entity.radiusY,
+  };
+}
+
+function ellipseTangentParameters(startPoint, ellipse) {
+  const local = normalizedEllipsePoint(ellipse, startPoint);
+  const normalizedDistance = Math.hypot(local.x, local.y);
+  if (normalizedDistance <= 1 + SNAP_THRESHOLD) return [];
+
+  // In the ellipse local system, its tangent at t is x cos(t) + y sin(t) = 1.
+  // This keeps the contact parameters exact, including rotated ellipses.
+  const direction = Math.atan2(local.y, local.x);
+  const offset = Math.acos(1 / normalizedDistance);
+  return [direction - offset, direction + offset]
+    .map((parameter) => ((parameter % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2))
+    .filter((parameter) => ellipseParameterOnEntity(parameter, ellipse));
+}
 
 export function pointTangentSolutions(startPoint, operand) {
   const curve = operand?.primitive;
-  if (!startPoint || !isCircularEntity(curve)) return [];
+  if (!startPoint) return [];
+
+  if (isEllipseEntity(curve)) {
+    return ellipseTangentParameters(startPoint, curve).map((parameter) => ({
+      start: { ...startPoint },
+      end: ellipsePoint(curve, parameter),
+    }));
+  }
+  if (!isCircularEntity(curve)) return [];
 
   const centerDistance = distance(startPoint, curve.center);
   if (centerDistance <= curve.radius + SNAP_THRESHOLD) return [];

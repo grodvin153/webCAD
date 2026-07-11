@@ -8,6 +8,7 @@ import { entityMidpoint, normalizeAngle, normalizedVector } from '../../geometry
 import { coordinateZ } from '../../coordinates/point3.js';
 import { isCircularEntity } from '../../intersections.js';
 import { circularReferencePoints } from '../../input/snaps.js';
+import { ellipseReferencePoints, isEllipseEntity } from '../../ellipse/geometry.js';
 
 export function createGripReferences({ dimensionGeometry, polylineReferencePoints }) {
   function dimensionPlacementGripPoint(entity) {
@@ -77,6 +78,10 @@ export function createGripReferences({ dimensionGeometry, polylineReferencePoint
       return circularReferencePoints(selectedGrip.entity)
         .find((candidate) => candidate.key === selectedGrip.key)?.point || null;
     }
+    if (isEllipseEntity(selectedGrip.entity)) {
+      return ellipseReferencePoints(selectedGrip.entity)
+        .find((candidate) => candidate.key === selectedGrip.key)?.point || null;
+    }
     if (selectedGrip.entity.type === 'POLYLINE') {
       return polylineReferencePoints(selectedGrip.entity)
         .find((candidate) => candidate.key === selectedGrip.key)?.point || null;
@@ -94,6 +99,7 @@ export function createGripReferences({ dimensionGeometry, polylineReferencePoint
     if (isCircularEntity(selectedGrip.entity) && selectedGrip.key !== 'center') {
       return selectedGrip.entity.center;
     }
+    if (isEllipseEntity(selectedGrip.entity)) return selectedGrip.entity.center;
     if (selectedGrip.entity.type === 'POLYLINE') {
       const vertexMatch = selectedGrip.key.match(/^vertex-(\d+)$/);
       if (vertexMatch) {

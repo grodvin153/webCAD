@@ -8,8 +8,8 @@ import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js
 export const THREE_VIEW_STYLE = {
   preset: 'SK',
   skyColor: 0xbfe5fb,
-  groundColor: 0x9bbd91,
-  groundOpacity: 0.48,
+  groundColor: 0xb7ccb0,
+  groundOpacity: 0.28,
   groundRenderOrder: -20,
   background: 0xbfe5fb,
   drawingColor: 0x16282f,

@@ -4,11 +4,16 @@ export function createControllerTransformMethods(dependencies) {
   const {
     SNAP_THRESHOLD,
     cloneEntitiesWithOffset,
+    distance,
     entityCanExplode,
     extendCommand,
     formatNumber,
+    isPolylineJoinCompatibleEntity,
+    joinClosedPolylineLoops,
+    joinPolylineEntities,
     mirrorEntityAcrossAxis,
     moveEntityByVector,
+    PolylineEntity,
     polylineSegmentEntities,
     rotateEntityByAngle,
     transformedBlockContents,
@@ -122,6 +127,21 @@ export function createControllerTransformMethods(dependencies) {
     return true;
   }
 
+  startPolylineJoin() {
+    const selectedCount = this.doc.selectedEntities.size;
+    if (selectedCount) {
+      this.rememberSelectionSet();
+    }
+    this.setTool('polyline-join');
+    this.state.polylineJoinDraft = { selecting: true };
+    this.state.statusText = selectedCount
+      ? `Unir polilineas: ${selectedCount} entidad${selectedCount === 1 ? '' : 'es'} seleccionada${selectedCount === 1 ? '' : 's'} - seleccione mas o confirme`
+      : 'Unir polilineas: seleccione LINE y POLYLINE conectadas y confirme';
+    this.updateUiStatus();
+    this.renderer.draw();
+    return true;
+  }
+
   startExtend() {
     return extendCommand.start();
   }
@@ -212,12 +232,16 @@ export function createControllerTransformMethods(dependencies) {
     const sourceEntities = [...this.doc.selectedEntities];
     if (!sourceEntities.length) {
       this.state.statusText = 'Seleccione entidades para crear la simetria';
+      this.updateUiStatus();
+      this.renderer.draw();
       return false;
     }
     this.rememberSelectionSet(sourceEntities);
     this.state.mirrorDraft = { sourceEntities, firstPoint: null, selecting: false };
     this.state.statusText = `Simetria de ${sourceEntities.length} entidad${sourceEntities.length === 1 ? '' : 'es'} - indique primer punto del eje · OSNAP activo`;
     this.updateCanvasCursorMode();
+    this.updateUiStatus();
+    this.renderer.draw();
     return true;
   }
 
@@ -316,6 +340,59 @@ export function createControllerTransformMethods(dependencies) {
     this.state.statusText = `${explodedCount} elemento${explodedCount === 1 ? '' : 's'} descompuesto${explodedCount === 1 ? '' : 's'} en ${resultCount} ${resultCount === 1 ? 'entidad' : 'entidades'}${
       lostVariableWidth ? ' · anchura variable convertida a entidades simples' : ''
     }`;
+    return true;
+  }
+
+  confirmPolylineJoinSelection() {
+    if (!this.state.polylineJoinDraft?.selecting) {
+      return false;
+    }
+    const selectedEntities = [...this.doc.selectedEntities].filter(isPolylineJoinCompatibleEntity);
+    if (selectedEntities.length < 2) {
+      this.state.statusText = 'Seleccione al menos dos lineas, arcos o polilineas';
+      this.updateUiStatus();
+      this.renderer.draw();
+      return false;
+    }
+    this.rememberSelectionSet(selectedEntities);
+    const closedLoops = joinClosedPolylineLoops(selectedEntities, {
+      PolylineEntity,
+      tolerance: SNAP_THRESHOLD,
+    });
+    if (closedLoops.ok) {
+      const replaced = this.doc.replaceEntities(closedLoops.usedEntities, closedLoops.polylines);
+      if (!replaced) {
+        this.state.statusText = 'No se pudieron sustituir los recintos detectados';
+        return false;
+      }
+      this.setTool('select');
+      this.doc.clearSelection();
+      this.doc.addSelectedEntities(closedLoops.polylines);
+      this.state.statusText = closedLoops.message;
+      this.updateUiStatus();
+      this.renderer.draw();
+      return true;
+    }
+    const result = joinPolylineEntities(selectedEntities, {
+      PolylineEntity,
+      tolerance: SNAP_THRESHOLD,
+    });
+    if (!result.ok) {
+      this.state.statusText = closedLoops.message || result.message;
+      this.updateUiStatus();
+      this.renderer.draw();
+      return false;
+    }
+    const replaced = this.doc.replaceEntities(selectedEntities, [result.polyline]);
+    if (!replaced) {
+      this.state.statusText = 'No se pudo sustituir la seleccion por una polilinea';
+      return false;
+    }
+    this.setTool('select');
+    this.doc.selectEntity(result.polyline);
+    this.state.statusText = `Unir polilineas: creada una polilinea ${result.polyline.closed ? 'cerrada' : 'abierta'}`;
+    this.updateUiStatus();
+    this.renderer.draw();
     return true;
   }
 

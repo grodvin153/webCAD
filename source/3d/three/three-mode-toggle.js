@@ -5,6 +5,7 @@ const canvas3d = document.getElementById('three-canvas');
 const canvasWrap = document.querySelector('.canvas-wrap');
 const enterButton = document.getElementById('view-mode-3d');
 const exitButton = document.getElementById('view-mode-2d');
+const pushButton = document.getElementById('tool-push');
 const status = document.getElementById('three-mode-status');
 
 let viewer = null;
@@ -18,9 +19,14 @@ function documentEntities() {
   return typeof doc.topLevelEntities === 'function' ? doc.topLevelEntities() : doc.entities || [];
 }
 
+function cadDocument() {
+  return window.webcadDebug?.doc ?? null;
+}
+
 function viewSettings() {
   return {
     gridVisible: window.webcadDebug?.state?.snapEnabled !== false,
+    navigationDevice: window.webcadDebug?.state?.navigationDevice || 'trackpad',
   };
 }
 
@@ -28,6 +34,7 @@ function syncViewSettings() {
   if (!viewer || !threeModeActive) return;
   const settings = viewSettings();
   viewer.setGridVisible(settings.gridVisible);
+  viewer.setNavigationDevice?.(settings.navigationDevice);
 }
 
 function syncSize() {
@@ -67,19 +74,29 @@ async function show3dMode() {
     const settings = viewSettings();
     if (!viewer) {
       const { createThreeDemoViewer } = await import('./three-demo-viewer.js');
-      viewer = createThreeDemoViewer(canvas3d, { entities, gridVisible: settings.gridVisible });
+      viewer = createThreeDemoViewer(canvas3d, {
+        doc: cadDocument(),
+        entities,
+        getNavigationDevice: () => viewSettings().navigationDevice,
+        gridVisible: settings.gridVisible,
+        navigationDevice: settings.navigationDevice,
+        onStatus: (message) => { status.textContent = message; },
+      });
       resizeObserver = new ResizeObserver(syncSize);
       resizeObserver.observe(canvasWrap);
     }
     else {
       viewer.setEntities(entities);
       viewer.setGridVisible(settings.gridVisible);
+      viewer.setNavigationDevice?.(settings.navigationDevice);
     }
     syncSize();
     viewer.start();
     const count = viewer.getSegmentCount();
     const entityCount = viewer.getEntityCount();
-    status.textContent = `${entityCount} entidades · ${count} segmentos · arrastre para orbitar · rueda para zoom`;
+    status.textContent = settings.navigationDevice === 'mouse'
+      ? `${entityCount} entidades · ${count} segmentos · izquierdo orbita · central pan · rueda zoom`
+      : `${entityCount} entidades · ${count} segmentos · clic orbita · dos dedos pan · Shift zoom`;
   }
   catch (error) {
     console.error('No se pudo activar la vista 3D experimental', error);
@@ -92,6 +109,27 @@ async function show3dMode() {
 
 enterButton?.addEventListener('click', show3dMode);
 exitButton?.addEventListener('click', show2dMode);
+pushButton?.addEventListener('click', async () => {
+  if (!threeModeActive) {
+    await show3dMode();
+  }
+  viewer?.startPush?.();
+});
+
+document.addEventListener('keydown', async (event) => {
+  if (!threeModeActive || event.key.toLowerCase() !== 'p' ||
+      event.metaKey || event.ctrlKey || event.altKey) {
+    return;
+  }
+  if (event.target instanceof HTMLInputElement ||
+      event.target instanceof HTMLSelectElement ||
+      event.target instanceof HTMLTextAreaElement) {
+    return;
+  }
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  viewer?.startPush?.();
+}, true);
 
 document.addEventListener('click', () => {
   if (!threeModeActive) return;
@@ -103,9 +141,15 @@ document.addEventListener('keydown', () => {
   requestAnimationFrame(syncViewSettings);
 });
 
+window.addEventListener('webcad:navigation-device-change', () => {
+  if (!threeModeActive) return;
+  requestAnimationFrame(syncViewSettings);
+});
+
 window.webcadThreeMode = {
   enter: show3dMode,
   exit: show2dMode,
   getViewer: () => viewer,
   isActive: () => threeModeActive,
+  syncSettings: syncViewSettings,
 };

@@ -126,6 +126,7 @@ export function createGuideOverlayMethods(dependencies) {
       (this.state.tool === 'polar-array' && this.state.polarArrayDraft?.selecting) ||
       (this.state.tool === 'rotate' && this.state.rotateDraft?.selecting) ||
       (this.state.tool === 'mirror' && this.state.mirrorDraft?.selecting) ||
+      (this.state.tool === 'polyline-join' && this.state.polylineJoinDraft?.selecting) ||
       (this.state.dimensionDraft &&
         (this.state.dimensionDraft.phase === 'reference' || this.state.dimensionDraft.phase === 'second-line'))
     ) {

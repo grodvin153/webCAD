@@ -13,6 +13,7 @@ import {
   distance,
   pointAtLineParameter,
 } from './geometry.js';
+import { ellipseIntersectionPoints, isEllipseEntity } from './ellipse/geometry.js';
 
 export function lineSegmentIntersection(first, second) {
   const firstDeltaX = first.end.x - first.start.x;
@@ -254,6 +255,10 @@ export function entityIntersectionPoints(first, second, primitiveEntityParts) {
   if (first.type === 'LINE' && second.type === 'LINE') {
     const intersection = lineSegmentIntersection(first, second);
     return intersection ? [intersection] : [];
+  }
+
+  if (isEllipseEntity(first) || isEllipseEntity(second)) {
+    return ellipseIntersectionPoints(first, second);
   }
 
   if (first.type === 'XLINE' && second.type === 'XLINE') {

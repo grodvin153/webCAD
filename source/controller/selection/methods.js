@@ -15,12 +15,15 @@ export function createControllerSelectionMethods(dependencies) {
     distancePointToSegment,
     entitiesFromSelectionWindow,
     entityDistanceToPoint,
+    ellipseReferencePoints,
     expandBounds,
     formatNumber,
     gripPoint,
     gripReferencePoint,
     isCircularEntity,
+    isEllipseEntity,
     moveCircularGrip,
+    moveEllipseGrip,
     moveDimensionGrip,
     moveHatchGrip,
     movePolylineGrip,
@@ -58,6 +61,7 @@ export function createControllerSelectionMethods(dependencies) {
       if (entity.type === 'ARC' && distancePointToArc(point, entity) <= tolerance) {
         return entity;
       }
+      if (isEllipseEntity(entity) && entityDistanceToPoint(entity, point) <= tolerance) return entity;
       if (entity.type === 'POLYLINE' && entityDistanceToPoint(entity, point) <= tolerance) {
         return entity;
       }
@@ -141,6 +145,9 @@ export function createControllerSelectionMethods(dependencies) {
     if (this.state.tool === 'explode') {
       return Boolean(this.state.explodeDraft?.selecting);
     }
+    if (this.state.tool === 'polyline-join') {
+      return Boolean(this.state.polylineJoinDraft?.selecting);
+    }
     if (this.state.tool === 'extend') {
       return this.state.extendDraft?.phase === 'boundaries' ||
         this.state.extendDraft?.phase === 'targets';
@@ -182,7 +189,8 @@ export function createControllerSelectionMethods(dependencies) {
     this.canvas.classList.toggle('is-copy-tool',
       this.state.tool === 'copy' && this.state.copyDraft?.selecting ||
       this.state.tool === 'stretch' && this.state.stretchDraft?.selecting ||
-      this.state.tool === 'polar-array' && this.state.polarArrayDraft?.selecting);
+      this.state.tool === 'polar-array' && this.state.polarArrayDraft?.selecting ||
+      this.state.tool === 'polyline-join' && this.state.polylineJoinDraft?.selecting);
     this.canvas.classList.toggle('is-rotate-tool',
       this.state.tool === 'rotate' && this.state.rotateDraft?.selecting ||
       this.state.tool === 'scale' && this.state.scaleDraft?.selecting ||
@@ -241,6 +249,12 @@ export function createControllerSelectionMethods(dependencies) {
           if (distance(point, candidate.point) <= tolerance) {
             return { entity, key: candidate.key };
           }
+        }
+        continue;
+      }
+      if (isEllipseEntity(entity)) {
+        for (const candidate of ellipseReferencePoints(entity)) {
+          if (distance(point, candidate.point) <= tolerance) return { entity, key: candidate.key };
         }
         continue;
       }
@@ -330,6 +344,11 @@ export function createControllerSelectionMethods(dependencies) {
       if (moved) {
         this.doc.markDirty();
       }
+      return moved;
+    }
+    if (isEllipseEntity(grip.entity)) {
+      const moved = moveEllipseGrip(grip.entity, grip.key, targetPoint);
+      if (moved) this.doc.markDirty();
       return moved;
     }
     if (grip.entity.type === 'POLYLINE') {
@@ -457,6 +476,7 @@ export function createControllerSelectionMethods(dependencies) {
       (this.state.tool === 'scale' && this.state.scaleDraft?.selecting) ||
       (this.state.tool === 'erase' && this.state.eraseDraft?.selecting) ||
       (this.state.tool === 'explode' && this.state.explodeDraft?.selecting) ||
+      (this.state.tool === 'polyline-join' && this.state.polylineJoinDraft?.selecting) ||
       (this.state.tool === 'extend' && this.state.extendDraft?.phase === 'boundaries') ||
       this.state.tool === 'select-set'
     ) {

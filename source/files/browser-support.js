@@ -1,13 +1,8 @@
 /* webCAD - Avisos de compatibilidad del guardado local | SPDX-License-Identifier: GPL-3.0-or-later */
 
 export function createUnsupportedLocalSaveNotifier({ onStatus } = {}) {
-  let notified = false;
-
   return () => {
-    const message = 'Este navegador no permite elegir y sobrescribir un archivo local. Se descargara una copia; para guardado directo y autoguardado local use un navegador compatible.';
+    const message = 'Este navegador no permite elegir carpeta ni sobrescribir un archivo local desde webCAD. Se descargara una copia con el nombre indicado.';
     onStatus?.(message);
-    if (notified) return;
-    notified = true;
-    window.alert(message);
   };
 }

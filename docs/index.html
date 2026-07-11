@@ -7,7 +7,7 @@
   <meta name="author" content="Gonzalo Rodriguez">
   <meta name="copyright" content="Copyright (C) 2026 Gonzalo Rodriguez">
   <title>webCAD</title>
-  <script type="module" crossorigin src="./assets/main-oWHIptcR.js"></script>
+  <script type="module" crossorigin src="./assets/main-CVb8GRKe.js"></script>
   <link rel="stylesheet" crossorigin href="./assets/main-DkZzxXiC.css">
 </head>
 <body>
@@ -21,10 +21,13 @@
             <button class="submenu-item" type="button" data-command="new">Nuevo dibujo</button>
             <button class="submenu-item" type="button" data-command="save">Guardar</button>
             <button class="submenu-item" type="button" data-command="save-as">Guardar como...</button>
+            <button class="submenu-item" type="button" data-command="open-webcad">Abrir proyecto webCAD...</button>
+            <button class="submenu-item" type="button" data-command="save-webcad">Guardar proyecto webCAD...</button>
             <button class="submenu-item" type="button" data-command="drawing-profile">Tipo de dibujo...</button>
             <button class="submenu-item" type="button" data-command="settings">Configuracion...</button>
             <button class="submenu-item" type="button" data-command="import-dxf">Importar DXF</button>
             <button class="submenu-item" type="button" data-command="export-dxf">Exportar DXF</button>
+            <button class="submenu-item" type="button" data-command="export-stl">Exportar STL...</button>
             <button class="submenu-item" type="button" data-command="import-png">Importar PNG...</button>
           </div>
         </div>
@@ -44,9 +47,10 @@
           <div class="submenu" role="menu">
             <button class="submenu-item" type="button" data-command="line">Linea</button>
             <button class="submenu-item" type="button" data-command="tangent-line">Linea tangente a dos objetos</button>
-            <button class="submenu-item" type="button" data-command="point-tangent-line">Linea de punto a tangente</button>
+            <button class="submenu-item" type="button" data-command="point-tangent-line">Linea de punto a tangente a curva</button>
             <button class="submenu-item" type="button" data-command="xline">Linea infinita</button>
-            <button class="submenu-item" type="button" data-command="polyline">Polilinea (P)</button>
+            <button class="submenu-item" type="button" data-command="polyline">Polilinea (PL)</button>
+            <button class="submenu-item" type="button" data-command="regular-polygon">Poligono regular (PG)</button>
             <button class="submenu-item" type="button" data-command="rectangle">Rectangulo</button>
             <button class="submenu-item" type="button" data-command="text">Texto</button>
             <button class="submenu-item" type="button" data-command="hatch">Sombreado</button>
@@ -55,6 +59,7 @@
             <button class="submenu-item" type="button" data-command="arc-center-radius">Arco centro-radio</button>
             <button class="submenu-item" type="button" data-command="arc-3p">Arco 3 puntos</button>
             <button class="submenu-item" type="button" data-command="arc-center-start-end">Arco centro-inicio-final</button>
+            <button class="submenu-item" type="button" data-command="ellipse">Elipse por ejes (EL)</button>
           </div>
         </div>
         <div class="menu-item">
@@ -259,6 +264,10 @@
         <span>Matriz polar</span>
         <input id="polar-array-count-input" type="number" min="2" max="360" step="1" value="6" inputmode="numeric" aria-label="Numero de elementos de la matriz polar">
       </label>
+      <label id="regular-polygon-sides-control" class="fillet-radius-control" title="Numero de lados del poligono regular" hidden>
+        <span>Poligono</span>
+        <input id="regular-polygon-sides-input" type="number" min="3" max="360" step="1" value="6" inputmode="numeric" aria-label="Numero de lados del poligono regular">
+      </label>
       <div class="navigation-device-control" role="group" aria-label="Periferico de navegacion">
         <button
           id="navigation-mouse"
@@ -443,8 +452,8 @@
         class="tool-button"
         type="button"
         data-tool="polyline"
-        data-shortcut="P"
-        title="Polilinea (P)"
+        data-shortcut="PL"
+        title="Polilinea (PL)"
         aria-label="Polilinea"
       >
         <svg viewBox="0 0 48 48" aria-hidden="true">
@@ -453,6 +462,22 @@
           <circle cx="18" cy="14" r="2.5"></circle>
           <circle cx="29" cy="31" r="2.5"></circle>
           <circle cx="40" cy="10" r="2.5"></circle>
+        </svg>
+      </button>
+      <button
+        id="tool-regular-polygon"
+        class="tool-button"
+        type="button"
+        data-tool="regular-polygon"
+        data-shortcut="PG"
+        title="Poligono regular (PG)"
+        aria-label="Poligono regular"
+      >
+        <svg viewBox="0 0 48 48" aria-hidden="true">
+          <path d="M24 8 38 18 33 35 15 35 10 18z"></path>
+          <circle cx="24" cy="8" r="2.5"></circle>
+          <circle cx="24" cy="24" r="2"></circle>
+          <path d="M24 24 38 18"></path>
         </svg>
       </button>
       <button
@@ -550,6 +575,21 @@
           <button class="tool-flyout-item" type="button" data-command="arc-center-start-end">Centro-inicio-final</button>
         </div>
       </div>
+      <button
+        id="tool-ellipse"
+        class="tool-button"
+        type="button"
+        data-tool="ellipse"
+        data-shortcut="EL"
+        title="Elipse por ejes (EL)"
+        aria-label="Elipse por ejes"
+      >
+        <svg viewBox="0 0 48 48" aria-hidden="true">
+          <ellipse cx="24" cy="24" rx="17" ry="10" transform="rotate(-25 24 24)"></ellipse>
+          <path d="m8 31 32-14M19 13l10 22"></path>
+          <circle cx="8" cy="31" r="2"></circle><circle cx="40" cy="17" r="2"></circle>
+        </svg>
+      </button>
       </section>
 
       <section class="tool-section" aria-labelledby="tools-modify-title">
@@ -785,6 +825,24 @@
           <path d="m24 8 2 7 5-5M8 24l7 2-5 5M40 24l-7 2 5 5M24 40l2-7 5 5"></path>
         </svg>
       </button>
+      <button
+        id="tool-polyline-join"
+        class="tool-button"
+        type="button"
+        data-tool="polyline-join"
+        data-shortcut="PJ"
+        title="Unir polilineas (PJ)"
+        aria-label="Unir polilineas"
+      >
+        <svg viewBox="0 0 48 48" aria-hidden="true">
+          <path d="M8 13h11l6 7"></path>
+          <path d="M8 35h11l6-7"></path>
+          <path d="M25 20 34 28 40 28"></path>
+          <circle cx="25" cy="20" r="2"></circle>
+          <circle cx="25" cy="28" r="2"></circle>
+          <path d="M25 20v8"></path>
+        </svg>
+      </button>
       </section>
     </aside>
 
@@ -935,10 +993,28 @@
           </div>
         </div>
       </section>
+
+      <section class="tool-section tool-section-3d" aria-labelledby="tools-3d-title">
+        <h2 id="tools-3d-title" class="tool-section-title">3D</h2>
+        <button
+          id="tool-push"
+          class="tool-button"
+          type="button"
+          title="Push (P)"
+          aria-label="Push"
+        >
+          <svg viewBox="0 0 48 48" aria-hidden="true">
+            <path d="M13 31 24 37 35 31 24 25z"></path>
+            <path d="M13 18 24 24 35 18 24 12zM13 18v13M35 18v13M24 24v13"></path>
+            <path d="M24 8v-4M19 8l5-5 5 5"></path>
+          </svg>
+        </button>
+      </section>
     </aside>
   </main>
 
   <input id="import-dxf-input" type="file" accept=".dxf,text/plain" hidden>
+  <input id="import-webcad-input" type="file" accept=".webcad,application/json" hidden>
   <input id="import-png-input" type="file" accept=".png,image/png" hidden>
   <div id="image-editor-dialog" class="cad-dialog-backdrop" hidden>
     <section class="cad-dialog image-editor-dialog" role="dialog" aria-modal="true" aria-labelledby="image-editor-title">

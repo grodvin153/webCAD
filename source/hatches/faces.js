@@ -12,6 +12,10 @@ export function createHatchFaces(dependencies) {
     circularParameter,
     curveGroupsFromFaceEdges,
     distance,
+    ellipseNormalizedParameter,
+    ellipseParameterAtNormalized,
+    ellipsePoint,
+    ellipseSweep,
     entityArcSweep,
     entityIntersectionPoints,
     lineParameter,
@@ -19,6 +23,7 @@ export function createHatchFaces(dependencies) {
     pointAtLineParameter,
     polygonSignedArea,
     polylineSegmentEntities,
+    isEllipseEntity,
     uniqueSortedParameters,
   } = dependencies;
 
@@ -27,7 +32,7 @@ export function createHatchFaces(dependencies) {
       if (entity.type === 'POLYLINE') {
         return polylineSegmentEntities(entity);
       }
-      return entity.type === 'LINE' || entity.type === 'ARC' || entity.type === 'CIRCLE'
+      return entity.type === 'LINE' || entity.type === 'ARC' || entity.type === 'CIRCLE' || isEllipseEntity(entity)
         ? [entity]
         : [];
     });
@@ -39,8 +44,12 @@ export function createHatchFaces(dependencies) {
       entity,
       entity.type === 'ARC'
         ? [0, 0.5, 1]
+        : entity.type === 'ELLIPSE_ARC'
+          ? [0, 0.5, 1]
         : entity.type === 'CIRCLE'
           ? [0, 0.25, 0.5, 0.75, 1]
+          : entity.type === 'ELLIPSE'
+            ? [0, 0.25, 0.5, 0.75, 1]
           : [0, 1],
     ]));
     const entityBounds = entities.map((entity) => entity.bounds());
@@ -53,10 +62,14 @@ export function createHatchFaces(dependencies) {
         for (const intersection of entityIntersectionPoints(entity, other)) {
           parameters.get(entity).push(entity.type === 'LINE'
             ? lineParameter(entity, intersection)
-            : circularParameter(entity, intersection));
+            : isEllipseEntity(entity)
+              ? ellipseNormalizedParameter(entity, intersection)
+              : circularParameter(entity, intersection));
           parameters.get(other).push(other.type === 'LINE'
             ? lineParameter(other, intersection)
-            : circularParameter(other, intersection));
+            : isEllipseEntity(other)
+              ? ellipseNormalizedParameter(other, intersection)
+              : circularParameter(other, intersection));
         }
       }
     });
@@ -159,15 +172,24 @@ export function createHatchFaces(dependencies) {
         else {
           const totalSweep = entity.type === 'CIRCLE'
             ? TWO_PI
-            : entityArcSweep(entity);
+            : isEllipseEntity(entity)
+              ? ellipseSweep(entity)
+              : entityArcSweep(entity);
           const intervalSweep = totalSweep * (endParameter - startParameter);
           const subdivisionCount = Math.max(1, Math.ceil(intervalSweep / (TWO_PI / 96)));
-          let previousPoint = pointAtCircularParameter(entity, startParameter);
+          const pointAtParameter = isEllipseEntity(entity)
+            ? (parameter) => ellipsePoint(entity, ellipseParameterAtNormalized(entity, parameter))
+            : null;
+          let previousPoint = isEllipseEntity(entity)
+            ? pointAtParameter(startParameter)
+            : pointAtCircularParameter(entity, startParameter);
           let previousLogical = true;
           for (let subdivision = 1; subdivision <= subdivisionCount; subdivision += 1) {
             const parameter = startParameter +
               (endParameter - startParameter) * subdivision / subdivisionCount;
-            const nextPoint = pointAtCircularParameter(entity, parameter);
+            const nextPoint = isEllipseEntity(entity)
+              ? pointAtParameter(parameter)
+              : pointAtCircularParameter(entity, parameter);
             const nextLogical = subdivision === subdivisionCount;
             const previousParameter = startParameter +
               (endParameter - startParameter) * (subdivision - 1) / subdivisionCount;
@@ -231,7 +253,7 @@ export function createHatchFaces(dependencies) {
       if (closed && polygon.length >= 3 && Math.abs(polygonSignedArea(polygon)) > SNAP_THRESHOLD) {
         const curveGroups = curveGroupsFromFaceEdges(faceEdges);
         curveGroups.forEach((group) => {
-          if (group.type === 'ARC' && group.indices.length >= 3) {
+          if ((group.type === 'ARC' || group.type === 'ELLIPSE_ARC') && group.indices.length >= 3) {
             gripIndices.push(group.indices[Math.floor((group.indices.length - 1) * 0.5)]);
           }
         });

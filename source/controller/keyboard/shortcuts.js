@@ -70,6 +70,25 @@ export function createControllerShortcutMethods(dependencies) {
     }
 
     const key = event.key.toLowerCase();
+    if (this.shortcutPrefix === 'p') {
+      this.clearShortcutPrefix();
+      if (key === 'l') {
+        event.preventDefault();
+        runCommand('polyline');
+        return true;
+      }
+      if (key === 'j') {
+        event.preventDefault();
+        runCommand('polyline-join');
+        return true;
+      }
+      if (key === 'g') {
+        event.preventDefault();
+        runCommand('regular-polygon');
+        return true;
+      }
+      return false;
+    }
     if (this.shortcutPrefix === 'x') {
       this.clearShortcutPrefix();
       if (key === 'l') {
@@ -84,6 +103,11 @@ export function createControllerShortcutMethods(dependencies) {
       if (key === 's') {
         event.preventDefault();
         runCommand('scale');
+        return true;
+      }
+      if (key === 'l') {
+        event.preventDefault();
+        runCommand('ellipse');
         return true;
       }
       return false;
@@ -155,7 +179,7 @@ export function createControllerShortcutMethods(dependencies) {
       event.preventDefault();
       this.clearShortcutPrefix();
       this.armShortcutPrefix('e', () => runCommand('stretch'));
-      this.state.statusText = 'E: Estirar · pulse S para Escala (ES)';
+      this.state.statusText = 'E: Estirar · ES Escala · EL Elipse';
       this.updateUiStatus();
       return true;
     }

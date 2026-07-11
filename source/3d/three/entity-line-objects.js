@@ -3,6 +3,7 @@
 import * as THREE from 'three';
 
 import { entityLineSegments3d } from './entities-to-three-lines.js';
+import { visibleEntitiesForThreeView } from './entity-visibility.js';
 import { createWideLineSegments, THREE_VIEW_STYLE } from './three-scene-style.js';
 
 function entityKey(entity, fallbackIndex) {
@@ -37,7 +38,7 @@ export function entitiesToThreeEntityGroup(entities, options = {}) {
   let segmentCount = 0;
   let entityCount = 0;
 
-  (Array.isArray(entities) ? entities : []).forEach((entity, index) => {
+  visibleEntitiesForThreeView(entities).forEach((entity, index) => {
     const object = entityToThreeLineObject(entity, options);
     if (!object) return;
     object.userData.entityKey = entityKey(entity, index);

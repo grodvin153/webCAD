@@ -52,6 +52,11 @@ export function rotateEntityByAngle(entity, basePoint, angleDegrees) {
     }
     return true;
   }
+  if (entity.type === 'ELLIPSE' || entity.type === 'ELLIPSE_ARC') {
+    entity.center = rotatePointAround(entity.center, basePoint, angleDegrees);
+    entity.rotation = normalizeAngle(entity.rotation - angleDegrees * Math.PI / 180);
+    return true;
+  }
 
   if (entity.type === 'TEXT') {
     entity.insertionPoint = rotatePointAround(entity.insertionPoint, basePoint, angleDegrees);

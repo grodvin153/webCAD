@@ -2,13 +2,14 @@
 
 import * as THREE from 'three';
 
-const TWO_PI = Math.PI * 2;
-const DEFAULT_CURVE_SEGMENTS = 64;
+import {
+  directedArcSweep,
+  sampleArcByCenter,
+  sampleEllipseEntity,
+  TWO_PI,
+} from './curve-discretization.js';
 
-function normalizeAngle(angle) {
-  const normalized = angle % TWO_PI;
-  return normalized < 0 ? normalized + TWO_PI : normalized;
-}
+const DEFAULT_CURVE_SEGMENTS = 64;
 
 function mappedPoint(point, invertY) {
   const x = Number(point?.x);
@@ -33,9 +34,7 @@ function circularSegments(entity, options) {
   const clockwise = entity.clockwise !== false;
   const sweep = isCircle
     ? TWO_PI
-    : clockwise
-      ? normalizeAngle(endAngle - startAngle)
-      : normalizeAngle(startAngle - endAngle);
+    : directedArcSweep(startAngle, endAngle, clockwise);
   const stepCount = Math.max(2, Math.ceil(options.curveSegments * sweep / TWO_PI));
   const direction = clockwise ? 1 : -1;
   const points = Array.from({ length: stepCount + 1 }, (_, index) => {
@@ -50,6 +49,14 @@ function circularSegments(entity, options) {
     segment(points[index], points[index + 1], entity, index));
 }
 
+function ellipseSegments(entity, options) {
+  const points = sampleEllipseEntity(entity, options)
+    .map((point) => mappedPoint(point, options.invertY))
+    .filter(Boolean);
+  return Array.from({ length: Math.max(0, points.length - 1) }, (_, index) =>
+    segment(points[index], points[index + 1], entity, index));
+}
+
 function polylineSegments(entity, options) {
   if (!Array.isArray(entity?.vertices) || entity.vertices.length < 2) return [];
   const segmentCount = entity.closed
@@ -58,24 +65,45 @@ function polylineSegments(entity, options) {
   const result = [];
   for (let index = 0; index < segmentCount; index += 1) {
     const definition = entity.segments?.[index];
-    if (definition?.type === 'ARC') {
-      options.onWarning?.('Los arcos internos de POLYLINE todavía se omiten en la vista 3D', entity);
-      continue;
-    }
     const start = mappedPoint(entity.vertices[index], options.invertY);
     const end = mappedPoint(
       entity.vertices[(index + 1) % entity.vertices.length],
       options.invertY,
     );
-    if (start && end) result.push(segment(start, end, entity, index));
+    if (!start || !end) continue;
+    if (definition?.type === 'ARC') {
+      const center = mappedPoint(definition.center, options.invertY);
+      if (!center) {
+        options.onWarning?.('Arco interno de POLYLINE omitido por centro no valido', entity);
+        continue;
+      }
+      const arcPoints = sampleArcByCenter({
+        start,
+        end,
+        center,
+        clockwise: settingsArcClockwise(definition.clockwise !== false, options.invertY),
+      }, options);
+      for (let step = 0; step < arcPoints.length - 1; step += 1) {
+        result.push(segment(arcPoints[step], arcPoints[step + 1], entity, index));
+      }
+      continue;
+    }
+    result.push(segment(start, end, entity, index));
   }
   return result;
+}
+
+function settingsArcClockwise(clockwise, invertY) {
+  return invertY ? !clockwise : clockwise;
 }
 
 export function entityLineSegments3d(entity, options = {}) {
   const settings = {
     curveSegments: Math.max(8, Number(options.curveSegments) || DEFAULT_CURVE_SEGMENTS),
     invertY: options.invertY !== false,
+    arcChordTolerance: options.arcChordTolerance,
+    maxArcSegmentAngle: options.maxArcSegmentAngle,
+    maxArcSegments: options.maxArcSegments,
     onWarning: options.onWarning,
   };
   if (entity?.type === 'LINE') {
@@ -88,6 +116,9 @@ export function entityLineSegments3d(entity, options = {}) {
   }
   if (entity?.type === 'CIRCLE' || entity?.type === 'ARC') {
     return circularSegments(entity, settings);
+  }
+  if (entity?.type === 'ELLIPSE' || entity?.type === 'ELLIPSE_ARC') {
+    return ellipseSegments(entity, settings);
   }
   settings.onWarning?.(`Entidad ${entity?.type ?? 'desconocida'} omitida en la vista 3D`, entity);
   return [];

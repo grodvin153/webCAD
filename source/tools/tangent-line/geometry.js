@@ -7,6 +7,7 @@
 import { SNAP_THRESHOLD } from '../../config.js';
 import { distance, distancePointToSegment } from '../../geometry.js';
 import { isCircularEntity, pointOnCircularEntity } from '../../intersections.js';
+import { isEllipseEntity } from '../../ellipse/geometry.js';
 
 function samePoint(first, second) {
   return distance(first, second) <= SNAP_THRESHOLD;
@@ -15,6 +16,15 @@ function samePoint(first, second) {
 export function circularTangentOperand(entity, pickPoint, operandAt) {
   const operand = operandAt(entity, pickPoint);
   return operand && isCircularEntity(operand.primitive) ? operand : null;
+}
+
+export function pointCurveTangentOperand(entity, pickPoint, operandAt) {
+  const operand = operandAt(entity, pickPoint);
+  if (operand && (isCircularEntity(operand.primitive) || isEllipseEntity(operand.primitive))) return operand;
+  if (isEllipseEntity(entity)) {
+    return { entity, primitive: entity, segmentIndex: null, pickPoint: { ...pickPoint } };
+  }
+  return null;
 }
 
 export function commonTangentSolutions(firstOperand, secondOperand) {

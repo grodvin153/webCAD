@@ -18,6 +18,7 @@ export function createEntityTransformations({
   ArcEntity,
   BlockReferenceEntity,
   CircleEntity,
+  EllipseEntity,
   DimensionEntity,
   HatchEntity,
   LineEntity,
@@ -123,6 +124,27 @@ export function createEntityTransformations({
           lineColor: entity.lineColor,
           groupId,
           clockwise: entity.clockwise !== false,
+        },
+      );
+    }
+
+    if (entity.type === 'ELLIPSE' || entity.type === 'ELLIPSE_ARC') {
+      return new EllipseEntity(
+        offsetPoint(entity.center, vector),
+        entity.radiusX,
+        entity.radiusY,
+        entity.rotation,
+        {
+          layer: entity.layer,
+          lineStyle: entity.lineStyle,
+          lineType: entity.lineType,
+          lineColor: entity.lineColor,
+          groupId,
+          ...(entity.type === 'ELLIPSE_ARC' ? {
+            startParameter: entity.startParameter,
+            endParameter: entity.endParameter,
+            clockwise: entity.clockwise !== false,
+          } : {}),
         },
       );
     }

@@ -7,6 +7,7 @@ export function createBlockRuntime(dependencies) {
   const {
     ArcEntity,
     CircleEntity,
+    EllipseEntity,
     DEFAULT_LAYER,
     DEFAULT_LINE_COLOR,
     DEFAULT_LINE_STYLE,
@@ -94,6 +95,7 @@ export function createBlockRuntime(dependencies) {
     ArcEntity,
     BlockReferenceEntity,
     CircleEntity,
+    EllipseEntity,
     DimensionEntity,
     HatchEntity,
     LineEntity,

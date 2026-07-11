@@ -21,6 +21,10 @@ export function moveEntityByVector(entity, vector) {
     entity.center = offsetPoint(entity.center, vector);
     return true;
   }
+  if (entity.type === 'ELLIPSE' || entity.type === 'ELLIPSE_ARC') {
+    entity.center = offsetPoint(entity.center, vector);
+    return true;
+  }
 
   if (entity.type === 'TEXT') {
     entity.insertionPoint = offsetPoint(entity.insertionPoint, vector);

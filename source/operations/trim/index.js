@@ -7,6 +7,7 @@
 export function createTrimOperations(dependencies) {
   const {
     trimCircularEntityAtPoint,
+    trimEllipseEntityAtPoint,
     trimHatchEntityAtPoint,
     trimLineEntityAtPoint,
     trimLineGroupAtPoint,
@@ -32,6 +33,10 @@ export function createTrimOperations(dependencies) {
 
     if (entity.type === 'LINE') {
       return trimLineEntityAtPoint(doc, entity, pickPoint);
+    }
+
+    if (entity.type === 'ELLIPSE' || entity.type === 'ELLIPSE_ARC') {
+      return trimEllipseEntityAtPoint(doc, entity, pickPoint);
     }
 
     return trimCircularEntityAtPoint(doc, entity, pickPoint);

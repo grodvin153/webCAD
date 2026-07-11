@@ -15,6 +15,7 @@ import {
   pointOnCircularEntity,
 } from '../intersections.js';
 import { xlineIntersectsBounds } from '../tools/xline/geometry.js';
+import { ellipseIntersectionPoints, ellipsePoint, isEllipseEntity } from '../ellipse/geometry.js';
 import { selectionWindowMode } from './geometry.js';
 
 export function updateSelectionWindow(windowState, mouseWorld, mouseScreen) {
@@ -77,6 +78,14 @@ function circularCrossesBounds(entity, bounds, edges = boundsEdges(bounds)) {
     .some((point) => pointOnCircularEntity(point, entity)));
 }
 
+function ellipseCrossesBounds(entity, bounds, edges = boundsEdges(bounds)) {
+  if (entity.type === 'ELLIPSE_ARC' && (
+    boundsContainsPoint(bounds, ellipsePoint(entity, entity.startParameter)) ||
+    boundsContainsPoint(bounds, ellipsePoint(entity, entity.endParameter))
+  )) return true;
+  return edges.some((edge) => ellipseIntersectionPoints({ type: 'LINE', ...edge }, entity).length > 0);
+}
+
 function polylineSegment(entity, index) {
   const segment = entity.segments[index];
   const start = entity.vertices[index];
@@ -130,6 +139,7 @@ export function entityCrossesSelectionBounds(entity, bounds) {
   if (entity.type === 'CIRCLE' || entity.type === 'ARC') {
     return circularCrossesBounds(entity, bounds, edges);
   }
+  if (isEllipseEntity(entity)) return ellipseCrossesBounds(entity, bounds, edges);
   if (entity.type === 'POLYLINE') return polylineCrossesBounds(entity, bounds, edges);
   if (entity.type === 'HATCH') return hatchCrossesBounds(entity, bounds, edges);
   if (entity.type === 'INSERT' && typeof entity.expandedEntities === 'function') {

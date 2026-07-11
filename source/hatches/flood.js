@@ -11,6 +11,7 @@ export function createHatchFlood(dependencies) {
     closedLineGroupPolygon,
     curveArrangementFaces,
     distance,
+    ellipsePolygon,
     pointInPolygon,
     polygonSignedArea,
   } = dependencies;
@@ -34,6 +35,10 @@ export function createHatchFlood(dependencies) {
       }
       if (entity.type === 'CIRCLE' && distance(entity.center, point) < entity.radius - SNAP_THRESHOLD) {
         candidates.push(circlePolygon(entity));
+      }
+      if (entity.type === 'ELLIPSE') {
+        const polygon = ellipsePolygon(entity);
+        if (pointInPolygon(point, polygon)) candidates.push(polygon);
       }
     });
     curveArrangementFaces(doc).forEach((polygon) => {

@@ -16,6 +16,8 @@ export function createControllerLifecycleMethods(dependencies) {
     dimensionPlacementPoint,
     dimensionToolButtons,
     eraseToolButton,
+    ellipseCommand,
+    ellipseToolButton,
     explodeToolButton,
     extendCommand,
     extendToolButton,
@@ -35,8 +37,11 @@ export function createControllerLifecycleMethods(dependencies) {
     polarArrayCommand,
     polarArrayCountControl,
     polarArrayToolButton,
+    polylineJoinToolButton,
     polylineToolButton,
     rectangleToolButton,
+    regularPolygonSidesControl,
+    regularPolygonToolButton,
     resolveCursorPoint,
     resolvePointForState,
     rotateToolButton,
@@ -50,6 +55,7 @@ export function createControllerLifecycleMethods(dependencies) {
     syncFilletRadiusControl,
     syncOffsetDistanceControl,
     syncPolarArrayCountControl,
+    syncRegularPolygonSidesControl,
     tangentLineToolButton,
     textToolButton,
     toolFlyoutCommandButtons,
@@ -76,16 +82,19 @@ export function createControllerLifecycleMethods(dependencies) {
     this.state.pendingLineStart = null;
     this.state.polylineDraft = null;
     this.state.rectangleDraft = null;
+    this.state.regularPolygonDraft = null;
     this.state.textDraft = null;
     this.state.hatchDraft = null;
     this.state.circleDraft = null;
     this.state.arcDraft = null;
+    this.state.ellipseDraft = null;
     this.state.tangentLineDraft = null;
     this.state.xlineDraft = null;
     this.state.copyDraft = null;
     this.state.moveDraft = null;
     this.state.stretchDraft = null;
     this.state.polarArrayDraft = null;
+    this.state.polylineJoinDraft = null;
     this.state.rotateDraft = null;
     this.state.scaleDraft = null;
     this.state.mirrorDraft = null;
@@ -116,6 +125,7 @@ export function createControllerLifecycleMethods(dependencies) {
       tool === 'line' ||
       tool === 'polyline' ||
       tool === 'rectangle' ||
+      tool === 'regular-polygon' ||
       tool === 'text' ||
       tool === 'hatch' ||
       tool === 'circle-center' ||
@@ -123,6 +133,7 @@ export function createControllerLifecycleMethods(dependencies) {
       tool === 'arc-center-radius' ||
       tool === 'arc-3p' ||
       tool === 'arc-center-start-end' ||
+      tool === 'ellipse' ||
       tool === 'tangent-line' ||
       tool === 'point-tangent-line' ||
       tool === 'xline' ||
@@ -144,10 +155,11 @@ export function createControllerLifecycleMethods(dependencies) {
       tool === 'extend' ||
       tool === 'erase' ||
       tool === 'explode'
+      || tool === 'polyline-join'
       || tool === 'image-insert'
       || tool === 'image-calibrate'
     ) {
-      if (tool !== 'copy' && tool !== 'move' && tool !== 'stretch' && tool !== 'polar-array' && tool !== 'rotate' && tool !== 'scale' && tool !== 'mirror' && tool !== 'select-set' && tool !== 'erase' && tool !== 'explode' && tool !== 'extend' && tool !== 'block-create') {
+      if (tool !== 'copy' && tool !== 'move' && tool !== 'stretch' && tool !== 'polar-array' && tool !== 'rotate' && tool !== 'scale' && tool !== 'mirror' && tool !== 'select-set' && tool !== 'erase' && tool !== 'explode' && tool !== 'polyline-join' && tool !== 'extend' && tool !== 'block-create') {
         this.doc.selectEntity(null);
       }
     }
@@ -155,6 +167,7 @@ export function createControllerLifecycleMethods(dependencies) {
     offsetDistanceControl.hidden = tool !== 'offset';
     chamferDistanceControl.hidden = tool !== 'chamfer';
     polarArrayCountControl.hidden = tool !== 'polar-array';
+    regularPolygonSidesControl.hidden = tool !== 'regular-polygon';
     if (tool === 'fillet') {
       syncFilletRadiusControl();
     }
@@ -166,6 +179,9 @@ export function createControllerLifecycleMethods(dependencies) {
     }
     if (tool === 'polar-array') {
       syncPolarArrayCountControl();
+    }
+    if (tool === 'regular-polygon') {
+      syncRegularPolygonSidesControl();
     }
     this.state.statusText = tool === 'select'
       ? 'Seleccionar entidad'
@@ -183,6 +199,8 @@ export function createControllerLifecycleMethods(dependencies) {
           ? 'Borrar: seleccione objetos y confirme'
         : tool === 'explode'
           ? 'Descomponer: seleccione bloques o polilineas y confirme'
+        : tool === 'polyline-join'
+          ? 'Unir polilineas: seleccione LINE y POLYLINE conectadas y confirme'
           : tool === 'copy'
             ? 'Copiar: indique punto origen'
             : tool === 'move'
@@ -208,7 +226,7 @@ export function createControllerLifecycleMethods(dependencies) {
                 : tool === 'tangent-line'
                   ? 'Linea tangente: seleccione el primer objeto'
                 : tool === 'point-tangent-line'
-                  ? 'Linea punto-tangente: indique el punto inicial'
+                  ? 'Linea de punto a tangente a curva: indique el punto inicial'
                 : tool === 'xline'
                   ? 'Linea infinita: indique un punto'
                 : tool === 'text'
@@ -227,8 +245,12 @@ export function createControllerLifecycleMethods(dependencies) {
                   ? 'Arco 3 puntos: indique primer punto'
                   : tool === 'arc-center-start-end'
                     ? 'Arco centro-inicio-final: indique centro'
-                    : tool === 'rectangle'
-                      ? 'Rectangulo: indique primera esquina'
+                      : tool === 'rectangle'
+                        ? 'Rectangulo: indique primera esquina'
+                      : tool === 'regular-polygon'
+                        ? 'Poligono regular: indique centro'
+                      : tool === 'ellipse'
+                        ? 'Elipse: indique primer extremo del eje mayor'
                       : tool === 'polyline'
                         ? 'Polilinea: indique primer punto'
                       : 'Linea por dos puntos';
@@ -239,6 +261,7 @@ export function createControllerLifecycleMethods(dependencies) {
     xlineToolButton.classList.toggle('is-active', tool === 'xline');
     polylineToolButton.classList.toggle('is-active', tool === 'polyline');
     rectangleToolButton.classList.toggle('is-active', tool === 'rectangle');
+    regularPolygonToolButton.classList.toggle('is-active', tool === 'regular-polygon');
     textToolButton.classList.toggle('is-active', tool === 'text');
     hatchToolButton.classList.toggle('is-active', tool === 'hatch');
     circleToolButton.classList.toggle('is-active', tool === 'circle-center' || tool === 'circle-3p');
@@ -246,6 +269,7 @@ export function createControllerLifecycleMethods(dependencies) {
       'is-active',
       tool === 'arc-center-radius' || tool === 'arc-3p' || tool === 'arc-center-start-end',
     );
+    ellipseToolButton.classList.toggle('is-active', tool === 'ellipse');
     blockToolButton.classList.toggle('is-active', tool === 'block-create' || tool === 'block-insert');
     trimToolButton.classList.toggle('is-active', tool === 'trim');
     filletToolButton.classList.toggle('is-active', tool === 'fillet');
@@ -261,6 +285,7 @@ export function createControllerLifecycleMethods(dependencies) {
     mirrorToolButton.classList.toggle('is-active', tool === 'mirror');
     eraseToolButton.classList.toggle('is-active', tool === 'erase');
     explodeToolButton.classList.toggle('is-active', tool === 'explode');
+    polylineJoinToolButton.classList.toggle('is-active', tool === 'polyline-join');
     dimensionToolButtons.forEach((button) => {
       button.classList.toggle('is-active', button.dataset.command === tool);
     });
@@ -270,7 +295,7 @@ export function createControllerLifecycleMethods(dependencies) {
     this.canvas.classList.toggle('is-select-tool', tool === 'select');
     this.canvas.classList.toggle(
       'is-line-tool',
-      tool === 'line' || tool === 'tangent-line' || tool === 'point-tangent-line' || tool === 'xline' || tool === 'polyline' || tool === 'rectangle' || DIMENSION_TOOLS.has(tool),
+      tool === 'line' || tool === 'tangent-line' || tool === 'point-tangent-line' || tool === 'xline' || tool === 'polyline' || tool === 'rectangle' || tool === 'regular-polygon' || tool === 'ellipse' || DIMENSION_TOOLS.has(tool),
     );
     this.canvas.classList.toggle('is-text-tool', tool === 'text');
     this.canvas.classList.toggle('is-hatch-tool', tool === 'hatch');
@@ -284,7 +309,8 @@ export function createControllerLifecycleMethods(dependencies) {
     this.canvas.classList.toggle('is-copy-tool',
       tool === 'copy' && this.state.copyDraft?.selecting ||
       tool === 'stretch' && this.state.stretchDraft?.selecting ||
-      tool === 'polar-array' && this.state.polarArrayDraft?.selecting);
+      tool === 'polar-array' && this.state.polarArrayDraft?.selecting ||
+      tool === 'polyline-join' && this.state.polylineJoinDraft?.selecting);
     this.canvas.classList.toggle('is-move-tool', tool === 'move' && this.state.moveDraft?.selecting);
     this.canvas.classList.toggle('is-rotate-tool',
       tool === 'rotate' && this.state.rotateDraft?.selecting ||
@@ -319,6 +345,7 @@ export function createControllerLifecycleMethods(dependencies) {
     return this.state.tool === 'select' &&
       !this.state.pendingLineStart &&
       !this.state.polylineDraft &&
+      !this.state.regularPolygonDraft &&
       !this.state.circleDraft &&
       !this.state.arcDraft &&
       !this.state.tangentLineDraft &&
@@ -366,6 +393,7 @@ export function createControllerLifecycleMethods(dependencies) {
       this.state.tool === 'line' ||
       this.state.tool === 'polyline' ||
       this.state.tool === 'rectangle' ||
+      this.state.tool === 'regular-polygon' ||
       this.state.tool === 'text' ||
       this.state.tool === 'hatch' ||
       this.state.tool === 'circle-center' ||
@@ -373,6 +401,7 @@ export function createControllerLifecycleMethods(dependencies) {
       this.state.tool === 'arc-center-radius' ||
       this.state.tool === 'arc-3p' ||
       this.state.tool === 'arc-center-start-end' ||
+      this.state.tool === 'ellipse' ||
       this.state.tool === 'tangent-line' ||
       this.state.tool === 'point-tangent-line' ||
       this.state.tool === 'xline' ||
@@ -393,15 +422,18 @@ export function createControllerLifecycleMethods(dependencies) {
       this.state.tool === 'extend' ||
       this.state.tool === 'erase' ||
       this.state.tool === 'explode' ||
+      this.state.tool === 'polyline-join' ||
       this.state.tool === 'image-insert' ||
       this.state.tool === 'image-calibrate' ||
       this.state.pendingLineStart ||
       this.state.polylineDraft ||
       this.state.rectangleDraft ||
+      this.state.regularPolygonDraft ||
       this.state.textDraft ||
       this.state.hatchDraft ||
       this.state.circleDraft ||
       this.state.arcDraft ||
+      this.state.ellipseDraft ||
       this.state.tangentLineDraft ||
       this.state.xlineDraft ||
       this.state.copyDraft ||
@@ -417,6 +449,7 @@ export function createControllerLifecycleMethods(dependencies) {
       this.state.selectionSetDraft ||
       this.state.eraseDraft ||
       this.state.explodeDraft ||
+      this.state.polylineJoinDraft ||
       this.state.extendDraft ||
       this.state.blockCreateDraft ||
       this.state.blockInsertDraft ||
@@ -504,6 +537,9 @@ export function createControllerLifecycleMethods(dependencies) {
     if (this.state.tool === 'explode' && this.state.explodeDraft?.selecting) {
       return this.confirmExplodeSelection();
     }
+    if (this.state.tool === 'polyline-join' && this.state.polylineJoinDraft?.selecting) {
+      return this.confirmPolylineJoinSelection();
+    }
     if (this.state.tool === 'extend') {
       return extendCommand.enter();
     }
@@ -518,6 +554,9 @@ export function createControllerLifecycleMethods(dependencies) {
         this.state,
       ));
     }
+    if (this.state.tool === 'ellipse' && this.state.ellipseDraft?.points.length && this.state.mouseWorld) {
+      return ellipseCommand.pick(resolveCursorPoint(this.state.mouseWorld, this.state));
+    }
     if (this.state.pendingLineStart && this.state.tool === 'line') {
       this.setTool('select');
       this.state.statusText = 'Linea terminada';
@@ -530,6 +569,7 @@ export function createControllerLifecycleMethods(dependencies) {
       this.state.tool === 'line' ||
       this.state.tool === 'polyline' ||
       this.state.tool === 'rectangle' ||
+      this.state.tool === 'regular-polygon' ||
       this.state.tool === 'text' ||
       this.state.tool === 'hatch' ||
       this.state.tool === 'circle-center' ||
@@ -537,6 +577,7 @@ export function createControllerLifecycleMethods(dependencies) {
       this.state.tool === 'arc-center-radius' ||
       this.state.tool === 'arc-3p' ||
       this.state.tool === 'arc-center-start-end' ||
+      this.state.tool === 'ellipse' ||
       this.state.tool === 'tangent-line' ||
       this.state.tool === 'point-tangent-line' ||
       this.state.tool === 'xline' ||
@@ -560,9 +601,11 @@ export function createControllerLifecycleMethods(dependencies) {
       this.state.circleDraft ||
       this.state.polylineDraft ||
       this.state.rectangleDraft ||
+      this.state.regularPolygonDraft ||
       this.state.textDraft ||
       this.state.hatchDraft ||
       this.state.arcDraft ||
+      this.state.ellipseDraft ||
       this.state.tangentLineDraft ||
       this.state.xlineDraft ||
       this.state.copyDraft ||

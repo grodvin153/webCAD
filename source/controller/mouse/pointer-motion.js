@@ -14,6 +14,7 @@ export function createControllerPointerMotionMethods(dependencies) {
     hatchCommand,
     hatchDialogController,
     imageEditor,
+    isPolylineJoinCompatibleEntity,
     isCircularEntity,
     keyboardPointTarget,
     offsetCommand,
@@ -77,6 +78,8 @@ export function createControllerPointerMotionMethods(dependencies) {
           ? `Seleccion para borrar por ${mode}`
         : this.state.selectionWindow.purpose === 'explode'
           ? `Seleccion para descomponer por ${mode}`
+        : this.state.selectionWindow.purpose === 'polyline-join'
+          ? `Seleccion para unir polilineas por ${mode}`
             : this.state.selectionWindow.purpose === 'extend-boundaries'
               ? `Limites para alargar por ${mode}`
               : this.state.selectionWindow.purpose === 'extend-targets'
@@ -158,6 +161,7 @@ export function createControllerPointerMotionMethods(dependencies) {
           selectionWindow.purpose !== 'mirror' &&
           selectionWindow.purpose !== 'erase' &&
           selectionWindow.purpose !== 'explode' &&
+          selectionWindow.purpose !== 'polyline-join' &&
           selectionWindow.purpose !== 'extend-boundaries' &&
           selectionWindow.purpose !== 'extend-targets'
         ) {
@@ -185,6 +189,8 @@ export function createControllerPointerMotionMethods(dependencies) {
               ? 'Seleccione objetos para borrar'
             : selectionWindow.purpose === 'explode'
               ? 'Seleccione bloques o polilineas para descomponer'
+            : selectionWindow.purpose === 'polyline-join'
+              ? 'Seleccione lineas o polilineas para unir'
               : selectionWindow.purpose === 'extend-boundaries'
                 ? 'Seleccione limites para alargar'
                 : selectionWindow.purpose === 'extend-targets'
@@ -193,18 +199,21 @@ export function createControllerPointerMotionMethods(dependencies) {
       }
       else {
         const entities = this.selectedEntitiesFromWindow(selectionWindow);
+        const selectableEntities = selectionWindow.purpose === 'polyline-join'
+          ? entities.filter(isPolylineJoinCompatibleEntity)
+          : entities;
         if (selectionWindow.purpose === 'stretch') {
-          stretchCommand.addWindow(selectionWindow, entities);
+          stretchCommand.addWindow(selectionWindow, selectableEntities);
         }
         else if (selectionWindow.purpose === 'polar-array') {
-          polarArrayCommand.addEntities(entities);
+          polarArrayCommand.addEntities(selectableEntities);
         }
         else if (selectionWindow.purpose === 'extend-targets') {
-          extendCommand.completeWindow(selectionWindow.purpose, entities);
+          extendCommand.completeWindow(selectionWindow.purpose, selectableEntities);
           return;
         }
         else if (selectionWindow.purpose === 'extend-boundaries') {
-          extendCommand.completeWindow(selectionWindow.purpose, entities);
+          extendCommand.completeWindow(selectionWindow.purpose, selectableEntities);
         }
         else if (
           selectionWindow.purpose === 'copy' ||
@@ -215,12 +224,13 @@ export function createControllerPointerMotionMethods(dependencies) {
           selectionWindow.purpose === 'scale' ||
           selectionWindow.purpose === 'mirror' ||
           selectionWindow.purpose === 'erase' ||
-          selectionWindow.purpose === 'explode'
+          selectionWindow.purpose === 'explode' ||
+          selectionWindow.purpose === 'polyline-join'
         ) {
-          this.doc.addSelectedEntities(entities);
+          this.doc.addSelectedEntities(selectableEntities);
         }
         else {
-          this.doc.addSelectedEntities(entities);
+          this.doc.addSelectedEntities(selectableEntities);
           this.rememberSelectionSet();
         }
         const mode = selectionWindowMode(selectionWindow) === 'window' ? 'ventana' : 'captura';
@@ -245,6 +255,8 @@ export function createControllerPointerMotionMethods(dependencies) {
             : selectionWindow.purpose === 'erase'
               ? this.doc.selectedEntities.size
             : selectionWindow.purpose === 'explode'
+              ? this.doc.selectedEntities.size
+            : selectionWindow.purpose === 'polyline-join'
               ? this.doc.selectedEntities.size
               : selectionWindow.purpose === 'extend-boundaries'
                 ? this.doc.selectedEntities.size
@@ -273,6 +285,8 @@ export function createControllerPointerMotionMethods(dependencies) {
                     ? ' para borrar'
                   : selectionWindow.purpose === 'explode'
                     ? ' para descomponer'
+                  : selectionWindow.purpose === 'polyline-join'
+                    ? ' para unir'
                     : selectionWindow.purpose === 'extend-boundaries' ? ' como limite' : ''
             } por ${mode}`
           : `Sin seleccion por ${mode}`;

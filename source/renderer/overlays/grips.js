@@ -8,6 +8,7 @@ export function createGripOverlayMethods(dependencies) {
     SNAP_MARKER_SIZE,
     circularReferencePoints,
     dimensionReferencePoints,
+    ellipseReferencePoints,
     polylineReferencePoints,
   } = dependencies;
 
@@ -194,6 +195,22 @@ export function createGripOverlayMethods(dependencies) {
     ctx.restore();
   }
 
+  drawEllipseGrips(ctx, entity) {
+    const gripSize = 7 / this.state.viewScale;
+    ctx.save();
+    ctx.strokeStyle = SELECTED_COLOR;
+    ctx.lineWidth = 1.5 / this.state.viewScale;
+    for (const candidate of ellipseReferencePoints(entity)) {
+      const active = this.state.selectedGrip?.entity === entity && this.state.selectedGrip?.key === candidate.key;
+      ctx.fillStyle = active ? SELECTED_COLOR : '#ffffff';
+      ctx.beginPath();
+      ctx.rect(candidate.point.x - gripSize * 0.5, candidate.point.y - gripSize * 0.5, gripSize, gripSize);
+      ctx.fill();
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
   drawObjectSnapMarker(ctx) {
     const snap = this.state.activeObjectSnap;
     const visibleForTool = (
@@ -204,6 +221,7 @@ export function createGripOverlayMethods(dependencies) {
       this.state.tool === 'arc-center-radius' ||
       this.state.tool === 'arc-3p' ||
       this.state.tool === 'arc-center-start-end' ||
+      this.state.tool === 'ellipse' ||
       this.state.tool === 'point-tangent-line' ||
       this.state.tool === 'xline' ||
       (this.state.tool === 'copy' && !this.state.copyDraft?.selecting) ||

@@ -12,6 +12,15 @@ function downloadFallback(content, format, fileName) {
   URL.revokeObjectURL(url);
 }
 
+function fallbackPromptMessage(format) {
+  return [
+    `Nombre del archivo ${format?.label || ''}:`,
+    '',
+    'Safari y Firefox descargaran una copia con este nombre.',
+    'La carpeta de destino depende de las preferencias de descargas del navegador.',
+  ].join('\n');
+}
+
 export function createLocalFileManager({
   registry,
   defaultFormatId,
@@ -45,10 +54,29 @@ export function createLocalFileManager({
     return true;
   }
 
+  function suggestedNameForFormat(formatId) {
+    const targetFormat = registry.get(formatId);
+    const currentFormat = registry.get(currentFormatId);
+    let name = String(suggestedName || `dibujo${targetFormat?.extension || ''}`);
+    if (currentFormat?.extension && name.toLowerCase().endsWith(currentFormat.extension)) {
+      name = name.slice(0, -currentFormat.extension.length);
+    }
+    return registry.ensureExtension(name, formatId);
+  }
+
+  function chooseFallbackFileName(formatId) {
+    const format = registry.get(formatId);
+    const proposedName = suggestedNameForFormat(formatId);
+    const requestedName = window.prompt(fallbackPromptMessage(format), proposedName);
+    if (requestedName === null) return null;
+    const cleanName = String(requestedName).trim() || proposedName;
+    return registry.ensureExtension(cleanName, formatId);
+  }
+
   async function chooseHandle(formatId) {
     const format = registry.get(formatId);
     return window.showSaveFilePicker({
-      suggestedName: registry.ensureExtension(suggestedName, formatId),
+      suggestedName: suggestedNameForFormat(formatId),
       types: registry.pickerTypes(formatId),
       excludeAcceptAllOption: false,
     }).then((handle) => ({ handle, format }));
@@ -66,10 +94,16 @@ export function createLocalFileManager({
       if (options.automatic && !currentHandle) return false;
 
       if (!nativeSaveSupported()) {
+        const fileName = chooseFallbackFileName(formatId);
+        if (!fileName) {
+          onStatus?.('Guardado cancelado');
+          return false;
+        }
         onUnsupported?.();
         const content = await format.serialize();
-        const fileName = registry.ensureExtension(suggestedName, formatId);
         downloadFallback(content, format, fileName);
+        suggestedName = fileName;
+        currentFormatId = formatId;
         onStatus?.(`${fileName} exportado; este navegador no permite escritura directa`);
         return true;
       }

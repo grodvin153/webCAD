@@ -48,6 +48,12 @@ export function scaleEntityByFactors(entity, scaleX, scaleY) {
     entity.radius *= uniformScale;
     return true;
   }
+  if (entity.type === 'ELLIPSE' || entity.type === 'ELLIPSE_ARC') {
+    entity.center = scalePointFromOrigin(entity.center, scaleX, scaleY);
+    entity.radiusX *= uniformScale;
+    entity.radiusY *= uniformScale;
+    return true;
+  }
   if (entity.type === 'TEXT') {
     entity.insertionPoint = scalePointFromOrigin(entity.insertionPoint, scaleX, scaleY);
     entity.height *= uniformScale;

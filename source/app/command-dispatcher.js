@@ -16,6 +16,8 @@ export function createCommandDispatcher({
     if (command === 'redo') actions.redoDrawing();
     if (command === 'save') void localFileManager.save();
     if (command === 'save-as') void localFileManager.saveAs();
+    if (command === 'save-webcad') actions.saveWebcadProject();
+    if (command === 'open-webcad') actions.openWebcadProject();
     if (command === 'select') controller.setTool('select');
     if (command === 'select-set') controller.startSelectionSet();
     if (command === 'line') controller.setTool('line');
@@ -23,6 +25,8 @@ export function createCommandDispatcher({
     if (command === 'point-tangent-line') commands.pointTangentLine.start();
     if (command === 'xline') commands.xline.start();
     if (command === 'polyline') controller.setTool('polyline');
+    if (command === 'regular-polygon') commands.regularPolygon.start();
+    if (command === 'ellipse') commands.ellipse.start();
     if (command === 'rectangle') controller.setTool('rectangle');
     if (command === 'text') controller.startText();
     if (command === 'hatch') controller.startHatch();
@@ -53,6 +57,7 @@ export function createCommandDispatcher({
     if (command === 'extend') controller.startExtend();
     if (command === 'erase') controller.startErase();
     if (command === 'explode') controller.startExplode();
+    if (command === 'polyline-join') controller.startPolylineJoin();
     if (command === 'toggle-ortho') actions.toggleOrthoMode();
     if (command === 'toggle-grid') actions.toggleGridSnap();
     if (command === 'toggle-lineweight') actions.toggleLineWeightDisplay();
@@ -63,6 +68,7 @@ export function createCommandDispatcher({
     if (command === 'drawing-profile') actions.openDrawingProfileDialog();
     if (command === 'settings') actions.openSettingsDialog();
     if (command === 'export-dxf') actions.exportDxf();
+    if (command === 'export-stl') actions.exportStl();
     if (command === 'import-dxf') actions.importDxf();
     if (command === 'import-png') actions.importPng();
     if (command === 'about') actions.showAbout();

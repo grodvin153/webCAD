@@ -19,6 +19,7 @@ export function createDrawingPreviewMethods(dependencies) {
     dimensionDraftEntity,
     dimensionPlacementPoint,
     distance,
+    ellipseCommand,
     getLineStyle,
     keyboardCoordinateTarget,
     normalizeBoundsFromPoints,
@@ -28,6 +29,7 @@ export function createDrawingPreviewMethods(dependencies) {
     polylineTangentArcToPoint,
     profileLineTypeDash,
     rectangleTargetPoint,
+    regularPolygonCommand,
     resolveCursorPoint,
   } = dependencies;
 
@@ -172,6 +174,37 @@ export function createDrawingPreviewMethods(dependencies) {
         ctx.beginPath();
         ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
         ctx.fill();
+      }
+    }
+
+    if (this.state.regularPolygonDraft?.center) {
+      const vertices = regularPolygonCommand.previewAt(this.state.mouseWorld);
+      if (vertices?.length) {
+        ctx.beginPath();
+        ctx.moveTo(vertices[0].x, vertices[0].y);
+        for (let index = 1; index < vertices.length; index += 1) {
+          ctx.lineTo(vertices[index].x, vertices[index].y);
+        }
+        ctx.closePath();
+        ctx.stroke();
+
+        const center = this.state.regularPolygonDraft.center;
+        const radius = 4 / this.state.viewScale;
+        ctx.fillStyle = PREVIEW_COLOR;
+        for (const point of [center, vertices[0]]) {
+          ctx.beginPath();
+          ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    }
+
+    if (this.state.ellipseDraft?.points.length >= 2) {
+      const preview = ellipseCommand.previewAt(resolveCursorPoint(this.state.mouseWorld, this.state));
+      if (preview) {
+        ctx.beginPath();
+        ctx.ellipse(preview.center.x, preview.center.y, preview.radiusX, preview.radiusY, preview.rotation, 0, TWO_PI);
+        ctx.stroke();
       }
     }
 

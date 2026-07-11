@@ -24,6 +24,7 @@ import {
 } from '../intersections.js';
 import { snapPoint } from './coordinates.js';
 import { inferenceAxisLine as inferenceAxisLineFor } from './inference.js';
+import { ellipseReferencePoints, isEllipseEntity } from '../ellipse/geometry.js';
 
 export function addSnapCandidate(point, candidate, tolerance, currentBest) {
   const snapDistance = distance(point, candidate.point);
@@ -107,7 +108,8 @@ export function createInputResolvers({
     const snapEntities = sourceSnapEntities
       .filter((entity) => entity !== options.ignoreEntity)
       .flatMap((entity) => entity.type === 'INSERT' ? primitiveEntityParts(entity) : [entity])
-      .filter((entity) => entity.type === 'LINE' || entity.type === 'XLINE' || entity.type === 'POLYLINE' || isCircularEntity(entity));
+      .filter((entity) => entity.type === 'LINE' || entity.type === 'XLINE' || entity.type === 'POLYLINE' ||
+        isCircularEntity(entity) || isEllipseEntity(entity));
     const nearbySnapEntities = snapEntities.filter((entity) =>
       entity !== options.ignoreEntity && entityIsNearPoint(entity, point, tolerance),
     );
@@ -331,6 +333,16 @@ export function createInputResolvers({
       }
     }
 
+    for (const entity of snapEntities.filter(isEllipseEntity)) {
+      for (const candidate of ellipseReferencePoints(entity)) {
+        if (options.axisLine &&
+            distancePointToInfiniteLine(candidate.point, options.axisLine.point, options.axisLine.direction) > tolerance) {
+          continue;
+        }
+        bestSnap = addSnapCandidate(point, { ...candidate, entity }, tolerance, bestSnap);
+      }
+    }
+
     return bestSnap;
   }
 
@@ -340,6 +352,9 @@ export function createInputResolvers({
     }
     if (state.rectangleDraft?.firstPoint) {
       return state.rectangleDraft.firstPoint;
+    }
+    if (state.regularPolygonDraft?.center) {
+      return state.regularPolygonDraft.center;
     }
     if (state.polylineDraft?.vertices.length) {
       return state.polylineDraft.vertices[state.polylineDraft.vertices.length - 1];
@@ -385,6 +400,17 @@ export function createInputResolvers({
     }
     if (state.arcDraft?.mode === '3p' && state.arcDraft.points.length) {
       return state.arcDraft.points[state.arcDraft.points.length - 1];
+    }
+    if (state.ellipseDraft?.points.length) {
+      if (state.ellipseDraft.points.length >= 2) {
+        const [first, second] = state.ellipseDraft.points;
+        return {
+          x: (first.x + second.x) * 0.5,
+          y: (first.y + second.y) * 0.5,
+          z: (coordinateZ(first) + coordinateZ(second)) * 0.5,
+        };
+      }
+      return state.ellipseDraft.points[0];
     }
     if (state.dimensionDraft?.points?.length && state.dimensionDraft.phase !== 'placement') {
       return state.dimensionDraft.points[state.dimensionDraft.points.length - 1];

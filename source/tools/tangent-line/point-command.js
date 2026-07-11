@@ -1,6 +1,6 @@
 /* webCAD - Orden de linea desde punto a tangente | SPDX-License-Identifier: GPL-3.0-or-later */
 
-import { circularTangentOperand } from './geometry.js';
+import { pointCurveTangentOperand } from './geometry.js';
 import {
   bestPointTangentSolution,
   pointTangentSolutions,
@@ -19,7 +19,7 @@ export function createPointTangentLineCommand({
   function start() {
     setTool('point-tangent-line');
     state.tangentLineDraft = { startPoint: null };
-    state.statusText = 'Linea punto-tangente: indique el punto inicial · OSNAP disponible';
+    state.statusText = 'Linea de punto a tangente a curva: indique el punto inicial · OSNAP disponible';
     refresh();
     return true;
   }
@@ -27,7 +27,7 @@ export function createPointTangentLineCommand({
   function previewAt(entity, cursorPoint) {
     const startPoint = state.tangentLineDraft?.startPoint;
     if (!startPoint || !entity || !cursorPoint) return null;
-    const operand = circularTangentOperand(entity, cursorPoint, operandAt);
+    const operand = pointCurveTangentOperand(entity, cursorPoint, operandAt);
     if (!operand) return null;
     const solutions = pointTangentSolutions(startPoint, operand);
     return {
@@ -43,7 +43,7 @@ export function createPointTangentLineCommand({
       const startPoint = resolvePoint(point, null);
       state.tangentLineDraft = { startPoint };
       const snapText = state.activeObjectSnap ? ' con OSNAP' : '';
-      state.statusText = `Punto inicial indicado${snapText} - seleccione circulo, arco o tramo curvo`;
+      state.statusText = `Punto inicial indicado${snapText} - seleccione circulo, arco, elipse o tramo curvo`;
       refresh();
       return true;
     }
@@ -53,7 +53,7 @@ export function createPointTangentLineCommand({
     if (!preview?.solution) {
       state.statusText = entity
         ? 'No existe una tangente valida desde ese punto a la curva'
-        : 'Seleccione un circulo, arco o tramo curvo de polilinea';
+        : 'Seleccione un circulo, arco, elipse o tramo curvo';
       refresh();
       return false;
     }
@@ -70,14 +70,14 @@ export function createPointTangentLineCommand({
     if (!state.tangentLineDraft?.startPoint) {
       resolvePoint(point, null);
       state.statusText = state.activeObjectSnap
-        ? 'Linea punto-tangente: OSNAP disponible - clic para fijar el punto inicial'
-        : 'Linea punto-tangente: indique el punto inicial · OSNAP disponible';
+        ? 'Linea de punto a tangente a curva: OSNAP disponible - clic para fijar el punto inicial'
+        : 'Linea de punto a tangente a curva: indique el punto inicial · OSNAP disponible';
       return;
     }
     const preview = previewAt(entity, point);
     state.statusText = preview?.solution
       ? 'Tangente disponible - clic para crear la linea'
-      : 'Seleccione un circulo, arco o tramo curvo';
+      : 'Seleccione un circulo, arco, elipse o tramo curvo';
   }
 
   return { pick, previewAt, start, updateGuidance };

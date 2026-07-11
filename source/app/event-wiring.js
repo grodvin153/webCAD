@@ -36,6 +36,7 @@ export function bindApplicationEvents({
     filletRadiusInput,
     offsetDistanceInput,
     polarArrayCountInput,
+    regularPolygonSidesInput,
     chamferDistanceFirstInput,
     chamferDistanceSecondInput,
     blockEditorSaveButton,
@@ -46,6 +47,7 @@ export function bindApplicationEvents({
     pointTangentLineToolButton,
     xlineToolButton,
     polylineToolButton,
+    regularPolygonToolButton,
     rectangleToolButton,
     textToolButton,
     hatchToolButton,
@@ -53,6 +55,7 @@ export function bindApplicationEvents({
     circleToolMenuButton,
     arcToolButton,
     arcToolMenuButton,
+    ellipseToolButton,
     blockToolButton,
     blockToolMenuButton,
     toolFlyoutCommandButtons,
@@ -70,6 +73,7 @@ export function bindApplicationEvents({
     mirrorToolButton,
     eraseToolButton,
     explodeToolButton,
+    polylineJoinToolButton,
     fitButton,
     undoButton,
     redoButton,
@@ -158,6 +162,7 @@ export function bindApplicationEvents({
   bindNumericControl(filletRadiusInput, controls.updateFilletRadiusFromInput);
   bindNumericControl(offsetDistanceInput, controls.updateOffsetDistanceFromInput);
   bindNumericControl(polarArrayCountInput, controls.updatePolarArrayCountFromInput, { live: true });
+  bindNumericControl(regularPolygonSidesInput, controls.updateRegularPolygonSidesFromInput, { live: true });
   [chamferDistanceFirstInput, chamferDistanceSecondInput].forEach((input) =>
     bindNumericControl(input, controls.updateChamferDistancesFromInput));
 
@@ -168,13 +173,16 @@ export function bindApplicationEvents({
     [selectToolButton, 'select'], [lineToolButton, 'line'],
     [tangentLineToolButton, 'tangent-line'], [pointTangentLineToolButton, 'point-tangent-line'],
     [xlineToolButton, 'xline'], [polylineToolButton, 'polyline'],
-    [rectangleToolButton, 'rectangle'], [textToolButton, 'text'], [hatchToolButton, 'hatch'],
+    [regularPolygonToolButton, 'regular-polygon'], [rectangleToolButton, 'rectangle'],
+    [textToolButton, 'text'], [hatchToolButton, 'hatch'],
+    [ellipseToolButton, 'ellipse'],
     [trimToolButton, 'trim'], [extendToolButton, 'extend'], [filletToolButton, 'fillet'],
     [offsetToolButton, 'offset'], [chamferToolButton, 'chamfer'], [copyToolButton, 'copy'],
     [moveToolButton, 'move'], [stretchToolButton, 'stretch'],
     [polarArrayToolButton, 'polar-array'], [rotateToolButton, 'rotate'],
     [scaleToolButton, 'scale'], [mirrorToolButton, 'mirror'], [eraseToolButton, 'erase'],
-    [explodeToolButton, 'explode'], [fitButton, 'fit'], [undoButton, 'undo'], [redoButton, 'redo'],
+    [explodeToolButton, 'explode'], [polylineJoinToolButton, 'polyline-join'],
+    [fitButton, 'fit'], [undoButton, 'undo'], [redoButton, 'redo'],
     [newButton, 'new'], [saveButton, 'save'], [exportDxfButton, 'export-dxf'],
     [importDxfButton, 'import-dxf'],
   ]);
