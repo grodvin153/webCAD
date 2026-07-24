@@ -13,7 +13,7 @@ export const THREE_VIEW_STYLE = {
   groundRenderOrder: -20,
   background: 0xbfe5fb,
   drawingColor: 0x16282f,
-  drawingLineWidth: 3,
+  drawingLineWidth: 1.6,
   drawingPlaneLift: 0.08,
   drawingRenderOrder: 20,
   gridMinorColor: 0x8a9b8f,
@@ -37,6 +37,22 @@ function colorVector(color) {
 function finiteNumber(value, fallback = 0) {
   const number = Number(value);
   return Number.isFinite(number) ? number : fallback;
+}
+
+function applyLineDepthBias(material, value) {
+  const depthBias = Math.max(0, finiteNumber(value, 0));
+  if (depthBias <= 0) return;
+  material.userData.webcadDepthBias = depthBias;
+  material.onBeforeCompile = (shader) => {
+    const assignment = 'gl_Position = clip;';
+    if (!shader.vertexShader.includes(assignment)) return;
+    shader.vertexShader = shader.vertexShader.replace(
+      assignment,
+      `${assignment}\n\t\t\tgl_Position.z -= ${depthBias.toExponential(8)} * gl_Position.w;`,
+    );
+  };
+  material.customProgramCacheKey = () => `webcad-line-depth-bias:${depthBias}`;
+  material.needsUpdate = true;
 }
 
 export function disposeThreeObject(object) {
@@ -82,11 +98,20 @@ export function createWideLineSegments(segments, options = {}) {
     transparent: options.transparent === true,
     worldUnits: false,
   };
+  if (options.depthFunc !== undefined) {
+    materialSettings.depthFunc = options.depthFunc;
+  }
   if (options.dashed === true) {
     materialSettings.dashSize = options.dashSize ?? THREE_VIEW_STYLE.axisNegativeDashSize;
     materialSettings.gapSize = options.gapSize ?? THREE_VIEW_STYLE.axisNegativeGapSize;
   }
   const material = new LineMaterial(materialSettings);
+  if (options.polygonOffset !== undefined) {
+    material.polygonOffset = options.polygonOffset === true;
+    material.polygonOffsetFactor = finiteNumber(options.polygonOffsetFactor, 0);
+    material.polygonOffsetUnits = finiteNumber(options.polygonOffsetUnits, 0);
+  }
+  applyLineDepthBias(material, options.depthBias);
   const line = new LineSegments2(geometry, material);
   if (Number.isFinite(options.renderOrder)) line.renderOrder = options.renderOrder;
   line.computeLineDistances();
@@ -133,16 +158,15 @@ function createProceduralGridMaterial(minorStep, majorStep) {
       minorWidth: { value: 0.9 },
     },
     vertexShader: `
-      varying vec2 vWorldXY;
+      varying vec2 vGridXY;
 
       void main() {
-        vec4 worldPosition = modelMatrix * vec4(position, 1.0);
-        vWorldXY = worldPosition.xy;
+        vGridXY = position.xy;
         gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
       }
     `,
     fragmentShader: `
-      varying vec2 vWorldXY;
+      varying vec2 vGridXY;
       uniform float majorAlpha;
       uniform vec3 majorColor;
       uniform float majorStep;
@@ -153,7 +177,7 @@ function createProceduralGridMaterial(minorStep, majorStep) {
       uniform float minorWidth;
 
       float gridLine(float step, float width) {
-        vec2 coord = vWorldXY / step;
+        vec2 coord = vGridXY / step;
         vec2 grid = abs(fract(coord - 0.5) - 0.5) / fwidth(coord);
         float line = min(grid.x, grid.y);
         return 1.0 - min(line / width, 1.0);
@@ -171,32 +195,46 @@ function createProceduralGridMaterial(minorStep, majorStep) {
   });
 }
 
-export function createSketchGrid(center = new THREE.Vector3(), extent = 20, options = {}) {
-  const group = new THREE.Group();
-  group.name = 'webcad-3d-grid';
-  group.position.z = -0.002;
-
+function gridExtentForSketch(extent) {
   const gridExtent = Math.max(2000, extent * 80);
   const minorStep = niceStep(Math.max(extent, 50) / 7);
-  const majorStep = minorStep * 5;
-  const lineLimit = Math.max(10, Math.ceil(gridExtent / minorStep) * minorStep);
+  return {
+    lineLimit: Math.max(10, Math.ceil(gridExtent / minorStep) * minorStep),
+    minorStep,
+  };
+}
+
+export function createSketchGround(center = new THREE.Vector3(), extent = 20) {
+  const { lineLimit } = gridExtentForSketch(extent);
+  const groundColor = new THREE.Color(THREE_VIEW_STYLE.background)
+    .lerp(new THREE.Color(THREE_VIEW_STYLE.groundColor), THREE_VIEW_STYLE.groundOpacity);
 
   const ground = new THREE.Mesh(
     new THREE.PlaneGeometry(lineLimit * 2, lineLimit * 2),
     new THREE.MeshBasicMaterial({
-      color: THREE_VIEW_STYLE.groundColor,
+      color: groundColor,
       depthTest: false,
       depthWrite: false,
-      opacity: THREE_VIEW_STYLE.groundOpacity,
       side: THREE.DoubleSide,
-      transparent: true,
+      transparent: false,
     }),
   );
   ground.name = 'webcad-3d-sk-ground';
   ground.position.set(center.x, center.y, -0.001);
   ground.renderOrder = THREE_VIEW_STYLE.groundRenderOrder;
   ground.userData.isSketchGround = true;
-  group.add(ground);
+  return ground;
+}
+
+export function createSketchGrid(center = new THREE.Vector3(), extent = 20, options = {}) {
+  const group = new THREE.Group();
+  group.name = 'webcad-3d-grid';
+  const { lineLimit, minorStep } = gridExtentForSketch(extent);
+  const majorStep = minorStep * 5;
+
+  if (options.includeGround !== false) {
+    group.add(createSketchGround(center, extent));
+  }
 
   const gridPlane = new THREE.Mesh(
     new THREE.PlaneGeometry(lineLimit * 2, lineLimit * 2),

@@ -1055,8 +1055,98 @@ input {
 .cad-canvas[hidden],
 .three-canvas[hidden],
 .view-mode-button[hidden],
+.three-plane-control[hidden],
 .three-mode-status[hidden] {
   display: none;
+}
+
+.three-plane-control {
+  position: absolute;
+  top: 12px;
+  right: 66px;
+  z-index: 15;
+  display: flex;
+  align-items: center;
+  max-width: calc(100% - 130px);
+  gap: 6px;
+  height: 30px;
+  padding: 0 7px 0 9px;
+  border: 1px solid #9db1ba;
+  border-radius: 6px;
+  background: rgba(247, 250, 249, 0.94);
+  box-shadow: 0 4px 14px rgba(27, 46, 55, 0.14);
+  color: #29434f;
+  font: 700 11px "Arial Narrow", "Liberation Sans Narrow", sans-serif;
+}
+
+.three-plane-control label {
+  align-items: center;
+  display: flex;
+  gap: 5px;
+}
+
+.three-plane-control button,
+.three-plane-control select {
+  min-height: 26px;
+}
+
+.three-plane-control button {
+  background: #f8faf8;
+  border: 1px solid #9aa59e;
+  color: #243039;
+  cursor: pointer;
+  font: inherit;
+  padding: 3px 8px;
+}
+
+.three-plane-control button.is-icon {
+  align-items: center;
+  display: inline-flex;
+  justify-content: center;
+  padding: 3px;
+  width: 26px;
+}
+
+.three-plane-control button:disabled,
+.three-plane-control select:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+#three-sketch-list {
+  max-width: 130px;
+  min-width: 90px;
+}
+
+.sketch-editor-bar {
+  border-color: #4f8065;
+}
+
+.sketch-editor-axis-button {
+  align-items: center;
+  display: inline-flex;
+  height: 34px;
+  justify-content: center;
+  padding: 0;
+  width: 34px;
+}
+
+.sketch-editor-axis-button svg {
+  fill: none;
+  height: 19px;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
+  width: 19px;
+}
+
+.three-plane-control select {
+  height: 22px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
 }
 
 .view-mode-button {
@@ -1368,6 +1458,168 @@ input {
   color: #ffffff;
 }
 
+.initial-sketch-plane-dialog {
+  width: min(720px, 100%);
+}
+
+.initial-sketch-plane-options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.initial-sketch-plane-options > button {
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid #c5d3d9;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #263b45;
+  cursor: pointer;
+}
+
+.initial-sketch-plane-options > button:hover,
+.initial-sketch-plane-options > button:focus-visible {
+  border-color: var(--accent);
+  outline: 2px solid rgba(15, 93, 140, 0.14);
+  background: #f4f9fb;
+}
+
+.initial-sketch-plane-options strong,
+.initial-sketch-plane-options small {
+  display: block;
+  letter-spacing: 0;
+}
+
+.initial-sketch-plane-options strong {
+  margin-top: 6px;
+  font: 600 17px "Arial Narrow", "Liberation Sans Narrow", sans-serif;
+}
+
+.initial-sketch-plane-options small {
+  margin-top: 2px;
+  color: #667b84;
+  font-size: 11px;
+}
+
+.principal-plane-preview {
+  position: relative;
+  display: block;
+  height: 118px;
+  overflow: hidden;
+  border: 1px solid #d8e2e5;
+  border-radius: 4px;
+  background: #dff1f6;
+}
+
+.principal-plane-preview i,
+.principal-plane-preview b {
+  position: absolute;
+  display: block;
+}
+
+.preview-ground {
+  left: 17%;
+  top: 57%;
+  width: 70%;
+  height: 54%;
+  transform: rotate(-12deg) skewX(-25deg) scaleY(0.55);
+  border: 1px solid #9aa99c;
+  background: #e6ebe2;
+}
+
+.preview-plane {
+  left: 29%;
+  top: 30%;
+  width: 48%;
+  height: 48%;
+  border: 2px solid #c8552d;
+  background: rgba(239, 174, 92, 0.42);
+}
+
+.principal-plane-preview.is-xy .preview-plane {
+  top: 50%;
+  transform: rotate(-12deg) skewX(-25deg) scaleY(0.55);
+}
+
+.principal-plane-preview.is-xz .preview-plane {
+  left: 25%;
+  top: 19%;
+  width: 58%;
+  height: 57%;
+  transform: rotate(-5deg) skewY(7deg);
+}
+
+.principal-plane-preview.is-yz .preview-plane {
+  left: 36%;
+  top: 18%;
+  width: 47%;
+  height: 59%;
+  transform: rotate(8deg) skewY(-8deg);
+}
+
+.preview-axis {
+  left: 18%;
+  top: 68%;
+  width: 68%;
+  height: 2px;
+  transform-origin: left center;
+}
+
+.preview-axis.is-x {
+  transform: rotate(10deg);
+  background: #d94236;
+}
+
+.preview-axis.is-y {
+  transform: rotate(-25deg);
+  background: #2e9f3f;
+}
+
+.preview-axis.is-z {
+  width: 2px;
+  height: 68%;
+  transform: translateY(-68%);
+  background: #2c70d4;
+}
+
+.preview-axis-label {
+  font: 700 10px Arial, sans-serif;
+}
+
+.preview-axis-label.is-x { right: 10%; top: 72%; color: #b93229; }
+.preview-axis-label.is-y { right: 13%; top: 38%; color: #237f32; }
+.preview-axis-label.is-z { left: 15%; top: 5%; color: #245cac; }
+
+.initial-sketch-plane-note {
+  margin: 12px 0 0;
+  color: #60747d;
+  font-size: 11px;
+  text-align: center;
+}
+
+.sketch-reference-toggle.is-active svg rect {
+  fill: rgba(15, 93, 140, 0.16);
+}
+
+.sketch-reference-toggle[hidden] {
+  display: none;
+}
+
+.sketch-reference-toggle svg path {
+  stroke-width: 3.2;
+}
+
+@media (max-width: 620px) {
+  .initial-sketch-plane-options {
+    grid-template-columns: 1fr;
+  }
+
+  .principal-plane-preview {
+    height: 94px;
+  }
+}
+
 .image-editor-dialog {
   width: min(470px, 100%);
 }
@@ -1636,7 +1888,7 @@ input {
   bottom: 0;
   flex: 0 0 var(--status-height);
   display: grid;
-  grid-template-columns: 34px 34px 34px minmax(90px, 132px) minmax(110px, 160px) 90px 100px minmax(120px, 160px) minmax(150px, 1fr) 78px;
+  grid-template-columns: 34px 34px 34px 34px minmax(90px, 132px) minmax(110px, 160px) 90px 100px minmax(120px, 160px) minmax(132px, 1fr) 96px;
   align-items: center;
   gap: 7px;
   height: var(--status-height);
@@ -1709,6 +1961,7 @@ input {
 
 #status-dxf {
   justify-self: end;
+  max-width: 100%;
 }
 
 @media (max-height: 760px) and (min-width: 721px) {
@@ -1748,7 +2001,7 @@ input {
     --menu-height: 42px;
     --toolbox-width: 94px;
     --toolbox-right-width: 64px;
-    --status-height: 54px;
+    --status-height: 34px;
   }
 
   .menu-brand {
@@ -1822,19 +2075,27 @@ input {
   }
 
   .status-bar {
-    grid-template-columns: 1fr 1fr;
-    row-gap: 2px;
+    grid-template-columns: 30px 30px 30px 30px minmax(0, 1fr) 96px;
+    column-gap: 4px;
+    row-gap: 0;
     font-size: 12px;
   }
 
   .status-toggle {
-    width: 100%;
+    width: 30px;
     height: 22px;
     justify-self: start;
-    max-width: 44px;
+    max-width: none;
   }
 
-  #status-layer,
+  #status-tool,
+  #status-cursor,
+  #status-entities,
+  #status-length,
+  #status-layer {
+    display: none;
+  }
+
   #status-message,
   #status-dxf {
     justify-self: start;

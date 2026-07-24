@@ -250,6 +250,7 @@ import { parseWebcadProject, serializeWebcadProject } from './files/formats/webc
 import { createLocalFileManager } from './files/local-file-manager.js';
 import { createAutosaveController } from './files/autosave.js';
 import { createUnsupportedLocalSaveNotifier } from './files/browser-support.js';
+import { sketchEditReferences } from './3d/sketch-reference.js';
 import { createBlockRuntime } from './blocks/runtime.js';
 import { createBlockCommand } from './blocks/command.js';
 import { createBlockDialogs } from './blocks/dialogs.js';
@@ -290,7 +291,7 @@ const {
   layerColorPalette, layerColorPaletteValue, layerColorGrid, menuCommandButtons,
   undoCommandButtons, redoCommandButtons, toolGroupElements, toolFlyoutCommandButtons,
   cursorInput, blockEditorBar, blockEditorName, blockEditorSaveButton,
-  blockEditorDiscardButton, statusOrthoButton, statusGridButton, statusLineWeightButton,
+  blockEditorDiscardButton, statusOrthoButton, statusGridButton, statusAxesButton, statusLineWeightButton,
   statusTool, statusCursor, statusEntities, statusLength, statusLayer, statusMessage,
   statusDxf, filletRadiusControl, filletRadiusInput, offsetDistanceControl,
   offsetDistanceInput, chamferDistanceControl, chamferDistanceFirstInput,
@@ -683,6 +684,7 @@ const CadDocument = createCadDocumentClass({
   boundsIntersectsBounds,
   cloneEntity,
   mergeBounds,
+  rotateEntityByAngle,
 });
 
 const operationDependencies = {
@@ -986,7 +988,9 @@ class CadRenderer {
   }
 
   fitToDocument() {
-    const bounds = this.doc.bounds();
+    const referenceBounds = (this.state.sketchReferenceEntities || [])
+      .reduce((result, entity) => mergeBounds(result, entity.bounds()), null);
+    const bounds = mergeBounds(this.doc.bounds(), referenceBounds);
     if (!bounds) {
       this.fitToDefaultDrawing();
       if (this.state.mouseScreen) {
@@ -1108,11 +1112,10 @@ class CadRenderer {
     ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
 
     ctx.setTransform(transformScale, 0, 0, transformScale, translateX, translateY);
-    if (this.state.snapEnabled) {
-      this.drawGrid(ctx);
-      this.drawAxes(ctx);
-    }
+    if (this.state.snapEnabled) this.drawGrid(ctx);
+    if (this.state.axesVisible) this.drawAxes(ctx);
     this.drawCrosshair(ctx);
+    this.drawSketchReferences(ctx);
     this.drawEntities(ctx);
     this.drawTangentLinePreview(ctx);
     this.drawPointTangentPreview(ctx);
@@ -1265,6 +1268,7 @@ const {
   syncPolarArrayCountControl,
   syncRegularPolygonSidesControl,
   toggleGridSnap,
+  toggleAxesVisibility,
   toggleLineWeightDisplay,
   toggleOrthoMode,
   updateChamferDistancesFromInput,
@@ -1704,7 +1708,8 @@ autosaveController = createAutosaveController({
     !state.selectionWindow &&
     !controller.panState &&
     !controller.gripDragState &&
-    !doc.isEditingBlock()
+    !doc.isEditingBlock() &&
+    !doc.isEditingSketch()
   ),
 });
 autosaveController.start();
@@ -2119,6 +2124,7 @@ Object.assign(
     statusDxf,
     statusEntities,
     statusGridButton,
+    statusAxesButton,
     statusLayer,
     statusLength,
     statusLineWeightButton,
@@ -2131,7 +2137,59 @@ Object.assign(
   }),
 );
 
-window.webcadDebug = { doc, state, renderer, controller, parseDxf, serializeDocumentToDxf };
+window.webcadDebug = {
+  doc,
+  state,
+  renderer,
+  controller,
+  parseDxf,
+  serializeDocumentToDxf,
+  createSketchReferenceEntities: (plane, options = {}) =>
+    sketchEditReferences(doc.model3d, plane, options)
+    .map((reference) => {
+      const entityOptions = {
+        layer: DEFAULT_LAYER.name,
+        lineStyle: DEFAULT_LINE_STYLE,
+        lineType: DEFAULT_LINE_TYPE,
+        lineColor: DEFAULT_LINE_COLOR,
+      };
+      const entity = reference.type === 'circle'
+        ? new CircleEntity(reference.center, reference.radius, entityOptions)
+        : reference.type === 'arc'
+          ? new ArcEntity(
+            reference.center,
+            reference.radius,
+            reference.startAngle,
+            reference.endAngle,
+            { ...entityOptions, clockwise: reference.clockwise },
+          )
+        : reference.type === 'ellipse'
+          ? new EllipseEntity(
+            reference.center,
+            reference.radiusX,
+            reference.radiusY,
+            reference.rotation,
+            entityOptions,
+          )
+          : reference.type === 'ellipse-arc'
+            ? new EllipseEntity(
+              reference.center,
+              reference.radiusX,
+              reference.radiusY,
+              reference.rotation,
+              {
+                ...entityOptions,
+                startParameter: reference.startParameter,
+                endParameter: reference.endParameter,
+                clockwise: reference.clockwise,
+              },
+            )
+          : new LineEntity(reference.start, reference.end, entityOptions);
+      entity.isSketchReference = true;
+      entity.sourceSolidId = reference.sourceSolidId;
+      return entity;
+    }),
+};
 
 function openBlockCreateDialog() {
   return blockDialogs.openCreate();
@@ -2252,6 +2310,7 @@ commandDispatcher = createCommandDispatcher({
     redoDrawing,
     toggleOrthoMode,
     toggleGridSnap,
+    toggleAxesVisibility,
     toggleLineWeightDisplay,
     fitView,
     setNavigationDevice,

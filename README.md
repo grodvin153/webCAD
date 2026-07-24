@@ -30,12 +30,16 @@ npm run verify
 - `source/renderer/`: entidades, previews y overlays.
 - `source/files/formats/`: registro de formatos e importación/exportación DXF.
 - `source/input/`, `source/coordinates/`, `source/intersections.js`: entrada, XYZ, snaps e intersecciones.
+- `source/3d/`: croquis, geometría exacta, sólidos, extrusiones y serialización 3D.
+- `source/3d/three/`: visor interactivo, selección, push y booleanas con Manifold.
 
-La visualización continúa siendo 2D sobre XY, pero los puntos conservan coordenada Z para ampliar el modelo en el futuro y mantener elevaciones DXF.
+El editor 2D continúa trabajando sobre XY y conserva la coordenada Z. El modo
+3D experimental añade croquis en planos principales o caras, extrusión de
+perfiles, edición de sólidos y guardado del modelo en proyectos `.webcad`.
 
 ## Versión
 
-Versión estable actual: **0.6.0**.
+Versión estable actual: **0.7.0**.
 
 ## Autoría y licencia
 

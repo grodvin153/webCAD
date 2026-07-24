@@ -105,8 +105,11 @@ export function bindWebcadProjectInput({
       model3d: project.model3d,
     };
     doc.restoreSnapshot(snapshot);
+    state.sketchEditDraft = null;
+    state.sketchReferenceEntities = [];
     doc.undoStack = [];
     doc.redoStack = [];
+    globalThis.window?.webcadThreeMode?.refreshDocument?.();
     setNextEntityGroupId?.(project.document2d.counters?.nextEntityGroupId);
     applyProjectSettings(state, project.document2d.settings, setDrawingProfileRuntime);
     clearProjectInteractionState(state, orthogonalInference);
@@ -119,5 +122,11 @@ export function bindWebcadProjectInput({
     controller.updateUiStatus();
     renderer.draw();
     event.target.value = '';
+    const threeMode = globalThis.window?.webcadThreeMode;
+    const has3dContent = Boolean(
+      doc.model3d?.solids?.length || doc.model3d?.sketches?.length,
+    );
+    if (has3dContent) await threeMode?.enter?.();
+    else threeMode?.exit?.();
   });
 }

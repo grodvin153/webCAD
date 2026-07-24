@@ -55,11 +55,16 @@ export function createCommandDispatcher({
     if (command === 'offset') commands.offset.start();
     if (command === 'chamfer') controller.setTool('chamfer');
     if (command === 'extend') controller.startExtend();
-    if (command === 'erase') controller.startErase();
+    if (command === 'erase') {
+      const threeMode = globalThis.window?.webcadThreeMode;
+      if (threeMode?.isActive?.()) threeMode.startDeleteSolid?.();
+      else controller.startErase();
+    }
     if (command === 'explode') controller.startExplode();
     if (command === 'polyline-join') controller.startPolylineJoin();
     if (command === 'toggle-ortho') actions.toggleOrthoMode();
     if (command === 'toggle-grid') actions.toggleGridSnap();
+    if (command === 'toggle-axes') actions.toggleAxesVisibility();
     if (command === 'toggle-lineweight') actions.toggleLineWeightDisplay();
     if (command === 'fit') actions.fitView();
     if (command === 'navigation-mouse') actions.setNavigationDevice('mouse');

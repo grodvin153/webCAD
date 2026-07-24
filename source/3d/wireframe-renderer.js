@@ -1,6 +1,7 @@
 /* webCAD - Renderer de alambre 3D experimental | SPDX-License-Identifier: GPL-3.0-or-later */
 
 import { projectPoint3d } from './projection3d.js';
+import { sampleSolidAnalyticEdges } from './analytic-edges.js';
 
 const DEFAULT_STROKE_STYLE = '#1f2937';
 const DEFAULT_LINE_WIDTH = 1;
@@ -26,7 +27,7 @@ export function buildWireframeSegments3d(solid) {
   }
 
   const vertexCount = solid.vertices.length;
-  return solid.edges.map((edge) => {
+  solid.edges.forEach((edge) => {
     if (!Array.isArray(edge) || edge.length !== 2 ||
         !validVertexIndex(edge[0], vertexCount) ||
         !validVertexIndex(edge[1], vertexCount)) {
@@ -37,10 +38,16 @@ export function buildWireframeSegments3d(solid) {
     if (![start?.x, start?.y, start?.z, end?.x, end?.y, end?.z].every(Number.isFinite)) {
       throw new TypeError('Una arista contiene vertices no validos');
     }
+  });
+  return sampleSolidAnalyticEdges(solid).entries.map((entry) => {
     return {
-      start: copyPoint3d(start),
-      end: copyPoint3d(end),
-      edge: [...edge],
+      start: copyPoint3d(entry.segment.start),
+      end: copyPoint3d(entry.segment.end),
+      edge: Array.isArray(entry.sourceEdgeIndices?.[0])
+        ? [...entry.sourceEdgeIndices[0]]
+        : Array.isArray(entry.sourceEdgeIndices) ? [...entry.sourceEdgeIndices] : null,
+      curveGroupId: entry.curveGroupId,
+      type: entry.type,
     };
   });
 }

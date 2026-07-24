@@ -37,6 +37,7 @@ export function createControllerStatusMethods(dependencies) {
     statusDxf,
     statusEntities,
     statusGridButton,
+    statusAxesButton,
     statusLayer,
     statusLength,
     statusLineWeightButton,
@@ -337,6 +338,11 @@ export function createControllerStatusMethods(dependencies) {
     statusGridButton.title = this.state.snapEnabled
       ? 'Snap a rejilla activo'
       : 'Snap a rejilla desactivado';
+    statusAxesButton?.classList.toggle('is-active', this.state.axesVisible);
+    statusAxesButton?.setAttribute('aria-pressed', String(this.state.axesVisible));
+    if (statusAxesButton) {
+      statusAxesButton.title = this.state.axesVisible ? 'Ejes visibles' : 'Ejes ocultos';
+    }
     statusLineWeightButton.classList.toggle(
       'is-active',
       this.state.lineWeightDisplayEnabled,

@@ -281,6 +281,29 @@ function segmentsClose(segments) {
   return true;
 }
 
+function closeCurvePieceSegments(segments, tolerance) {
+  const maxDistance = Math.max(Number(tolerance) || 0, 0);
+  if (!(maxDistance > 0)) return segments;
+  for (let index = 0; index < segments.length; index += 1) {
+    const current = segments[index];
+    const next = segments[(index + 1) % segments.length];
+    const currentEnd = segmentEnd(current);
+    const nextStart = segmentStart(next);
+    if (!currentEnd || !nextStart || samePoint(currentEnd, nextStart)) continue;
+    if (!samePoint(currentEnd, nextStart, maxDistance)) return null;
+    if (current.type === 'line') {
+      current.end = cloneJson(nextStart);
+      continue;
+    }
+    if (next.type === 'line') {
+      next.start = cloneJson(currentEnd);
+      continue;
+    }
+    return null;
+  }
+  return segments;
+}
+
 function segmentReversed(segment) {
   if (segment.type === 'line') return { ...segment, start: cloneJson(segment.end), end: cloneJson(segment.start) };
   if (segment.type === 'arc-circle' || segment.type === 'arc-ellipse') {
@@ -462,6 +485,120 @@ export function exactProfileFromOrderedEntities(orderedEntities, options = {}) {
     id: options.id ?? null,
     type: 'COMPOSITE_PROFILE',
   }, segments, options);
+}
+
+function curvePieceSegment(piece) {
+  const entity = piece?.entity || piece;
+  const startParameter = Math.max(0, Math.min(1, Number(piece?.startParameter ?? 0)));
+  const endParameter = Math.max(0, Math.min(1, Number(piece?.endParameter ?? 1)));
+  if (entity?.type === 'LINE') {
+    const start = point3(entity.start);
+    const end = point3(entity.end);
+    if (!start || !end) return null;
+    return lineSegment({
+      x: start.x + (end.x - start.x) * startParameter,
+      y: start.y + (end.y - start.y) * startParameter,
+      z: start.z + (end.z - start.z) * startParameter,
+    }, {
+      x: start.x + (end.x - start.x) * endParameter,
+      y: start.y + (end.y - start.y) * endParameter,
+      z: start.z + (end.z - start.z) * endParameter,
+    });
+  }
+  if (entity?.type === 'ARC') {
+    const center = point3(entity.center);
+    const radius = finiteNumber(entity.radius);
+    if (!center || radius === null || radius <= 0) return null;
+    const direction = entity.clockwise === false ? -1 : 1;
+    const sweep = directedSweep(entity.startAngle, entity.endAngle, entity.clockwise !== false);
+    const startAngle = normalizeAngle(entity.startAngle + direction * sweep * startParameter);
+    const endAngle = normalizeAngle(entity.startAngle + direction * sweep * endParameter);
+    return circularArcSegment(pointOnCircle(center, radius, startAngle), pointOnCircle(center, radius, endAngle), {
+      center,
+      clockwise: endParameter < startParameter ? entity.clockwise === false : entity.clockwise !== false,
+    });
+  }
+  if (entity?.type === 'CIRCLE') {
+    const center = point3(entity.center);
+    const radius = finiteNumber(entity.radius);
+    if (!center || radius === null || radius <= 0) return null;
+    const startAngle = normalizeAngle(TWO_PI * startParameter);
+    const endAngle = normalizeAngle(TWO_PI * endParameter);
+    return circularArcSegment(pointOnCircle(center, radius, startAngle), pointOnCircle(center, radius, endAngle), {
+      center,
+      clockwise: endParameter >= startParameter,
+    });
+  }
+  if (entity?.type === 'ELLIPSE_ARC') {
+    const center = point3(entity.center);
+    const radiusX = finiteNumber(entity.radiusX);
+    const radiusY = finiteNumber(entity.radiusY);
+    const rotation = finiteNumber(entity.rotation) ?? 0;
+    if (!center || radiusX === null || radiusY === null || radiusX <= 0 || radiusY <= 0) return null;
+    const sourceClockwise = entity.clockwise !== false;
+    const clockwise = endParameter < startParameter ? !sourceClockwise : sourceClockwise;
+    const direction = sourceClockwise ? 1 : -1;
+    const sweep = directedSweep(entity.startParameter, entity.endParameter, sourceClockwise);
+    const startAngle = normalizeAngle(entity.startParameter + direction * sweep * startParameter);
+    const endAngle = normalizeAngle(entity.startParameter + direction * sweep * endParameter);
+    return {
+      type: 'arc-ellipse', center, radiusX, radiusY, rotation, startAngle, endAngle, clockwise,
+      start: pointOnEllipse(center, radiusX, radiusY, rotation, startAngle),
+      end: pointOnEllipse(center, radiusX, radiusY, rotation, endAngle),
+    };
+  }
+  if (entity?.type === 'ELLIPSE') {
+    const center = point3(entity.center);
+    const radiusX = finiteNumber(entity.radiusX);
+    const radiusY = finiteNumber(entity.radiusY);
+    const rotation = finiteNumber(entity.rotation) ?? 0;
+    if (!center || radiusX === null || radiusY === null || radiusX <= 0 || radiusY <= 0) return null;
+    const startAngle = normalizeAngle(TWO_PI * startParameter);
+    const endAngle = normalizeAngle(TWO_PI * endParameter);
+    return {
+      type: 'arc-ellipse', center, radiusX, radiusY, rotation, startAngle, endAngle,
+      clockwise: endParameter >= startParameter,
+      start: pointOnEllipse(center, radiusX, radiusY, rotation, startAngle),
+      end: pointOnEllipse(center, radiusX, radiusY, rotation, endAngle),
+    };
+  }
+  return null;
+}
+
+function mergeConsecutiveCurvePieces(pieces) {
+  const merged = [];
+  pieces.forEach((piece) => {
+    const current = {
+      ...piece,
+      startParameter: Number(piece?.startParameter ?? 0),
+      endParameter: Number(piece?.endParameter ?? 1),
+    };
+    const previous = merged[merged.length - 1];
+    const previousDirection = Math.sign(previous?.endParameter - previous?.startParameter);
+    const currentDirection = Math.sign(current.endParameter - current.startParameter);
+    const closesFullCurve = (current.entity?.type === 'CIRCLE' || current.entity?.type === 'ELLIPSE') &&
+      Math.abs(current.endParameter - previous?.startParameter) >= 1 - 1e-10;
+    if (previous && previous.entity === current.entity && !closesFullCurve &&
+      previousDirection === currentDirection &&
+      Math.abs(previous.endParameter - current.startParameter) <= 1e-10) {
+      previous.endParameter = current.endParameter;
+      return;
+    }
+    merged.push(current);
+  });
+  return merged;
+}
+
+// Curve pieces are transient products of planar-face detection. Their source geometry stays exact.
+export function exactProfileFromCurvePieces(pieces, options = {}) {
+  if (!Array.isArray(pieces) || pieces.length < 2) return null;
+  const segments = closeCurvePieceSegments(
+    mergeConsecutiveCurvePieces(pieces).map(curvePieceSegment),
+    options.tolerance,
+  );
+  if (!segments) return null;
+  if (segments.some((segment) => !segment) || !segmentsClose(segments)) return null;
+  return baseProfile({ id: options.id ?? null, type: 'COMPOSITE_PROFILE' }, segments, options);
 }
 
 export function exactProfileFromEntity(entity, options = {}) {

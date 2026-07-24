@@ -1,5 +1,8 @@
 /* webCAD - Modelo documental 3D experimental | SPDX-License-Identifier: GPL-3.0-or-later */
 
+import { normalizePrincipalPlane } from './principal-plane.js';
+import { normalizeSketchPlane } from './sketch-plane.js';
+
 export const MODEL3D_VERSION = 1;
 
 const SKIPPED_METADATA_KEYS = new Set([
@@ -61,6 +64,31 @@ function nextSolidNumber(model) {
   return maxExisting + 1;
 }
 
+function nextSketchNumber(model) {
+  const explicitNext = Number(model?.nextSketchId);
+  if (Number.isInteger(explicitNext) && explicitNext > 0) return explicitNext;
+  const maxExisting = (Array.isArray(model?.sketches) ? model.sketches : [])
+    .map((sketch) => Number(String(sketch?.id ?? '').replace(/^sketch3d-/, '')))
+    .filter((value) => Number.isInteger(value) && value > 0)
+    .reduce((max, value) => Math.max(max, value), 0);
+  return maxExisting + 1;
+}
+
+function cloneSketchRecord(record, cloneEntity = null) {
+  return {
+    id: String(record?.id || ''),
+    type: 'document-sketch3d',
+    name: String(record?.name || 'Sketch'),
+    visible: record?.visible !== false,
+    revision: Number(record?.revision) || 0,
+    plane: normalizeSketchPlane(record?.plane ?? record?.sketchPlane ?? 'XY'),
+    entities: Array.isArray(record?.entities)
+      ? record.entities.map((entity) => cloneEntity?.(entity) ?? cloneJsonValue(entity)).filter(Boolean)
+      : [],
+    metadata: cloneJsonValue(record?.metadata ?? {}),
+  };
+}
+
 function inferOperationFromSolid(solid) {
   const metadata = solid?.metadata && typeof solid.metadata === 'object' ? solid.metadata : {};
   return {
@@ -106,15 +134,23 @@ function createRecord(solid, {
 export function createModel3d() {
   return {
     version: MODEL3D_VERSION,
+    sketchPlane: 'XY',
+    sketches: [],
+    nextSketchId: 1,
     solids: [],
     nextSolidId: 1,
   };
 }
 
-export function cloneModel3d(model) {
+export function cloneModel3d(model, options = {}) {
   if (!model || typeof model !== 'object') return createModel3d();
   const clone = {
     version: Number(model.version) || MODEL3D_VERSION,
+    sketchPlane: normalizePrincipalPlane(model.sketchPlane),
+    sketches: Array.isArray(model.sketches)
+      ? model.sketches.map((record) => cloneSketchRecord(record, options.cloneEntity)).filter(Boolean)
+      : [],
+    nextSketchId: nextSketchNumber(model),
     solids: Array.isArray(model.solids)
       ? model.solids.map((record) => cloneJsonValue(record)).filter(Boolean)
       : [],
@@ -123,7 +159,36 @@ export function cloneModel3d(model) {
   if (clone.nextSolidId <= clone.solids.length) {
     clone.nextSolidId = nextSolidNumber(clone);
   }
+  if (clone.nextSketchId <= clone.sketches.length) {
+    clone.nextSketchId = nextSketchNumber(clone);
+  }
   return clone;
+}
+
+export function addModel3dSketch(model, options = {}) {
+  const target = model || createModel3d();
+  if (!Array.isArray(target.sketches)) target.sketches = [];
+  const sketchNumber = nextSketchNumber(target);
+  const id = options.id ?? `sketch3d-${sketchNumber}`;
+  const record = cloneSketchRecord({
+    id,
+    name: options.name ?? `Sketch-${sketchNumber}`,
+    plane: options.plane ?? target.sketchPlane ?? 'XY',
+    entities: options.entities ?? [],
+    visible: options.visible,
+    revision: 0,
+    metadata: options.metadata,
+  }, options.cloneEntity);
+  target.sketches.push(record);
+  target.nextSketchId = Math.max(sketchNumber + 1, nextSketchNumber(target));
+  return record;
+}
+
+export function removeModel3dSketch(model, id) {
+  if (!model || !Array.isArray(model.sketches) || !id) return false;
+  const before = model.sketches.length;
+  model.sketches = model.sketches.filter((record) => record?.id !== id);
+  return model.sketches.length !== before;
 }
 
 export function addModel3dSolid(model, solid, options = {}) {

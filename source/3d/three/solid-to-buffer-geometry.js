@@ -2,7 +2,9 @@
 
 import * as THREE from 'three';
 
+import { normalizeSketchPlane, pointFromSketchPlane } from '../sketch-plane.js';
 import { isValidSolid3d } from '../solid.js';
+import { profileTangencyIndices } from './profile-tangency.js';
 
 const PROJECTED_EPSILON = 1e-9;
 const NORMAL_EPSILON = 1e-12;
@@ -21,14 +23,30 @@ function triangleArea(a, b, c) {
   return ((a.x * (b.y - c.y)) + (b.x * (c.y - a.y)) + (c.x * (a.y - b.y))) * 0.5;
 }
 
+function profilePoint(point, plane) {
+  const local = pointFromSketchPlane(point, plane);
+  return new THREE.Vector2(local.x, local.y);
+}
+
+function faceProjection(face, vertices) {
+  const normal = faceNormal(face, vertices);
+  const reference = Math.abs(normal.z) < 0.9
+    ? new THREE.Vector3(0, 0, 1)
+    : new THREE.Vector3(0, 1, 0);
+  const xAxis = reference.cross(normal).normalize();
+  const yAxis = normal.clone().cross(xAxis).normalize();
+  return face.map((vertexIndex) => {
+    const vertex = vertices[vertexIndex];
+    const point = new THREE.Vector3(vertex.x, vertex.y, vertex.z);
+    return new THREE.Vector2(point.dot(xAxis), point.dot(yAxis));
+  });
+}
+
 function triangulateFace(face, vertices) {
   if (face.length === 3) {
     return [...face];
   }
-  const projectedPoints = face.map((vertexIndex) => {
-    const vertex = vertices[vertexIndex];
-    return new THREE.Vector2(vertex.x, vertex.y);
-  });
+  const projectedPoints = faceProjection(face, vertices);
   const faceArea = projectedArea(projectedPoints);
   if (Math.abs(faceArea) <= PROJECTED_EPSILON) {
     if (face.length === 4) {
@@ -55,6 +73,10 @@ function triangulateFace(face, vertices) {
 }
 
 function profileSizeFromExtrusion(solid) {
+  const metadataSize = Number(solid.metadata?.profileSize);
+  if (Number.isInteger(metadataSize) && metadataSize >= 3 && solid.vertices.length === metadataSize * 2) {
+    return metadataSize;
+  }
   const lowerFaceSize = solid.faces?.[0]?.length;
   const upperFaceSize = solid.faces?.[1]?.length;
   if (!Number.isInteger(lowerFaceSize) || lowerFaceSize < 3 || lowerFaceSize !== upperFaceSize) {
@@ -64,12 +86,14 @@ function profileSizeFromExtrusion(solid) {
   return lowerFaceSize;
 }
 
-function profileSignedArea(vertices, profileSize) {
+function profileSignedArea(vertices, startIndex, profileSize, plane) {
   let area = 0;
   for (let index = 0; index < profileSize; index += 1) {
-    const current = vertices[index];
-    const next = vertices[(index + 1) % profileSize];
-    area += current.x * next.y - next.x * current.y;
+    const current = vertices[startIndex + index];
+    const next = vertices[startIndex + (index + 1) % profileSize];
+    const currentPoint = profilePoint(current, plane);
+    const nextPoint = profilePoint(next, plane);
+    area += currentPoint.x * nextPoint.y - nextPoint.x * currentPoint.y;
   }
   return area * 0.5;
 }
@@ -95,25 +119,37 @@ function faceNormal(face, vertices) {
   return new THREE.Vector3(0, 0, 1);
 }
 
-function edgeOutwardNormal(start, end, clockwiseProfile) {
-  const dx = end.x - start.x;
-  const dy = end.y - start.y;
-  const normal = clockwiseProfile
-    ? new THREE.Vector3(-dy, dx, 0)
-    : new THREE.Vector3(dy, -dx, 0);
+function edgeOutwardNormal(start, end, clockwiseProfile, plane) {
+  const first = profilePoint(start, plane);
+  const second = profilePoint(end, plane);
+  const dx = second.x - first.x;
+  const dy = second.y - first.y;
+  const localNormal = clockwiseProfile ? { x: -dy, y: dx } : { x: dy, y: -dx };
+  const definition = normalizeSketchPlane(plane);
+  const normal = new THREE.Vector3(
+    definition.xAxis.x * localNormal.x + definition.yAxis.x * localNormal.y,
+    definition.xAxis.y * localNormal.x + definition.yAxis.y * localNormal.y,
+    definition.xAxis.z * localNormal.x + definition.yAxis.z * localNormal.y,
+  );
   return normalizedVector(normal, new THREE.Vector3(1, 0, 0));
 }
 
-function smoothProfileNormals(vertices, profileSize) {
-  const clockwiseProfile = profileSignedArea(vertices, profileSize) < 0;
-  return Array.from({ length: profileSize }, (_, index) => {
-    const previous = vertices[(index - 1 + profileSize) % profileSize];
-    const current = vertices[index];
-    const next = vertices[(index + 1) % profileSize];
-    const previousNormal = edgeOutwardNormal(previous, current, clockwiseProfile);
-    const nextNormal = edgeOutwardNormal(current, next, clockwiseProfile);
-    return normalizedVector(previousNormal.add(nextNormal), nextNormal);
+function smoothProfileNormals(vertices, profileSize, loopSizes = [profileSize], plane = 'XY') {
+  const normals = Array(profileSize).fill(null);
+  let startIndex = 0;
+  loopSizes.forEach((loopSize) => {
+    const clockwiseProfile = profileSignedArea(vertices, startIndex, loopSize, plane) < 0;
+    for (let index = 0; index < loopSize; index += 1) {
+      const previous = vertices[startIndex + (index - 1 + loopSize) % loopSize];
+      const current = vertices[startIndex + index];
+      const next = vertices[startIndex + (index + 1) % loopSize];
+      const previousNormal = edgeOutwardNormal(previous, current, clockwiseProfile, plane);
+      const nextNormal = edgeOutwardNormal(current, next, clockwiseProfile, plane);
+      normals[startIndex + index] = normalizedVector(previousNormal.add(nextNormal), nextNormal);
+    }
+    startIndex += loopSize;
   });
+  return normals;
 }
 
 function pushTriangle(buffers, vertices, triangle, normalForVertex) {
@@ -141,7 +177,12 @@ function smoothExtrusionGeometry(solid, profileSize, smoothIndices) {
     positions: [],
   };
   const faceTriangleMap = [];
-  const smoothProfileNormalsByIndex = smoothProfileNormals(solid.vertices, profileSize);
+  const smoothProfileNormalsByIndex = smoothProfileNormals(
+    solid.vertices,
+    profileSize,
+    solid.metadata?.profileLoopSizes || [profileSize],
+    solid.metadata?.workplane ?? solid.metadata?.sketchPlane ?? 'XY',
+  );
   solid.faces.forEach((face, faceIndex) => {
     const triangles = triangulateFace(face, solid.vertices);
     const flatNormal = faceNormal(face, solid.vertices);
@@ -170,16 +211,56 @@ function smoothExtrusionGeometry(solid, profileSize, smoothIndices) {
   return geometry;
 }
 
+function geometryFromStoredNormals(solid) {
+  const stored = solid.metadata?.faceVertexNormals;
+  if (!Array.isArray(stored) || stored.length !== solid.faces.length ||
+      solid.faces.some((face, index) => stored[index]?.length !== face.length)) return null;
+  const positions = [];
+  const normals = [];
+  const faceTriangleMap = [];
+  solid.faces.forEach((face, faceIndex) => {
+    const triangles = triangulateFace(face, solid.vertices);
+    triangles.forEach((vertexIndex) => {
+      const cornerIndex = face.indexOf(vertexIndex);
+      const vertex = solid.vertices[vertexIndex];
+      const normal = stored[faceIndex][cornerIndex];
+      positions.push(vertex.x, vertex.y, vertex.z);
+      normals.push(normal.x, normal.y, normal.z);
+    });
+    for (let index = 0; index < triangles.length; index += 3) faceTriangleMap.push(faceIndex);
+  });
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+  geometry.computeBoundingBox();
+  geometry.computeBoundingSphere();
+  geometry.userData.webcadFaceTriangleMap = faceTriangleMap;
+  geometry.userData.webcadRenderMode = 'stored-normals';
+  return geometry;
+}
+
 export function solid3dToBufferGeometry(solid) {
   if (!isValidSolid3d(solid)) {
     throw new TypeError('No se puede convertir un Solid3d no valido');
   }
 
+  const storedNormalsGeometry = geometryFromStoredNormals(solid);
+  if (storedNormalsGeometry) {
+    storedNormalsGeometry.userData.webcadMetadata = solid.metadata && typeof solid.metadata === 'object'
+      ? { ...solid.metadata }
+      : solid.metadata ?? null;
+    return storedNormalsGeometry;
+  }
+
   const smoothIndices = new Set(
-    Array.isArray(solid.metadata?.smoothProfileVertexIndices)
-      ? solid.metadata.smoothProfileVertexIndices
+    Array.isArray(solid.metadata?.smoothVerticalEdgeIndices)
+      ? solid.metadata.smoothVerticalEdgeIndices
+      : Array.isArray(solid.metadata?.smoothProfileVertexIndices)
+        ? solid.metadata.smoothProfileVertexIndices
       : [],
   );
+  profileTangencyIndices(solid, solid.metadata?.cadProfileVertexIndices)
+    .forEach((index) => smoothIndices.add(index));
   const profileSize = profileSizeFromExtrusion(solid);
   if (profileSize && smoothIndices.size > 0) {
     const geometry = smoothExtrusionGeometry(solid, profileSize, smoothIndices);

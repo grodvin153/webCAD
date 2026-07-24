@@ -507,6 +507,7 @@ function testDocumentHistory() {
     boundsIntersectsBounds,
     cloneEntity: cloneLine,
     mergeBounds,
+    rotateEntityByAngle,
   });
   const doc = new CadDocument();
   doc.addEntity(new LineEntity({ x: 0, y: 0 }, { x: 1, y: 0 }), { recordHistory: false });
@@ -518,8 +519,52 @@ function testDocumentHistory() {
   assert.equal(doc.entities.length, 2);
 
   const emptyDoc = new CadDocument();
-  assert.deepEqual(emptyDoc.model3d, { version: 1, solids: [], nextSolidId: 1 });
+  assert.deepEqual(emptyDoc.model3d, {
+    version: 1,
+    sketchPlane: 'XY',
+    sketches: [],
+    nextSketchId: 1,
+    solids: [],
+    nextSolidId: 1,
+  });
   assert.deepEqual(emptyDoc.topLevelEntities(), []);
+
+  const planeDoc = new CadDocument();
+  assert.equal(planeDoc.set3dSketchPlane('XZ'), true);
+  assert.equal(planeDoc.model3d.sketchPlane, 'XZ');
+  assert.equal(planeDoc.undo(), true);
+  assert.equal(planeDoc.model3d.sketchPlane, 'XY');
+  assert.equal(planeDoc.redo(), true);
+  assert.equal(planeDoc.model3d.sketchPlane, 'XZ');
+
+  const sketchDoc = new CadDocument();
+  sketchDoc.addEntity(new LineEntity({ x: 0, y: 0 }, { x: 4, y: 0 }), { recordHistory: false });
+  const sketch = sketchDoc.promoteRootEntitiesTo3dSketch({ plane: 'XY' });
+  assert.equal(sketch.id, 'sketch3d-1');
+  assert.equal(sketch.name, 'Sketch-1');
+  assert.equal(sketch.entities.length, 1);
+  assert.equal(sketchDoc.entities.length, 0);
+  assert.equal(sketchDoc.beginSketchEdit(sketch.id), true);
+  sketchDoc.addEntity(new LineEntity({ x: 4, y: 0 }, { x: 4, y: 3 }));
+  assert.equal(sketchDoc.entities.length, 2);
+  assert.equal(sketchDoc.undo(), true);
+  assert.equal(sketchDoc.entities.length, 1);
+  assert.equal(sketchDoc.redo(), true);
+  assert.equal(sketchDoc.entities.length, 2);
+  assert.equal(sketchDoc.rotate3dSketchAxes(sketch.id), true);
+  assert.ok(Math.abs(sketchDoc.entities[0].end.x) < 1e-12);
+  assert.equal(sketchDoc.entities[0].end.y, 4);
+  assert.equal(sketchDoc.entities[0].end.z, 0);
+  assert.equal(sketchDoc.model3d.sketches[0].plane.axisRotation, 90);
+  assert.equal(sketchDoc.endSketchEdit(), true);
+  sketchDoc.set3dSketchPlane('YZ');
+  assert.equal(sketchDoc.model3d.sketches[0].plane.type, 'fixed');
+  assert.equal(sketchDoc.model3d.sketches[0].plane.axisRotation, 90);
+  assert.equal(sketchDoc.set3dSketchVisibility(sketch.id, false), true);
+  assert.equal(sketchDoc.model3d.sketches[0].visible, false);
+  assert.equal(sketchDoc.undo(), true);
+  assert.equal(sketchDoc.model3d.sketches[0].visible, true);
+  assert.doesNotThrow(() => JSON.stringify(sketchDoc.model3d));
 
   const visualSolid = {
     vertices: [
@@ -590,6 +635,34 @@ function testDocumentHistory() {
   assert.equal(emptyDoc.model3d.solids.length, 1);
   assert.equal(emptyDoc.redo(), true);
   assert.equal(emptyDoc.model3d.solids[0].exactGeometry.status, 'pending');
+
+  const deleteDoc = new CadDocument();
+  const firstSolid = deleteDoc.add3dSolid(visualSolid, {
+    operation: { type: 'pushFromProfile', distance: 2 },
+  });
+  const secondSolid = deleteDoc.add3dSolid({
+    ...visualSolid,
+    vertices: visualSolid.vertices.map((vertex) => ({ ...vertex, x: vertex.x + 4 })),
+  }, {
+    operation: { type: 'pushFromProfile', distance: 2 },
+  });
+  assert.deepEqual(deleteDoc.model3d.solids.map((record) => record.id), [firstSolid.id, secondSolid.id]);
+  assert.equal(deleteDoc.remove3dSolid(firstSolid.id), true);
+  assert.deepEqual(deleteDoc.model3d.solids.map((record) => record.id), [secondSolid.id]);
+  assert.equal(deleteDoc.undo(), true);
+  assert.deepEqual(deleteDoc.model3d.solids.map((record) => record.id), [firstSolid.id, secondSolid.id]);
+  assert.equal(deleteDoc.redo(), true);
+  assert.deepEqual(deleteDoc.model3d.solids.map((record) => record.id), [secondSolid.id]);
+  assert.equal(deleteDoc.undo(), true);
+  assert.equal(deleteDoc.remove3dSolid(secondSolid.id), true);
+  assert.deepEqual(deleteDoc.model3d.solids.map((record) => record.id), [firstSolid.id]);
+  assert.equal(deleteDoc.undo(), true);
+  assert.equal(deleteDoc.remove3dSolid(firstSolid.id), true);
+  assert.equal(deleteDoc.remove3dSolid(secondSolid.id, { recordHistory: false }), true);
+  assert.equal(deleteDoc.model3d.solids.length, 0);
+  assert.equal(deleteDoc.undo(), true);
+  assert.deepEqual(deleteDoc.model3d.solids.map((record) => record.id), [firstSolid.id, secondSolid.id]);
+  assert.equal(deleteDoc.model3d.nextSolidId, 3);
 }
 
 function createTestCadDocument() {
@@ -1144,6 +1217,8 @@ function testWebcadProjectFormat() {
   assert.equal(project2d.document2d.settings.layers.length, 1);
   assert.equal(project2d.document2d.counters.nextEntityGroupId, 7);
   assert.equal(project2d.model3d.version, 1);
+  assert.equal(project2d.model3d.sketchPlane, 'XY');
+  assert.equal(project2d.model3d.sketches.length, 0);
   assert.equal(project2d.model3d.solids.length, 0);
 
   const reopened2d = createTestCadDocument();
@@ -1159,6 +1234,29 @@ function testWebcadProjectFormat() {
   assert.equal(reopened2d.entities.length, 1);
 
   const doc3d = createTestCadDocument();
+  doc3d.set3dSketchPlane('YZ', { recordHistory: false });
+  const projectSketch = doc3d.add3dSketch({
+    plane: 'XZ',
+    entities: [new LineEntity({ x: 0, y: 0 }, { x: 8, y: 0 })],
+    metadata: {
+      supportFace: {
+        sourceSolidId: 'solid3d-1',
+        sourceFaceIndices: [1],
+        outerLoop: [
+          { x: 5, y: 0, z: 0 },
+          { x: 0, y: 5, z: 0 },
+          { x: -5, y: 0, z: 0 },
+          { x: 0, y: -5, z: 0 },
+        ],
+        innerLoops: [],
+        boundaries: [{
+          type: 'circle',
+          center: { x: 0, y: 0, z: 0 },
+          radius: 5,
+        }],
+      },
+    },
+  });
   const visualSolid = {
     vertices: [
       { x: 0, y: 0, z: 0 },
@@ -1188,6 +1286,19 @@ function testWebcadProjectFormat() {
   });
   const project3d = parseWebcadProject(serializeWebcadProject({ appVersion: 'test-version', doc: doc3d, state }));
   assert.equal(project3d.model3d.solids.length, 1);
+  assert.equal(project3d.model3d.sketchPlane, 'YZ');
+  assert.equal(project3d.model3d.sketches.length, 1);
+  assert.equal(project3d.model3d.sketches[0].id, projectSketch.id);
+  assert.equal(project3d.model3d.sketches[0].plane.id, 'XZ');
+  assert.equal(project3d.model3d.sketches[0].entities[0].type, 'LINE');
+  assert.equal(
+    project3d.model3d.sketches[0].metadata.supportFace.boundaries[0].type,
+    'circle',
+  );
+  assert.equal(
+    project3d.model3d.sketches[0].metadata.supportFace.boundaries[0].radius,
+    5,
+  );
   assert.equal(project3d.model3d.solids[0].id, record.id);
   assert.equal(project3d.model3d.solids[0].visible, true);
   assert.equal(project3d.model3d.solids[0].exactGeometry.status, 'available');
@@ -1201,6 +1312,12 @@ function testWebcadProjectFormat() {
     model3d: project3d.model3d,
   });
   assert.equal(reopened3d.model3d.solids[0].id, record.id);
+  assert.equal(reopened3d.model3d.sketchPlane, 'YZ');
+  assert.equal(reopened3d.model3d.sketches[0].entities[0] instanceof LineEntity, true);
+  assert.equal(
+    reopened3d.model3d.sketches[0].metadata.supportFace.boundaries[0].type,
+    'circle',
+  );
   assert.equal(reopened3d.model3d.nextSolidId, 2);
 
   assert.throws(() => parseWebcadProject('{"format":"other","version":1,"document2d":{"entities":[]}}'), /formato incorrecto/);

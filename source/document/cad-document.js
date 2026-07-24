@@ -2,11 +2,16 @@
 
 import {
   addModel3dSolid,
+  addModel3dSketch,
   cloneModel3d,
   createModel3d,
   removeModel3dSolid,
+  removeModel3dSketch,
   replaceModel3dSolid,
 } from '../3d/model3d.js';
+import { normalizePrincipalPlane } from '../3d/principal-plane.js';
+import { rotateSketchPlaneAxes } from '../3d/sketch-plane.js';
+import { rotateSketchSupportFaceAxes } from '../3d/sketch-reference.js';
 
 export function createCadDocumentClass(dependencies) {
   const {
@@ -17,6 +22,7 @@ export function createCadDocumentClass(dependencies) {
     boundsIntersectsBounds,
     cloneEntity,
     mergeBounds,
+    rotateEntityByAngle,
   } = dependencies;
 
   class CadDocument {
@@ -24,6 +30,7 @@ export function createCadDocumentClass(dependencies) {
       this.entities = [];
       this.rootEntities = null;
       this.editingBlockName = null;
+      this.editingSketchId = null;
       this.editHistoryFloor = null;
       this.blockDefinitions = new Map();
       this.selectedEntity = null;
@@ -50,6 +57,13 @@ export function createCadDocumentClass(dependencies) {
           definition.revision = (definition.revision || 0) + 1;
         }
       }
+      if (this.editingSketchId) {
+        const sketch = this.model3d?.sketches?.find((record) => record.id === this.editingSketchId);
+        if (sketch) {
+          sketch.entities = this.entities;
+          sketch.revision = (sketch.revision || 0) + 1;
+        }
+      }
       this.boundsDirty = true;
       this.spatialDirty = true;
     }
@@ -58,12 +72,20 @@ export function createCadDocumentClass(dependencies) {
       return Boolean(this.editingBlockName && this.rootEntities);
     }
 
+    isEditingSketch() {
+      return Boolean(this.editingSketchId && this.rootEntities);
+    }
+
+    isEditingNestedDocument() {
+      return this.isEditingBlock() || this.isEditingSketch();
+    }
+
     topLevelEntities() {
-      return this.isEditingBlock() ? this.rootEntities : this.entities;
+      return this.isEditingNestedDocument() ? this.rootEntities : this.entities;
     }
 
     beginBlockEdit(definition) {
-      if (!definition || this.isEditingBlock()) {
+      if (!definition || this.isEditingNestedDocument()) {
         return false;
       }
       this.rootEntities = this.entities;
@@ -73,6 +95,32 @@ export function createCadDocumentClass(dependencies) {
       this.clearSelection();
       this.boundsDirty = true;
       this.spatialDirty = true;
+      return true;
+    }
+
+    beginSketchEdit(id) {
+      const sketch = this.model3d?.sketches?.find((record) => record?.id === id);
+      if (!sketch || this.isEditingNestedDocument()) return false;
+      this.rootEntities = this.entities;
+      this.editingSketchId = sketch.id;
+      this.editHistoryFloor = this.undoStack.length;
+      this.entities = sketch.entities;
+      this.clearSelection();
+      this.boundsDirty = true;
+      this.spatialDirty = true;
+      return true;
+    }
+
+    endSketchEdit() {
+      if (!this.isEditingSketch()) return false;
+      const sketch = this.model3d.sketches.find((record) => record.id === this.editingSketchId);
+      if (sketch) sketch.entities = this.entities;
+      this.entities = this.rootEntities;
+      this.rootEntities = null;
+      this.editingSketchId = null;
+      this.editHistoryFloor = null;
+      this.clearSelection();
+      this.markDirty();
       return true;
     }
 
@@ -115,7 +163,7 @@ export function createCadDocumentClass(dependencies) {
             : undefined,
         })).filter(Boolean),
         blockDefinitions: definitions,
-        model3d: cloneModel3d(this.model3d),
+        model3d: cloneModel3d(this.model3d, { cloneEntity }),
       };
     }
 
@@ -124,6 +172,7 @@ export function createCadDocumentClass(dependencies) {
       const snapshotDefinitions = Array.isArray(snapshot) ? [] : snapshot.blockDefinitions || [];
       const snapshotModel3d = Array.isArray(snapshot) ? null : snapshot.model3d;
       const activeBlockName = this.editingBlockName;
+      const activeSketchId = this.editingSketchId;
       const definitionMap = new Map(snapshotDefinitions.map((definition) => [
         definition.name.toLowerCase(),
         { name: definition.name, revision: definition.revision || 0, entities: [] },
@@ -142,18 +191,27 @@ export function createCadDocumentClass(dependencies) {
           ? definitionMap.get(entity.blockName.toLowerCase()) || entity.definition
           : undefined,
       })).filter(Boolean);
-      if (activeBlockName && definitionMap.has(activeBlockName.toLowerCase())) {
+      this.model3d = cloneModel3d(snapshotModel3d, { cloneEntity });
+      const activeSketch = this.model3d.sketches.find((record) => record.id === activeSketchId);
+      if (activeSketch) {
+        this.rootEntities = restoredRootEntities;
+        this.editingBlockName = null;
+        this.editingSketchId = activeSketch.id;
+        this.entities = activeSketch.entities;
+      }
+      else if (activeBlockName && definitionMap.has(activeBlockName.toLowerCase())) {
         this.rootEntities = restoredRootEntities;
         this.editingBlockName = activeBlockName;
+        this.editingSketchId = null;
         this.entities = definitionMap.get(activeBlockName.toLowerCase()).entities;
       }
       else {
         this.rootEntities = null;
         this.editingBlockName = null;
+        this.editingSketchId = null;
         this.entities = restoredRootEntities;
       }
       this.clearSelection();
-      this.model3d = cloneModel3d(snapshotModel3d);
       this.markDirty();
     }
 
@@ -166,7 +224,7 @@ export function createCadDocumentClass(dependencies) {
     }
 
     canUndo() {
-      return this.undoStack.length > (this.isEditingBlock() ? this.editHistoryFloor || 0 : 0);
+      return this.undoStack.length > (this.isEditingNestedDocument() ? this.editHistoryFloor || 0 : 0);
     }
 
     canRedo() {
@@ -197,13 +255,15 @@ export function createCadDocumentClass(dependencies) {
     }
 
     clear(options = {}) {
-      const hasModel3d = Array.isArray(this.model3d?.solids) && this.model3d.solids.length > 0;
+      const hasModel3d = (Array.isArray(this.model3d?.solids) && this.model3d.solids.length > 0) ||
+        (Array.isArray(this.model3d?.sketches) && this.model3d.sketches.length > 0);
       if (options.recordHistory !== false && (this.entities.length || hasModel3d)) {
         this.recordHistory();
       }
       this.entities = [];
       this.rootEntities = null;
       this.editingBlockName = null;
+      this.editingSketchId = null;
       this.editHistoryFloor = null;
       this.blockDefinitions = new Map();
       this.model3d = createModel3d();
@@ -246,6 +306,90 @@ export function createCadDocumentClass(dependencies) {
         this.markDirty();
       }
       return removed;
+    }
+
+    set3dSketchPlane(plane, options = {}) {
+      const nextPlane = normalizePrincipalPlane(plane);
+      if (this.model3d?.sketchPlane === nextPlane) return false;
+      if (options.recordHistory !== false) {
+        this.recordHistory();
+      }
+      this.model3d.sketchPlane = nextPlane;
+      this.markDirty();
+      return true;
+    }
+
+    add3dSketch(options = {}) {
+      if (options.recordHistory !== false) this.recordHistory();
+      const record = addModel3dSketch(this.model3d, { ...options, cloneEntity });
+      this.markDirty();
+      return record;
+    }
+
+    promoteRootEntitiesTo3dSketch(options = {}) {
+      if (this.isEditingNestedDocument() || !this.entities.length) return null;
+      if (options.recordHistory !== false) this.recordHistory();
+      const sourceEntities = this.entities;
+      const record = addModel3dSketch(this.model3d, {
+        ...options,
+        entities: sourceEntities,
+        cloneEntity,
+      });
+      this.entities = [];
+      this.clearSelection();
+      this.markDirty();
+      return record;
+    }
+
+    remove3dSketch(id, options = {}) {
+      if (this.editingSketchId === id || !this.model3d?.sketches?.some((record) => record.id === id)) {
+        return false;
+      }
+      if (options.recordHistory !== false) this.recordHistory();
+      const removed = removeModel3dSketch(this.model3d, id);
+      if (removed) this.markDirty();
+      return removed;
+    }
+
+    set3dSketchVisibility(id, visible, options = {}) {
+      const sketch = this.model3d?.sketches?.find((record) => record.id === id);
+      if (!sketch || sketch.visible === (visible !== false)) return false;
+      if (options.recordHistory !== false) this.recordHistory();
+      sketch.visible = visible !== false;
+      sketch.revision = (sketch.revision || 0) + 1;
+      this.markDirty();
+      return true;
+    }
+
+    rename3dSketch(id, name, options = {}) {
+      const sketch = this.model3d?.sketches?.find((record) => record.id === id);
+      const nextName = String(name || '').trim();
+      if (!sketch || !nextName || sketch.name === nextName) return false;
+      if (options.recordHistory !== false) this.recordHistory();
+      sketch.name = nextName;
+      sketch.revision = (sketch.revision || 0) + 1;
+      this.markDirty();
+      return true;
+    }
+
+    rotate3dSketchAxes(id, options = {}) {
+      const sketch = this.model3d?.sketches?.find((record) => record.id === id);
+      if (!sketch || typeof rotateEntityByAngle !== 'function') return false;
+      const entities = sketch.entities.map((entity) => cloneEntity(entity)).filter(Boolean);
+      if (entities.length !== sketch.entities.length ||
+          !entities.every((entity) => rotateEntityByAngle(entity, { x: 0, y: 0 }, -90))) {
+        return false;
+      }
+      if (options.recordHistory !== false) this.recordHistory();
+      sketch.entities = entities;
+      sketch.plane = rotateSketchPlaneAxes(sketch.plane);
+      if (sketch.metadata?.supportFace) {
+        sketch.metadata.supportFace = rotateSketchSupportFaceAxes(sketch.metadata.supportFace);
+      }
+      sketch.revision = (sketch.revision || 0) + 1;
+      if (this.editingSketchId === id) this.entities = sketch.entities;
+      this.markDirty();
+      return true;
     }
 
     addEntity(entity, options = {}) {
@@ -339,6 +483,7 @@ export function createCadDocumentClass(dependencies) {
       ]));
       this.rootEntities = null;
       this.editingBlockName = null;
+      this.editingSketchId = null;
       this.editHistoryFloor = null;
       this.entities = [...entities];
       this.clearSelection();

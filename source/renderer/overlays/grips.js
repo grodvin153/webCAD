@@ -216,6 +216,8 @@ export function createGripOverlayMethods(dependencies) {
     const visibleForTool = (
       this.state.tool === 'line' ||
       this.state.tool === 'polyline' ||
+      this.state.tool === 'rectangle' ||
+      this.state.tool === 'regular-polygon' ||
       this.state.tool === 'circle-center' ||
       this.state.tool === 'circle-3p' ||
       this.state.tool === 'arc-center-radius' ||

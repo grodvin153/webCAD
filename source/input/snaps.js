@@ -103,8 +103,25 @@ export function createInputResolvers({
 
     const tolerance = (state.snapPixelTolerance || 10) / state.viewScale;
     let bestSnap = null;
+    if (state.axesVisible !== false) {
+      const axesOrigin = { x: 0, y: 0, z: 0 };
+      if (!options.axisLine ||
+          distancePointToInfiniteLine(axesOrigin, options.axisLine.point, options.axisLine.direction) <= tolerance) {
+        bestSnap = addSnapCandidate(
+          point,
+          { type: 'intersection', key: 'axes-origin', point: axesOrigin },
+          tolerance,
+          bestSnap,
+        );
+      }
+    }
     const cursorBounds = expandBounds(createBounds(point.x, point.y, point.x, point.y), tolerance);
-    const sourceSnapEntities = state.doc.queryBounds(cursorBounds);
+    const referenceSnapEntities = (state.sketchReferenceEntities || []).filter((entity) =>
+      boundsIntersectsBounds(entity.bounds(), cursorBounds));
+    const sourceSnapEntities = [
+      ...state.doc.queryBounds(cursorBounds),
+      ...referenceSnapEntities,
+    ];
     const snapEntities = sourceSnapEntities
       .filter((entity) => entity !== options.ignoreEntity)
       .flatMap((entity) => entity.type === 'INSERT' ? primitiveEntityParts(entity) : [entity])

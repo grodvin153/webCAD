@@ -1,5 +1,27 @@
 # Historial de cambios
 
+## 0.7.0 - 2026-07-24
+
+### Modelado 3D
+
+- Incorporados croquis documentales en planos XY, XZ, YZ y caras planas, con edición, visibilidad, renombrado, borrado y giro de ejes.
+- Añadidas extrusiones y operaciones push sobre perfiles y caras, incluidas uniones y sustracciones robustas mediante `manifold-3d`.
+- Añadidas selección de caras y aristas, resaltado, snaps de sólidos, siluetas analíticas y controles de visualización 3D.
+- Incorporada persistencia completa del modelo 3D y de sus operaciones en proyectos `.webcad`, manteniendo compatibilidad con documentos anteriores.
+
+### Geometría exacta
+
+- Separada la geometría analítica de la teselación de renderizado para círculos, arcos y elipses.
+- Consolidadas las curvas extruidas bajo identidades CAD únicas, eliminando costuras, diagonales y generatrices internas del visor.
+- Unificada la selección de tapas teseladas como caras semánticas completas aptas para apoyar nuevos croquis.
+- Conservadas las fronteras circulares y elípticas al editar croquis, guardar y volver a abrir el proyecto.
+
+### Calidad e interfaz
+
+- Ampliada la interfaz 3D con creación y gestión de croquis, modos de referencia por proyección o sección y acciones de sólidos.
+- Añadidas regresiones para booleanas, perfiles curvos, selección semántica, referencias analíticas, archivos antiguos y round trips `.webcad`.
+- Actualizada la documentación técnica de agentes con los contratos de topología analítica, selección de caras y persistencia.
+
 ## 0.6.0 - 2026-07-09
 
 - Añadida base experimental 3D aislada con Three.js, alternancia visual 2D/3D y estilo de referencia tipo SK.

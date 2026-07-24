@@ -219,6 +219,18 @@ export function createEntitySceneMethods(dependencies) {
     }
   }
 
+  drawSketchReferences(ctx) {
+    const references = Array.isArray(this.state.sketchReferenceEntities)
+      ? this.state.sketchReferenceEntities
+      : [];
+    for (const entity of references) {
+      this.drawEntityOverlay(ctx, entity, {
+        color: '#2878c8',
+        width: 1.5,
+      });
+    }
+  }
+
   }
 
   return Object.fromEntries(

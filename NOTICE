@@ -13,3 +13,17 @@ original y una copia de la licencia. El codigo fuente correspondiente debe
 permanecer disponible conforme a los terminos de la GPL.
 
 La licencia completa se encuentra en el archivo LICENSE.
+
+Componentes de terceros
+-----------------------
+
+webCAD incorpora los siguientes componentes, que conservan sus propias
+licencias:
+
+- three.js 0.185.1, Copyright (c) 2010-2026 three.js authors, licencia MIT.
+  https://github.com/mrdoob/three.js
+- Manifold 3D 3.5.1, Manifold project contributors, licencia Apache-2.0.
+  https://github.com/elalish/manifold
+
+Los textos completos de estas licencias se distribuyen con sus respectivos
+paquetes npm.

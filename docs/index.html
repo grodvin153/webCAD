@@ -7,8 +7,8 @@
   <meta name="author" content="Gonzalo Rodriguez">
   <meta name="copyright" content="Copyright (C) 2026 Gonzalo Rodriguez">
   <title>webCAD</title>
-  <script type="module" crossorigin src="./assets/main-CVb8GRKe.js"></script>
-  <link rel="stylesheet" crossorigin href="./assets/main-DkZzxXiC.css">
+  <script type="module" crossorigin src="./assets/main-DrRNV3_o.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/main-BwPKWc0L.css">
 </head>
 <body>
   <header class="menu-bar">
@@ -874,6 +874,44 @@
           title="Volver al editor 2D"
           hidden
         >2D</button>
+        <div id="three-plane-control" class="three-plane-control" hidden>
+          <label>
+            <span>Plano</span>
+            <select id="three-sketch-plane" aria-label="Plano principal para nuevo croquis">
+              <option value="XY">Planta XY</option>
+              <option value="XZ">Alzado XZ</option>
+              <option value="YZ">Perfil YZ</option>
+            </select>
+          </label>
+          <button id="three-new-sketch" type="button" title="Nuevo croquis (SK)">Nuevo croquis</button>
+          <select id="three-sketch-list" aria-label="Croquis del modelo"></select>
+          <button id="three-edit-sketch" class="is-icon" type="button" title="Editar croquis" aria-label="Editar croquis">E</button>
+          <button id="three-toggle-sketch" class="is-icon" type="button" title="Ocultar o mostrar croquis" aria-label="Ocultar o mostrar croquis">V</button>
+          <button id="three-rename-sketch" class="is-icon" type="button" title="Renombrar croquis" aria-label="Renombrar croquis">R</button>
+          <button id="three-delete-sketch" class="is-icon" type="button" title="Borrar croquis" aria-label="Borrar croquis">B</button>
+        </div>
+        <div id="sketch-editor-bar" class="block-editor-bar sketch-editor-bar" hidden>
+          <div>
+            <span class="block-editor-kicker">CROQUIS ACTIVO</span>
+            <strong id="sketch-editor-name">Sketch</strong>
+          </div>
+          <div class="block-editor-actions">
+            <button
+              id="sketch-editor-rotate-axes"
+              class="sketch-editor-axis-button"
+              type="button"
+              title="Girar ejes del croquis 90 grados"
+              aria-label="Girar ejes del croquis 90 grados"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M5 8a8 8 0 1 1-1 7"></path>
+                <path d="M5 3v5h5"></path>
+                <path d="M12 8v8M8 12h8"></path>
+              </svg>
+            </button>
+            <button id="sketch-editor-finish" class="is-primary" type="button">Finalizar croquis</button>
+          </div>
+        </div>
         <div id="three-mode-status" class="three-mode-status" hidden></div>
       </div>
       <footer class="status-bar" aria-label="Barra de estado">
@@ -905,6 +943,20 @@
             <path d="M8 8v16"></path>
             <path d="M16 8v16"></path>
             <path d="M24 8v16"></path>
+          </svg>
+        </button>
+        <button
+          id="status-axes"
+          class="status-toggle is-active"
+          type="button"
+          title="Ejes visibles"
+          aria-label="Visibilidad de ejes"
+          aria-pressed="true"
+        >
+          <svg viewBox="0 0 32 32" aria-hidden="true">
+            <path class="axis-x" d="M7 24h19"></path>
+            <path class="axis-y" d="M7 24 19 10"></path>
+            <path class="axis-z" d="M7 24V5"></path>
           </svg>
         </button>
         <button
@@ -1009,6 +1061,20 @@
             <path d="M24 8v-4M19 8l5-5 5 5"></path>
           </svg>
         </button>
+        <button
+          id="tool-sketch-section"
+          class="tool-button sketch-reference-toggle"
+          type="button"
+          title="Referencias: proyección completa"
+          aria-label="Mostrar referencias en sección"
+          aria-pressed="false"
+          hidden
+        >
+          <svg viewBox="0 0 48 48" aria-hidden="true">
+            <rect x="9" y="9" width="30" height="30" rx="3"></rect>
+            <path d="m15 24 6 6 13-15"></path>
+          </svg>
+        </button>
       </section>
     </aside>
   </main>
@@ -1016,6 +1082,44 @@
   <input id="import-dxf-input" type="file" accept=".dxf,text/plain" hidden>
   <input id="import-webcad-input" type="file" accept=".webcad,application/json" hidden>
   <input id="import-png-input" type="file" accept=".png,image/png" hidden>
+  <div id="initial-sketch-plane-dialog" class="cad-dialog-backdrop" hidden>
+    <section class="cad-dialog initial-sketch-plane-dialog" role="dialog" aria-modal="true" aria-labelledby="initial-sketch-plane-title">
+      <header>
+        <div>
+          <span class="cad-dialog-kicker">PRIMER CROQUIS 3D</span>
+          <h2 id="initial-sketch-plane-title">¿En qué plano está tu dibujo?</h2>
+        </div>
+        <button id="initial-sketch-plane-close" class="cad-dialog-close" type="button" aria-label="Cancelar">×</button>
+      </header>
+      <div class="initial-sketch-plane-options" role="group" aria-label="Plano del primer croquis">
+        <button type="button" data-sketch-plane="XY">
+          <span class="principal-plane-preview is-xy" aria-hidden="true">
+            <i class="preview-ground"></i><i class="preview-plane"></i>
+            <i class="preview-axis is-x"></i><i class="preview-axis is-y"></i><i class="preview-axis is-z"></i>
+            <b class="preview-axis-label is-x">X</b><b class="preview-axis-label is-y">Y</b><b class="preview-axis-label is-z">Z</b>
+          </span>
+          <strong>Planta</strong><small>XY</small>
+        </button>
+        <button type="button" data-sketch-plane="XZ">
+          <span class="principal-plane-preview is-xz" aria-hidden="true">
+            <i class="preview-ground"></i><i class="preview-plane"></i>
+            <i class="preview-axis is-x"></i><i class="preview-axis is-y"></i><i class="preview-axis is-z"></i>
+            <b class="preview-axis-label is-x">X</b><b class="preview-axis-label is-y">Y</b><b class="preview-axis-label is-z">Z</b>
+          </span>
+          <strong>Alzado</strong><small>XZ</small>
+        </button>
+        <button type="button" data-sketch-plane="YZ">
+          <span class="principal-plane-preview is-yz" aria-hidden="true">
+            <i class="preview-ground"></i><i class="preview-plane"></i>
+            <i class="preview-axis is-x"></i><i class="preview-axis is-y"></i><i class="preview-axis is-z"></i>
+            <b class="preview-axis-label is-x">X</b><b class="preview-axis-label is-y">Y</b><b class="preview-axis-label is-z">Z</b>
+          </span>
+          <strong>Perfil</strong><small>YZ</small>
+        </button>
+      </div>
+      <p class="initial-sketch-plane-note">El suelo permanece siempre en XY.</p>
+    </section>
+  </div>
   <div id="image-editor-dialog" class="cad-dialog-backdrop" hidden>
     <section class="cad-dialog image-editor-dialog" role="dialog" aria-modal="true" aria-labelledby="image-editor-title">
       <header>
@@ -1299,7 +1403,7 @@
       <header>
         <div>
           <span class="cad-dialog-kicker">AUTORIA Y VERSION</span>
-          <h2 id="about-dialog-title">webCAD 0.6.0</h2>
+          <h2 id="about-dialog-title">webCAD 0.7.0</h2>
         </div>
         <button id="about-dialog-close" class="cad-dialog-close" type="button" aria-label="Cerrar">×</button>
       </header>
@@ -1309,13 +1413,13 @@
         <div>
           <strong>Gonzalo Rodriguez</strong>
           <span>Autor y desarrollador de webCAD</span>
-          <small>gonzalorv@gmail.com · Editor CAD 2D/3D experimental para navegador · Versión estable 0.6.0</small>
+          <small>gonzalorv@gmail.com · Editor CAD 2D/3D experimental para navegador · Versión estable 0.7.0</small>
         </div>
       </div>
 
       <dl class="about-metadata">
         <div><dt>Licencia</dt><dd>GNU GPL v3 o posterior · Autoría y código fuente protegidos</dd></div>
-        <div><dt>Formato</dt><dd>DXF · Importación y exportación</dd></div>
+        <div><dt>Formatos</dt><dd>DXF · proyectos webCAD · exportación STL</dd></div>
         <div><dt>Entorno</dt><dd>Ingeniería en mm · Arquitectura en m</dd></div>
       </dl>
 
@@ -1334,16 +1438,17 @@
             <li>Snaps de extremo, medio, centro, intersección y perpendicular; rejilla y modo ortogonal.</li>
             <li>Capas, colores, tipos y grosores de línea, historial y entrada por coordenadas.</li>
             <li>Bloques reutilizables, cotas, líneas auxiliares, imágenes calibrables y compatibilidad DXF BLOCK/INSERT.</li>
+            <li>Croquis 3D, extrusión de perfiles, push de caras, booleanas y guardado del modelo en proyectos webCAD.</li>
           </ul>
         </section>
         <section class="about-feature-card is-release">
-          <h3>Novedades de 0.6.0</h3>
+          <h3>Novedades de 0.7.0</h3>
           <ul>
-            <li>Base experimental 3D aislada con Three.js y cambio visual entre modo 2D y modo 3D.</li>
-            <li>Vista 3D con entidades 2D proyectadas en XY, ejes tipo SK y rejilla sincronizada.</li>
-            <li>Motor 3D modular con sólidos, extrusión de perfiles, adaptador de polilíneas y visor alámbrico.</li>
-            <li>Corregido el arranque de pinzamientos en líneas, círculos, arcos, polilíneas y entidades compatibles.</li>
-            <li>Pruebas de regresión ampliadas para proteger el flujo 2D y la base 3D.</li>
+            <li>Croquis en planos principales y caras, con edición, referencias por sección o proyección y persistencia.</li>
+            <li>Extrusión y push de perfiles o caras con uniones y sustracciones mediante Manifold.</li>
+            <li>Selección completa de caras, aristas y snaps de sólidos en el visor 3D.</li>
+            <li>Curvas analíticas conservadas sin costuras ni generatrices de teselación visibles.</li>
+            <li>Proyectos webCAD compatibles con sólidos, operaciones y croquis apoyados.</li>
           </ul>
         </section>
       </div>

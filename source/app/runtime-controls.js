@@ -223,6 +223,14 @@ export function createRuntimeControls({
     renderer.draw();
   }
 
+  function toggleAxesVisibility() {
+    state.axesVisible = !state.axesVisible;
+    storePreference('webcad-axes-visible', state.axesVisible);
+    state.statusText = state.axesVisible ? 'Ejes visibles' : 'Ejes ocultos';
+    controller.updateUiStatus();
+    renderer.draw();
+  }
+
   function toggleLineWeightDisplay() {
     state.lineWeightDisplayEnabled = !state.lineWeightDisplayEnabled;
     storePreference('webcad-lineweight-display-enabled', state.lineWeightDisplayEnabled);
@@ -256,6 +264,7 @@ export function createRuntimeControls({
     syncPolarArrayCountControl,
     syncRegularPolygonSidesControl,
     toggleGridSnap,
+    toggleAxesVisibility,
     toggleLineWeightDisplay,
     toggleOrthoMode,
     updateChamferDistancesFromInput,

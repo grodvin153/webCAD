@@ -32,6 +32,7 @@ export function bindApplicationEvents({
     navigationTrackpadButton,
     statusOrthoButton,
     statusGridButton,
+    statusAxesButton,
     statusLineWeightButton,
     filletRadiusInput,
     offsetDistanceInput,
@@ -128,6 +129,7 @@ export function bindApplicationEvents({
   navigationTrackpadButton.addEventListener('click', () => runCommand('navigation-trackpad'));
   statusOrthoButton.addEventListener('click', () => runCommand('toggle-ortho'));
   statusGridButton.addEventListener('click', () => runCommand('toggle-grid'));
+  statusAxesButton?.addEventListener('click', () => runCommand('toggle-axes'));
   statusLineWeightButton.addEventListener('click', () => runCommand('toggle-lineweight'));
 
   function bindNumericControl(input, update, { live = false } = {}) {

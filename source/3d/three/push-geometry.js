@@ -5,18 +5,41 @@ import * as THREE from 'three';
 import { createExactExtrusion } from '../exact-extrusion.js';
 import { exactProfileFromEntity } from '../exact-profile.js';
 import { extrudeClosedProfile } from '../extrusion.js';
+import {
+  exactProfileOnSketchPlane,
+  pointFromSketchPlane,
+  sketchPlaneFromFace,
+  solidOnSketchPlane,
+} from '../sketch-plane.js';
 import { createSolid3d, isValidSolid3d } from '../solid.js';
 import { solid3dToBufferGeometry } from './solid-to-buffer-geometry.js';
-import { createWideLineSegments } from './three-scene-style.js';
+import { createWideLineSegments, disposeThreeObject } from './three-scene-style.js';
+import { profileTangencyIndices } from './profile-tangency.js';
+import { sampleSolidAnalyticEdges } from '../analytic-edges.js';
+import {
+  booleanSolid3d,
+  isManifoldBooleanReady,
+  solidWithDerivedSurfaceTopology,
+  subtractFacePushSolid3d,
+  subtractionCutterDistance,
+} from './manifold-boolean.js';
 
 const SOLID_INTEGRITY_EPSILON = 1e-6;
 
 export const PUSH_SOLID_STYLE = {
   edgeColor: 0x000000,
+  edgeDepthBias: 5e-5,
   edgeLineWidth: 3.2,
+  edgePolygonOffsetFactor: -2,
+  edgePolygonOffsetUnits: -2,
   edgeRenderOrder: 28,
   faceColor: 0xffffff,
   previewFaceColor: 0xf6f8fb,
+  hiddenEdgeColor: 0xa3adb0,
+  hiddenEdgeLineWidth: 1.15,
+  hiddenEdgeOpacity: 0.72,
+  tangentEdgeColor: 0x4f5d61,
+  tangentEdgeLineWidth: 1.25,
 };
 
 export function pushSourceKeyFromEntity(entity) {
@@ -30,7 +53,7 @@ export function pushSourceKeyFromEntity(entity) {
 export function pushSourceKeyFromFace(face) {
   const entity = face?.sourceEntity;
   const entityKey = pushSourceKeyFromEntity(entity);
-  if (entityKey) return entityKey;
+  if (entityKey) return face?.sketchId ? `${face.sketchId}:${entityKey}` : entityKey;
   if (face?.sourceSolidFaceIndex !== undefined && face?.id) return `solid-face:${face.id}`;
   return face?.id ? `face:${face.id}` : null;
 }
@@ -87,7 +110,10 @@ function exactGeometryFromProfilePush(face, distance) {
     }
     return unavailableExactGeometry('missing-source-entity');
   }
-  const profile = faceExactProfile || exactProfileFromEntity(sourceEntity);
+  const rawProfile = faceExactProfile || exactProfileFromEntity(sourceEntity);
+  const profile = face?.workplane
+    ? exactProfileOnSketchPlane(rawProfile, face.workplane)
+    : rawProfile;
   if (!profile) {
     return unavailableExactGeometry('unsupported-source-entity', {
       source: {
@@ -97,9 +123,10 @@ function exactGeometryFromProfilePush(face, distance) {
     });
   }
   const extrusion = createExactExtrusion(profile, distance, {
-    direction: { x: 0, y: 0, z: 1 },
+    direction: face?.normal ?? { x: 0, y: 0, z: 1 },
     metadata: {
       sourceKey: pushSourceKeyFromFace(face),
+      sketchPlane: face?.sketchPlane ?? 'XY',
       visualPushDistance: distance,
     },
   });
@@ -144,8 +171,7 @@ function facesHaveArea(solid) {
   return solid.faces.every((face) => faceArea3d(face, solid.vertices) > SOLID_INTEGRITY_EPSILON);
 }
 
-function movedFaceKeepsMaterial(sourceSolid, sourceFace, unitNormal, distance) {
-  const movingVertices = new Set(sourceFace);
+function movedFaceKeepsMaterial(sourceSolid, movingVertices, unitNormal, distance) {
   return sourceSolid.edges.every((edge) => {
     const firstMoves = movingVertices.has(edge[0]);
     const secondMoves = movingVertices.has(edge[1]);
@@ -155,9 +181,76 @@ function movedFaceKeepsMaterial(sourceSolid, sourceFace, unitNormal, distance) {
     const originalThickness = vertexVector(sourceSolid.vertices[movingIndex])
       .sub(vertexVector(sourceSolid.vertices[fixedIndex]))
       .dot(unitNormal);
-    if (originalThickness <= SOLID_INTEGRITY_EPSILON) return true;
-    return originalThickness + distance > SOLID_INTEGRITY_EPSILON;
+    if (Math.abs(originalThickness) <= SOLID_INTEGRITY_EPSILON) return true;
+    const movedThickness = originalThickness + distance;
+    return originalThickness > 0
+      ? movedThickness > SOLID_INTEGRITY_EPSILON
+      : movedThickness < -SOLID_INTEGRITY_EPSILON;
   });
+}
+
+function planarFaceNormal(face, vertices) {
+  const points = face.map((index) => vertices[index]).filter(Boolean);
+  if (points.length < 3) return null;
+  const origin = vertexVector(points[0]);
+  for (let index = 1; index < points.length - 1; index += 1) {
+    const normal = vertexVector(points[index]).sub(origin)
+      .cross(vertexVector(points[index + 1]).sub(origin));
+    if (normal.lengthSq() <= 1e-12) continue;
+    normal.normalize();
+    if (points.every((point) => Math.abs(vertexVector(point).sub(origin).dot(normal)) <=
+      SOLID_INTEGRITY_EPSILON)) return normal;
+  }
+  return null;
+}
+
+function projectedFaceBounds(points, normal) {
+  const absolute = { x: Math.abs(normal.x), y: Math.abs(normal.y), z: Math.abs(normal.z) };
+  const projected = points.map((point) => {
+    if (absolute.x >= absolute.y && absolute.x >= absolute.z) return { x: point.y, y: point.z };
+    if (absolute.y >= absolute.z) return { x: point.x, y: point.z };
+    return { x: point.x, y: point.y };
+  });
+  return projected.reduce((bounds, point) => ({
+    minX: Math.min(bounds.minX, point.x),
+    minY: Math.min(bounds.minY, point.y),
+    maxX: Math.max(bounds.maxX, point.x),
+    maxY: Math.max(bounds.maxY, point.y),
+  }), { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity });
+}
+
+function boundsOverlap(first, second) {
+  return Math.min(first.maxX, second.maxX) - Math.max(first.minX, second.minX) >
+      SOLID_INTEGRITY_EPSILON &&
+    Math.min(first.maxY, second.maxY) - Math.max(first.minY, second.minY) >
+      SOLID_INTEGRITY_EPSILON;
+}
+
+function constrainedMovedFaceDistance(sourceSolid, movingVertices, movingFaceIndices, unitNormal, distance) {
+  const movingPoints = [...movingVertices].map((index) => sourceSolid.vertices[index]).filter(Boolean);
+  if (movingPoints.length < 3) return distance;
+  const movingBounds = projectedFaceBounds(movingPoints, unitNormal);
+  const movingPlane = movingPoints.reduce((sum, point) => sum + vertexVector(point).dot(unitNormal), 0) /
+    movingPoints.length;
+  let positiveLimit = Infinity;
+  let negativeLimit = -Infinity;
+  sourceSolid.faces.forEach((candidateFace, faceIndex) => {
+    if (movingFaceIndices.has(faceIndex)) return;
+    const points = candidateFace.map((index) => sourceSolid.vertices[index]).filter(Boolean);
+    const candidateNormal = planarFaceNormal(candidateFace, sourceSolid.vertices);
+    if (!candidateNormal || Math.abs(candidateNormal.dot(unitNormal)) < 1 - 1e-7 ||
+        !boundsOverlap(movingBounds, projectedFaceBounds(points, unitNormal))) return;
+    const candidateDistance = vertexVector(points[0]).dot(unitNormal) - movingPlane;
+    if (candidateDistance > SOLID_INTEGRITY_EPSILON) {
+      positiveLimit = Math.min(positiveLimit, candidateDistance);
+    }
+    else if (candidateDistance < -SOLID_INTEGRITY_EPSILON) {
+      negativeLimit = Math.max(negativeLimit, candidateDistance);
+    }
+  });
+  if (distance > positiveLimit) return positiveLimit;
+  if (distance < negativeLimit) return negativeLimit;
+  return distance;
 }
 
 export function isPushSolidIntegrityValid(solid) {
@@ -217,26 +310,133 @@ function extrudePlanarFace(points, normal, distance, options = {}) {
   });
 }
 
+function cleanProfileLoop(points) {
+  const loop = (Array.isArray(points) ? points : []).map((point) => ({
+    x: Number(point?.x), y: Number(point?.y), z: Number(point?.z) || 0,
+  }));
+  if (loop.length < 3 || loop.some((point) => ![point.x, point.y, point.z].every(Number.isFinite))) return null;
+  return loop;
+}
+
+function extrudeProfileWithHoles(points, holes, height, options = {}) {
+  const loops = [cleanProfileLoop(points), ...(holes || []).map(cleanProfileLoop)];
+  if (loops.some((loop) => !loop)) throw new TypeError('El perfil con huecos no es valido');
+  const flatProfile = loops.flat();
+  const profileSize = flatProfile.length;
+  const contour = loops[0].map((point) => new THREE.Vector2(point.x, point.y));
+  const holePaths = loops.slice(1).map((loop) => loop.map((point) => new THREE.Vector2(point.x, point.y)));
+  const capTriangles = THREE.ShapeUtils.triangulateShape(contour, holePaths).filter(([first, second, third]) => {
+    const a = flatProfile[first];
+    const b = flatProfile[second];
+    const c = flatProfile[third];
+    return Math.abs((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)) > SOLID_INTEGRITY_EPSILON;
+  });
+  if (!capTriangles.length) throw new RangeError('No se pudo triangular el perfil con huecos');
+  const vertices = [...flatProfile, ...flatProfile.map((point) => ({ ...point, z: point.z + height }))];
+  const faces = [];
+  const lowerCapFaceIndices = [];
+  const upperCapFaceIndices = [];
+  capTriangles.forEach((triangle) => {
+    const [first, second, third] = triangle.map((index) => flatProfile[index]);
+    const positive = (second.x - first.x) * (third.y - first.y) -
+      (second.y - first.y) * (third.x - first.x) > 0;
+    const upward = positive ? [...triangle] : [triangle[0], triangle[2], triangle[1]];
+    const downward = [...upward].reverse();
+    lowerCapFaceIndices.push(faces.length);
+    faces.push(height > 0 ? downward : upward);
+    upperCapFaceIndices.push(faces.length);
+    faces.push((height > 0 ? upward : downward).map((index) => index + profileSize));
+  });
+  const edges = [];
+  let offset = 0;
+  loops.forEach((loop, loopIndex) => {
+    loop.forEach((_, index) => {
+      const next = (index + 1) % loop.length;
+      const start = offset + index;
+      const end = offset + next;
+      const upperStart = start + profileSize;
+      const upperEnd = end + profileSize;
+      const outer = loopIndex === 0;
+      faces.push(height > 0
+        ? (outer ? [start, end, upperEnd, upperStart] : [upperStart, upperEnd, end, start])
+        : (outer ? [start, upperStart, upperEnd, end] : [upperStart, start, end, upperEnd]));
+      edges.push([start, end], [upperStart, upperEnd], [start, upperStart]);
+    });
+    offset += loop.length;
+  });
+  return createSolid3d({
+    vertices,
+    faces,
+    edges,
+    metadata: {
+      type: 'extrusion',
+      height,
+      source: options.source ?? null,
+      profileSize,
+      profileLoopSizes: loops.map((loop) => loop.length),
+      capFaceGroups: {
+        lower: lowerCapFaceIndices,
+        upper: upperCapFaceIndices,
+      },
+    },
+  });
+}
+
 export function solidFromFacePush(face, height, options = {}) {
   const cleanHeight = pushHeightValue(height);
   if (cleanHeight === null) {
     throw new RangeError('La altura de Push debe ser distinta de cero');
   }
-  const points = (Array.isArray(face?.points) ? face.points : []).map((point) => ({
+  const usesSketchPlane = Boolean(face?.workplane && Array.isArray(face?.localPoints));
+  const needsDerivedPlane = !usesSketchPlane && Array.isArray(face?.holes) && face.holes.length > 0 &&
+    face?.normal;
+  const extrusionPlane = usesSketchPlane
+    ? face.workplane
+    : needsDerivedPlane ? sketchPlaneFromFace(face) : null;
+  const profilePoints = usesSketchPlane
+    ? face.localPoints
+    : extrusionPlane ? face.points.map((point) => pointFromSketchPlane(point, extrusionPlane)) : face?.points;
+  const profileHoles = usesSketchPlane
+    ? face.localHoles
+    : extrusionPlane
+      ? face.holes.map((loop) => loop.map((point) => pointFromSketchPlane(point, extrusionPlane)))
+      : face?.holes;
+  const points = (Array.isArray(profilePoints) ? profilePoints : []).map((point) => ({
     x: Number(point.x),
     y: Number(point.y),
     z: Number(point.z) || 0,
   }));
   const source = options.source ?? face?.id ?? null;
-  const solid = face?.normal
-    ? extrudePlanarFace(points, face.normal, cleanHeight, { source })
-    : extrudeClosedProfile(points, cleanHeight, { source });
+  const holes = Array.isArray(profileHoles) ? profileHoles : [];
+  let solid = holes.length
+    ? extrudeProfileWithHoles(points, holes, cleanHeight, { source })
+      : usesSketchPlane
+      ? extrudeClosedProfile(points, cleanHeight, { source })
+      : face?.normal
+      ? extrudePlanarFace(points, face.normal, cleanHeight, { source })
+      : extrudeClosedProfile(points, cleanHeight, { source });
+  if (extrusionPlane) {
+    solid = solidOnSketchPlane(solid, extrusionPlane, face.sketchId);
+  }
+  const cadProfileVertexIndices = new Set(face?.cadProfileVertexIndices || []);
+  const smoothVerticalEdgeIndices = new Set(face?.smoothProfileVertexIndices || []);
+  let holeOffset = points.length;
+  holes.forEach((hole, holeIndex) => {
+    const cad = face?.holeCadProfileVertexIndices?.[holeIndex] || [];
+    const smooth = face?.holeSmoothProfileVertexIndices?.[holeIndex] || [];
+    cad.forEach((index) => cadProfileVertexIndices.add(holeOffset + index));
+    smooth.forEach((index) => smoothVerticalEdgeIndices.add(holeOffset + index));
+    holeOffset += Array.isArray(hole) ? hole.length : 0;
+  });
   solid.metadata = {
     ...solid.metadata,
     type: 'push',
     faceId: face?.id ?? null,
     height: cleanHeight,
     distance: cleanHeight,
+    sketchPlane: face?.sketchPlane ?? solid.metadata?.sketchPlane ?? 'XY',
+    sketchId: face?.sketchId ?? solid.metadata?.sketchId ?? null,
+    workplane: face?.workplane ?? solid.metadata?.workplane ?? null,
     normal: face?.normal ? { ...face.normal } : (solid.metadata?.normal ?? null),
     sourceEntity: face?.sourceEntity ?? null,
     sourceEntityId: face?.sourceEntity?.id ?? face?.sourceEntity?.handle ?? null,
@@ -244,12 +444,11 @@ export function solidFromFacePush(face, height, options = {}) {
     sourceSolidFaceIndex: face?.sourceSolidFaceIndex ?? null,
     sourceKey: pushSourceKeyFromFace(face),
     exactGeometry: exactGeometryFromProfilePush(face, cleanHeight),
-    cadProfileVertexIndices: Array.isArray(face?.cadProfileVertexIndices)
-      ? [...face.cadProfileVertexIndices]
-      : [],
+    cadProfileVertexIndices: [...cadProfileVertexIndices],
     smoothProfileVertexIndices: Array.isArray(face?.smoothProfileVertexIndices)
       ? [...face.smoothProfileVertexIndices]
       : [],
+    smoothVerticalEdgeIndices: [...smoothVerticalEdgeIndices],
   };
   return solid;
 }
@@ -265,11 +464,67 @@ export function movedSolidFacePush(face, distance) {
   if (!sourceSolid || !Number.isInteger(faceIndex) || !unitNormal) {
     return null;
   }
-  const sourceFace = sourceSolid.faces?.[faceIndex];
-  if (!Array.isArray(sourceFace) || sourceFace.length < 3) return null;
-  const offset = unitNormal.clone().multiplyScalar(cleanDistance);
-  const movingVertices = new Set(sourceFace);
-  if (!movedFaceKeepsMaterial(sourceSolid, sourceFace, unitNormal, cleanDistance)) {
+  const faceIndices = Array.isArray(face?.sourceSolidFaceIndices) && face.sourceSolidFaceIndices.length
+    ? face.sourceSolidFaceIndices
+    : [faceIndex];
+  if (isManifoldBooleanReady()) {
+    const origin = vertexVector(face?.points?.[0] ?? sourceSolid.vertices?.[sourceSolid.faces?.[faceIndex]?.[0]]);
+    const operationType = cleanDistance < 0 ? 'subtract' : 'union';
+    const kernelDistance = operationType === 'subtract'
+      ? subtractionCutterDistance(sourceSolid, cleanDistance, origin, unitNormal)
+      : cleanDistance;
+    const depth = Math.min(...sourceSolid.vertices.map((vertex) =>
+      vertexVector(vertex).sub(origin).dot(unitNormal)));
+    const through = cleanDistance < 0 && cleanDistance <= depth + SOLID_INTEGRITY_EPSILON;
+    const operation = {
+      type: operationType,
+      distance: cleanDistance,
+      requestedDistance: cleanDistance,
+      ...(kernelDistance !== cleanDistance ? { kernelDistance } : {}),
+      through,
+      sourceSolidFaceIndex: faceIndex,
+      sourceSolidFaceIndices: faceIndices,
+      normal: { x: unitNormal.x, y: unitNormal.y, z: unitNormal.z },
+    };
+    const metadata = {
+      lastPushFaceIndex: faceIndex,
+      lastPushFaceIndices: faceIndices,
+      lastPushDistance: cleanDistance,
+      lastPushRequestedDistance: cleanDistance,
+      lastPushNormal: operation.normal,
+    };
+    if (operationType === 'subtract') {
+      return subtractFacePushSolid3d(sourceSolid, face, cleanDistance, {
+        kernelDistance,
+        operation,
+        metadata,
+      });
+    }
+    let toolSolid = null;
+    try {
+      toolSolid = solidFromFacePush(face, kernelDistance);
+    }
+    catch {
+      return null;
+    }
+    return booleanSolid3d(sourceSolid, toolSolid, {
+      operationType: operation.type,
+      operation,
+      metadata,
+    });
+  }
+  const sourceFaces = faceIndices.map((index) => sourceSolid.faces?.[index]);
+  if (sourceFaces.some((sourceFace) => !Array.isArray(sourceFace) || sourceFace.length < 3)) return null;
+  const movingVertices = new Set(sourceFaces.flat());
+  const effectiveDistance = constrainedMovedFaceDistance(
+    sourceSolid,
+    movingVertices,
+    new Set(faceIndices),
+    unitNormal,
+    cleanDistance,
+  );
+  const offset = unitNormal.clone().multiplyScalar(effectiveDistance);
+  if (!movedFaceKeepsMaterial(sourceSolid, movingVertices, unitNormal, effectiveDistance)) {
     return null;
   }
   const vertices = sourceSolid.vertices.map((vertex, index) => movingVertices.has(index)
@@ -279,6 +534,26 @@ export function movedSolidFacePush(face, distance) {
       z: vertex.z + offset.z,
     }
     : { ...vertex });
+  const sourceVertexByPoint = new Map(sourceSolid.vertices.map((vertex, index) => [
+    `${Number(vertex.x).toFixed(7)}:${Number(vertex.y).toFixed(7)}:${Number(vertex.z).toFixed(7)}`,
+    index,
+  ]));
+  const movedMetadataPoint = (point) => {
+    const key = `${Number(point?.x).toFixed(7)}:${Number(point?.y).toFixed(7)}:${Number(point?.z ?? 0).toFixed(7)}`;
+    const vertexIndex = sourceVertexByPoint.get(key);
+    return vertexIndex !== undefined && movingVertices.has(vertexIndex)
+      ? { ...vertices[vertexIndex] }
+      : { x: Number(point?.x), y: Number(point?.y), z: Number(point?.z ?? 0) };
+  };
+  const planarFaceGroups = (sourceSolid.metadata?.planarFaceGroups ?? []).map((group) => ({
+    ...group,
+    outerLoop: Array.isArray(group?.outerLoop)
+      ? group.outerLoop.map(movedMetadataPoint)
+      : group?.outerLoop,
+    innerLoops: Array.isArray(group?.innerLoops)
+      ? group.innerLoops.map((loop) => loop.map(movedMetadataPoint))
+      : group?.innerLoops,
+  }));
   const movedSolid = createSolid3d({
     vertices,
     faces: sourceSolid.faces,
@@ -287,17 +562,22 @@ export function movedSolidFacePush(face, distance) {
       ...(sourceSolid.metadata && typeof sourceSolid.metadata === 'object'
         ? sourceSolid.metadata
         : {}),
-      type: 'push',
+      type: sourceSolid.metadata?.type === 'profileFeature' ? 'profileFeature' : 'push',
+      planarFaceGroups,
       exactGeometry: pendingExactGeometry('face-push-exact-brep-not-implemented', {
         operation: {
           type: 'pushMoveFace',
           sourceSolidFaceIndex: faceIndex,
-          distance: cleanDistance,
+          sourceSolidFaceIndices: faceIndices,
+          distance: effectiveDistance,
+          requestedDistance: cleanDistance,
           normal: face.normal,
         },
       }),
       lastPushFaceIndex: faceIndex,
-      lastPushDistance: cleanDistance,
+      lastPushFaceIndices: faceIndices,
+      lastPushDistance: effectiveDistance,
+      lastPushRequestedDistance: cleanDistance,
       lastPushNormal: { x: face.normal.x, y: face.normal.y, z: face.normal.z },
     },
   });
@@ -305,7 +585,8 @@ export function movedSolidFacePush(face, distance) {
 }
 
 export function createPushSolidMeshFromSolid(solid, options = {}) {
-  const geometry = solid3dToBufferGeometry(solid);
+  const displaySolid = solidWithDerivedSurfaceTopology(solid);
+  const geometry = solid3dToBufferGeometry(displaySolid);
   const material = new THREE.MeshStandardMaterial({
     color: options.faceColor ?? options.color ?? PUSH_SOLID_STYLE.faceColor,
     depthTest: true,
@@ -327,18 +608,18 @@ export function createPushSolidMeshFromSolid(solid, options = {}) {
   mesh.renderOrder = options.renderOrder ?? 18;
   mesh.userData = {
     type: 'webcad-push-solid',
-    faceId: solid.metadata?.faceId ?? null,
-    height: solid.metadata.height,
-    normal: solid.metadata.normal,
-    sourceEntity: solid.metadata.sourceEntity,
-    sourceEntityId: solid.metadata.sourceEntityId,
-    sourceFaceType: solid.metadata.sourceFaceType,
-    sourceSolidFaceIndex: solid.metadata.sourceSolidFaceIndex,
-    sourceKey: solid.metadata.sourceKey,
-    exactGeometry: solid.metadata.exactGeometry,
-    cadProfileVertexIndices: solid.metadata.cadProfileVertexIndices,
-    smoothProfileVertexIndices: solid.metadata.smoothProfileVertexIndices,
-    solid,
+    faceId: displaySolid.metadata?.faceId ?? null,
+    height: displaySolid.metadata.height,
+    normal: displaySolid.metadata.normal,
+    sourceEntity: displaySolid.metadata.sourceEntity,
+    sourceEntityId: displaySolid.metadata.sourceEntityId,
+    sourceFaceType: displaySolid.metadata.sourceFaceType,
+    sourceSolidFaceIndex: displaySolid.metadata.sourceSolidFaceIndex,
+    sourceKey: displaySolid.metadata.sourceKey,
+    exactGeometry: displaySolid.metadata.exactGeometry,
+    cadProfileVertexIndices: displaySolid.metadata.cadProfileVertexIndices,
+    smoothProfileVertexIndices: displaySolid.metadata.smoothProfileVertexIndices,
+    solid: displaySolid,
   };
   return mesh;
 }
@@ -349,37 +630,68 @@ export function createPushSolidMesh(face, height, options = {}) {
 
 export function createPushEdges(mesh, options = {}) {
   const solid = mesh.userData?.solid;
-  const solidVertices = Array.isArray(solid?.vertices) ? solid.vertices : [];
-  const solidEdges = Array.isArray(solid?.edges) ? solid.edges : [];
+  const analyticEdges = sampleSolidAnalyticEdges(solid);
   const smoothProfileVertexIndices = new Set(
     Array.isArray(solid?.metadata?.smoothProfileVertexIndices)
       ? solid.metadata.smoothProfileVertexIndices
       : [],
+  );
+  const smoothVerticalEdgeIndices = new Set(
+    Array.isArray(solid?.metadata?.smoothVerticalEdgeIndices)
+      ? solid.metadata.smoothVerticalEdgeIndices
+      : smoothProfileVertexIndices,
   );
   const cadProfileVertexIndices = new Set(
     Array.isArray(solid?.metadata?.cadProfileVertexIndices)
       ? solid.metadata.cadProfileVertexIndices
       : [],
   );
+  const compatibleTangencies = profileTangencyIndices(solid, [...cadProfileVertexIndices]);
+  compatibleTangencies.forEach((index) => {
+    cadProfileVertexIndices.delete(index);
+    smoothVerticalEdgeIndices.add(index);
+  });
   const isCircleProfile = mesh.userData?.sourceFaceType === 'CIRCLE';
-  const hideVerticalSurfaceEdges = (isCircleProfile || smoothProfileVertexIndices.size > 0) &&
+  const isProfileFeatureSolid = solid?.metadata?.type === 'profileFeature' ||
+    Array.isArray(solid?.metadata?.profileFeatures);
+  const hideVerticalSurfaceEdges = !isProfileFeatureSolid &&
+    (isCircleProfile || smoothVerticalEdgeIndices.size > 0) &&
     options.showVerticalSurfaceEdges !== true;
   const segments = [];
-  for (const edge of solidEdges) {
+  const sourceEdgeIndices = [];
+  const curveGroupIds = [];
+  const extrusionNormal = normalizedNormal(solid?.metadata?.normal ?? { x: 0, y: 0, z: 1 });
+  const faceEdgeUseCount = new Map();
+  if (isProfileFeatureSolid) {
+    solid.faces.forEach((face) => face.forEach((startIndex, index) => {
+      const endIndex = face[(index + 1) % face.length];
+      const key = startIndex < endIndex
+        ? `${startIndex}:${endIndex}`
+        : `${endIndex}:${startIndex}`;
+      faceEdgeUseCount.set(key, (faceEdgeUseCount.get(key) ?? 0) + 1);
+    }));
+  }
+  for (const entry of analyticEdges.entries) {
+    const edge = Array.isArray(entry.sourceEdgeIndices?.[0])
+      ? entry.sourceEdgeIndices[0]
+      : entry.sourceEdgeIndices;
     const startIndex = edge?.[0];
     const endIndex = edge?.[1];
-    const start = solidVertices[startIndex];
-    const end = solidVertices[endIndex];
+    const start = entry.segment?.start;
+    const end = entry.segment?.end;
     if (!start || !end) continue;
+    const topologyKey = startIndex < endIndex
+      ? `${startIndex}:${endIndex}`
+      : `${endIndex}:${startIndex}`;
+    if ((faceEdgeUseCount.get(topologyKey) ?? 0) > 2) continue;
     if (
       hideVerticalSurfaceEdges &&
       (isCircleProfile || (
-        smoothProfileVertexIndices.has(Math.min(startIndex, endIndex)) &&
+        smoothVerticalEdgeIndices.has(Math.min(startIndex, endIndex)) &&
         !cadProfileVertexIndices.has(Math.min(startIndex, endIndex))
       )) &&
-      Math.abs(start.x - end.x) <= 1e-9 &&
-      Math.abs(start.y - end.y) <= 1e-9 &&
-      Math.abs(start.z - end.z) > 1e-9
+      extrusionNormal &&
+      vertexVector(end).sub(vertexVector(start)).normalize().cross(extrusionNormal).lengthSq() <= 1e-12
     ) {
       continue;
     }
@@ -395,12 +707,19 @@ export function createPushEdges(mesh, options = {}) {
         z: end.z,
       },
     });
+    sourceEdgeIndices.push(entry.sourceEdgeIndices ?? null);
+    curveGroupIds.push(entry.curveGroupId ?? null);
   }
   const edges = createWideLineSegments(segments, {
     color: options.edgeColor ?? options.color ?? PUSH_SOLID_STYLE.edgeColor,
-    depthTest: options.showHiddenEdges === true ? false : true,
+    depthBias: PUSH_SOLID_STYLE.edgeDepthBias,
+    depthFunc: THREE.LessEqualDepth,
+    depthTest: true,
     depthWrite: false,
     linewidth: options.edgeLineWidth ?? PUSH_SOLID_STYLE.edgeLineWidth,
+    polygonOffset: true,
+    polygonOffsetFactor: PUSH_SOLID_STYLE.edgePolygonOffsetFactor,
+    polygonOffsetUnits: PUSH_SOLID_STYLE.edgePolygonOffsetUnits,
     renderOrder: options.renderOrder ?? PUSH_SOLID_STYLE.edgeRenderOrder,
   });
   edges.name = `${mesh.name}-edges`;
@@ -410,11 +729,58 @@ export function createPushEdges(mesh, options = {}) {
     hiddenVerticalSurfaceEdges: hideVerticalSurfaceEdges,
     segmentCount: segments.length,
     sourceSegments: segments,
+    sourceEdgeIndices,
+    curveGroupIds,
+    analyticEdgeGeometry: analyticEdges.geometry,
     sourceEntityId: mesh.userData.sourceEntityId,
     sourceKey: mesh.userData.sourceKey,
     showHiddenEdges: options.showHiddenEdges === true,
   };
   return edges;
+}
+
+export function createPushTangentEdges(mesh, options = {}) {
+  const solid = mesh.userData?.solid;
+  const segments = (solid?.metadata?.tangentEdges ?? []).flatMap((edge) => {
+    const start = solid.vertices?.[edge.startIndex];
+    const end = solid.vertices?.[edge.endIndex];
+    return start && end ? [{ start: { ...start }, end: { ...end } }] : [];
+  });
+  const tangentEdges = createWideLineSegments(segments, {
+    color: options.color ?? PUSH_SOLID_STYLE.tangentEdgeColor,
+    depthBias: PUSH_SOLID_STYLE.edgeDepthBias,
+    depthFunc: THREE.LessEqualDepth,
+    depthTest: true,
+    depthWrite: false,
+    linewidth: options.linewidth ?? PUSH_SOLID_STYLE.tangentEdgeLineWidth,
+    polygonOffset: true,
+    polygonOffsetFactor: PUSH_SOLID_STYLE.edgePolygonOffsetFactor,
+    polygonOffsetUnits: PUSH_SOLID_STYLE.edgePolygonOffsetUnits,
+    renderOrder: options.renderOrder ?? PUSH_SOLID_STYLE.edgeRenderOrder - 1,
+  });
+  tangentEdges.name = `${mesh.name}-tangent-edges`;
+  tangentEdges.userData = {
+    type: 'webcad-push-solid-tangent-edges',
+    segmentCount: segments.length,
+    sourceSegments: segments,
+  };
+  return tangentEdges;
+}
+
+export function setPushSolidGroupCurveGeneratrices(group, visible) {
+  if (group?.userData?.type !== 'webcad-push-solid-group') return false;
+  group.userData.showCurveGeneratrices = visible === true;
+  const generatrices = group.children.find((child) => child.userData?.type === 'webcad-push-generatrix-silhouette');
+  if (generatrices) generatrices.visible = group.userData.showCurveGeneratrices;
+  return true;
+}
+
+export function setPushSolidGroupHiddenEdges(group, visible) {
+  if (group?.userData?.type !== 'webcad-push-solid-group') return false;
+  group.userData.showHiddenEdges = visible === true;
+  const hiddenEdges = group.children.find((child) => child.userData?.type === 'webcad-push-solid-hidden-edges');
+  if (hiddenEdges) hiddenEdges.visible = group.userData.showHiddenEdges;
+  return true;
 }
 
 export function createPushSolidGroup(face, height, options = {}) {
@@ -428,12 +794,17 @@ export function createPushSolidGroupFromSolid(solid, options = {}) {
   const group = new THREE.Group();
   group.name = options.name ?? `webcad-push-group-${solid.metadata?.faceId ?? 'solid'}`;
   const mesh = createPushSolidMeshFromSolid(solid, options);
-  group.add(mesh, createPushEdges(mesh, {
+  const edges = createPushEdges(mesh, {
     edgeColor: options.edgeColor,
     edgeLineWidth: options.edgeLineWidth,
     renderOrder: options.edgeRenderOrder,
-    showHiddenEdges: options.showHiddenEdges,
-  }));
+  });
+  const tangentEdges = createPushTangentEdges(mesh, {
+    renderOrder: options.edgeRenderOrder,
+  });
+  group.add(mesh, edges);
+  if (tangentEdges.userData.segmentCount > 0) group.add(tangentEdges);
+  else disposeThreeObject(tangentEdges);
   group.userData = {
     type: 'webcad-push-solid-group',
     faceId: mesh.userData.faceId,
@@ -446,6 +817,8 @@ export function createPushSolidGroupFromSolid(solid, options = {}) {
     sourceKey: mesh.userData.sourceKey,
     exactGeometry: mesh.userData.exactGeometry,
     solid: mesh.userData.solid,
+    showCurveGeneratrices: true,
+    showHiddenEdges: options.showHiddenEdges === true,
   };
   return group;
 }

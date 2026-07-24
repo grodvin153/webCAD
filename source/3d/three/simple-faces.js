@@ -1,7 +1,30 @@
 /* webCAD - Recintos simples aislados para vista 3D | SPDX-License-Identifier: GPL-3.0-or-later */
 
 import * as THREE from 'three';
-import { exactProfileFromOrderedEntities } from '../exact-profile.js';
+import { SNAP_THRESHOLD } from '../../config.js';
+import {
+  exactProfileFromCurvePieces,
+  exactProfileFromEntity,
+  exactProfileWithHoles,
+} from '../exact-profile.js';
+import {
+  angleOfPoint,
+  circularParameter,
+  entityArcSweep,
+  lineParameter,
+  pointAtCircularParameter,
+  pointAtLineParameter,
+  polygonSignedArea,
+  uniqueSortedParameters,
+} from '../../geometry.js';
+import { entityIntersectionPoints } from '../../intersections.js';
+import {
+  ellipseNormalizedParameter,
+  ellipseParameterAtNormalized,
+  ellipsePoint,
+  ellipseSweep,
+  isEllipseEntity,
+} from '../../ellipse/geometry.js';
 
 import {
   sampleArcByCenter,
@@ -47,6 +70,73 @@ function boundsFromPoints(points) {
     maxX: -Infinity,
     maxY: -Infinity,
   });
+}
+
+function pointInPolygon(point, polygon) {
+  let inside = false;
+  for (let index = 0, previous = polygon.length - 1; index < polygon.length; previous = index++) {
+    const current = polygon[index];
+    const before = polygon[previous];
+    const intersects = (current.y > point.y) !== (before.y > point.y) &&
+      point.x < (before.x - current.x) * (point.y - current.y) /
+        (before.y - current.y) + current.x;
+    if (intersects) inside = !inside;
+  }
+  return inside;
+}
+
+function pointSegmentDistance(point, start, end) {
+  const deltaX = end.x - start.x;
+  const deltaY = end.y - start.y;
+  const lengthSquared = deltaX * deltaX + deltaY * deltaY;
+  if (lengthSquared <= Number.EPSILON) return Math.hypot(point.x - start.x, point.y - start.y);
+  const parameter = Math.max(0, Math.min(1,
+    ((point.x - start.x) * deltaX + (point.y - start.y) * deltaY) / lengthSquared));
+  return Math.hypot(
+    point.x - (start.x + deltaX * parameter),
+    point.y - (start.y + deltaY * parameter),
+  );
+}
+
+function faceBoundariesTouch(first, second, tolerance) {
+  return first.points.some((point) => second.points.some((start, index) =>
+    pointSegmentDistance(point, start, second.points[(index + 1) % second.points.length]) <= tolerance));
+}
+
+function faceContainsFace(outer, inner, tolerance) {
+  if (outer === inner || outer.area <= inner.area) return false;
+  const outerSources = new Set(outer.sourceEntities || [outer.sourceEntity].filter(Boolean));
+  const innerSources = inner.sourceEntities || [inner.sourceEntity].filter(Boolean);
+  if (innerSources.some((entity) => outerSources.has(entity))) return false;
+  if (faceBoundariesTouch(outer, inner, tolerance)) return false;
+  return inner.points.every((point) => pointInPolygon(point, outer.points));
+}
+
+function regionsFromNestedFaces(faces, tolerance) {
+  const parents = new Map();
+  faces.forEach((face) => {
+    const candidates = faces.filter((candidate) => faceContainsFace(candidate, face, tolerance));
+    parents.set(face, candidates.sort((first, second) => first.area - second.area)[0] || null);
+  });
+  return faces.map((face) => {
+    const children = faces.filter((candidate) => parents.get(candidate) === face);
+    const holeProfiles = children.map((child) => child.exactProfile).filter(Boolean);
+    const exactProfile = face.exactProfile && holeProfiles.length
+      ? exactProfileWithHoles(face.exactProfile, holeProfiles, { id: face.id })
+      : face.exactProfile;
+    return {
+      ...face,
+      exactProfile,
+      holes: children.map((child) => child.points),
+      holeCadProfileVertexIndices: children.map((child) => child.cadProfileVertexIndices || []),
+      holeSmoothProfileVertexIndices: children.map((child) => child.smoothProfileVertexIndices || []),
+      area: Math.max(0, face.area - children.reduce((sum, child) => sum + child.area, 0)),
+      sourceEntities: [...new Set([
+        ...(face.sourceEntities || [face.sourceEntity]),
+        ...children.flatMap((child) => child.sourceEntities || [child.sourceEntity]),
+      ].filter(Boolean))],
+    };
+  }).filter((face) => face.area > 0 && face.exactProfile);
 }
 
 function faceId(entity, fallbackIndex) {
@@ -194,93 +284,254 @@ function compositeCurvePiece(entity, options) {
   return null;
 }
 
-function compositeClosedFaces(entities, options) {
-  const pieces = entities.map((entity, index) => {
-    const piece = compositeCurvePiece(entity, options);
-    return piece ? { ...piece, sourceIndex: index, startNode: null, endNode: null } : null;
-  }).filter(Boolean);
-  const nodes = [];
-  const nodeForPoint = (point) => {
-    const existing = nodes.find((node) => samePoint(node.point, point, options.tolerance));
-    if (existing) return existing;
-    const node = { point, pieces: [] };
-    nodes.push(node);
-    return node;
-  };
-  pieces.forEach((piece) => {
-    piece.startNode = nodeForPoint(piece.points[0]);
-    piece.endNode = nodeForPoint(piece.points[piece.points.length - 1]);
-    piece.startNode.pieces.push(piece);
-    piece.endNode.pieces.push(piece);
-  });
+function polylinePrimitives(entity, tolerance) {
+  if (!Array.isArray(entity?.vertices) || entity.vertices.length < 2) return [];
+  const closesByEndpoint = samePoint(entity.vertices[0], entity.vertices[entity.vertices.length - 1], tolerance);
+  const vertices = closesByEndpoint ? entity.vertices.slice(0, -1) : entity.vertices;
+  const count = entity.closed || closesByEndpoint
+    ? vertices.length
+    : Math.min(entity.segments?.length ?? vertices.length - 1, vertices.length - 1);
+  return Array.from({ length: count }, (_, index) => {
+    const start = vertices[index];
+    const end = vertices[(index + 1) % vertices.length];
+    const segment = entity.segments?.[index] || { type: 'LINE' };
+    if (!start || !end) return null;
+    if (segment.type !== 'ARC' || !segment.center) return { type: 'LINE', start, end, sourceEntity: entity };
+    return {
+      type: 'ARC', center: segment.center,
+      radius: Math.hypot(start.x - segment.center.x, start.y - segment.center.y),
+      startAngle: angleOfPoint(segment.center, start), endAngle: angleOfPoint(segment.center, end),
+      clockwise: segment.clockwise !== false, sourceEntity: entity,
+    };
+  }).filter((piece) => piece && Number.isFinite(piece.radius ?? 1));
+}
 
-  const faces = [];
-  const visited = new Set();
-  pieces.forEach((firstPiece) => {
-    if (visited.has(firstPiece)) return;
-    const component = [];
-    const pending = [firstPiece];
-    while (pending.length) {
-      const piece = pending.pop();
-      if (component.includes(piece)) continue;
-      component.push(piece);
-      for (const node of [piece.startNode, piece.endNode]) {
-        node.pieces.forEach((connected) => pending.push(connected));
+function arrangementPrimitives(entities, tolerance) {
+  const primitives = entities.flatMap((entity) => {
+    if (entity?.type === 'POLYLINE') return polylinePrimitives(entity, tolerance);
+    if (entity?.type === 'LINE' || entity?.type === 'ARC' || entity?.type === 'CIRCLE' ||
+      entity?.type === 'ELLIPSE' || entity?.type === 'ELLIPSE_ARC') {
+      return [{ ...entity, sourceEntity: entity }];
+    }
+    return [];
+  });
+  return primitives.filter((entity) => {
+    if (entity.type !== 'CIRCLE' && entity.type !== 'ELLIPSE') return true;
+    return primitives.some((candidate) => candidate !== entity &&
+      entityIntersectionPoints(entity, candidate, () => []).length > 0);
+  });
+}
+
+function curveParameter(entity, point) {
+  if (entity.type === 'LINE') return lineParameter(entity, point);
+  if (isEllipseEntity(entity)) return ellipseNormalizedParameter(entity, point);
+  return circularParameter(entity, point);
+}
+
+function curvePoint(entity, parameter) {
+  if (entity.type === 'LINE') return pointAtLineParameter(entity, parameter);
+  if (isEllipseEntity(entity)) return ellipsePoint(entity, ellipseParameterAtNormalized(entity, parameter));
+  return pointAtCircularParameter(entity, parameter);
+}
+
+function pointOnLineSegment(point, line, tolerance) {
+  const deltaX = line.end.x - line.start.x;
+  const deltaY = line.end.y - line.start.y;
+  const lengthSquared = deltaX * deltaX + deltaY * deltaY;
+  if (lengthSquared <= tolerance * tolerance) return false;
+  const length = Math.sqrt(lengthSquared);
+  const crossDistance = Math.abs(
+    (point.x - line.start.x) * deltaY - (point.y - line.start.y) * deltaX,
+  ) / length;
+  if (crossDistance > tolerance) return false;
+  const parameter = ((point.x - line.start.x) * deltaX +
+    (point.y - line.start.y) * deltaY) / lengthSquared;
+  const parameterTolerance = tolerance / length;
+  return parameter >= -parameterTolerance && parameter <= 1 + parameterTolerance;
+}
+
+function coincidentLineSplitPoints(first, second, tolerance) {
+  if (first?.type !== 'LINE' || second?.type !== 'LINE') return [];
+  const candidates = [first.start, first.end, second.start, second.end];
+  return candidates.filter((point, index) =>
+    pointOnLineSegment(point, first, tolerance) &&
+    pointOnLineSegment(point, second, tolerance) &&
+    candidates.findIndex((candidate) => samePoint(candidate, point, tolerance)) === index);
+}
+
+function sortNodeOutgoing(node, tolerance) {
+  const active = node.outgoing.filter((edge) => edge.active);
+  const shortestEdge = active.reduce((shortest, edge) => Math.min(
+    shortest,
+    Math.hypot(edge.to.point.x - node.point.x, edge.to.point.y - node.point.y),
+  ), Infinity);
+  const probeDistance = Number.isFinite(shortestEdge)
+    ? Math.max(tolerance, shortestEdge * 0.25)
+    : tolerance;
+  const probeAngle = (edge) => {
+    const chordLength = Math.hypot(
+      edge.to.point.x - node.point.x,
+      edge.to.point.y - node.point.y,
+    );
+    if (chordLength <= tolerance) {
+      return Math.atan2(edge.to.point.y - node.point.y, edge.to.point.x - node.point.x);
+    }
+    const fraction = Math.min(0.25, probeDistance / chordLength);
+    const parameter = edge.startParameter +
+      (edge.endParameter - edge.startParameter) * fraction;
+    const point = curvePoint(edge.entity, parameter) || edge.to.point;
+    return Math.atan2(point.y - node.point.y, point.x - node.point.x);
+  };
+  node.outgoing.sort((first, second) => probeAngle(first) - probeAngle(second));
+}
+
+function edgeEndpointDirection(edge, atEnd) {
+  const span = edge.endParameter - edge.startParameter;
+  const step = span * 1e-4;
+  const endpointParameter = atEnd ? edge.endParameter : edge.startParameter;
+  const nearbyParameter = atEnd ? endpointParameter - step : endpointParameter + step;
+  const endpoint = curvePoint(edge.entity, endpointParameter);
+  const nearby = curvePoint(edge.entity, nearbyParameter);
+  if (!endpoint || !nearby) return null;
+  const x = atEnd ? endpoint.x - nearby.x : nearby.x - endpoint.x;
+  const y = atEnd ? endpoint.y - nearby.y : nearby.y - endpoint.y;
+  const length = Math.hypot(x, y);
+  return length > 1e-12 ? { x: x / length, y: y / length } : null;
+}
+
+function edgesMeetTangentially(previous, current) {
+  const incoming = edgeEndpointDirection(previous, true);
+  const outgoing = edgeEndpointDirection(current, false);
+  if (!incoming || !outgoing) return false;
+  const dot = incoming.x * outgoing.x + incoming.y * outgoing.y;
+  const cross = incoming.x * outgoing.y - incoming.y * outgoing.x;
+  return Math.abs(dot) >= 1 - 1e-6 && Math.abs(cross) <= 1e-3;
+}
+
+function arrangementClosedFaces(entities, options) {
+  const primitives = arrangementPrimitives(entities, options.tolerance);
+  if (!primitives.length) return [];
+  const parameters = new Map(primitives.map((entity) => [
+    entity,
+    entity.type === 'CIRCLE' || entity.type === 'ELLIPSE'
+      ? [0, 0.25, 0.5, 0.75, 1]
+      : [0, 1],
+  ]));
+  for (let index = 0; index < primitives.length; index += 1) {
+    for (let otherIndex = index + 1; otherIndex < primitives.length; otherIndex += 1) {
+      const first = primitives[index];
+      const second = primitives[otherIndex];
+      const intersections = [
+        ...entityIntersectionPoints(first, second, () => []),
+        ...coincidentLineSplitPoints(first, second, options.tolerance),
+      ];
+      for (const point of intersections) {
+        parameters.get(first).push(curveParameter(first, point));
+        parameters.get(second).push(curveParameter(second, point));
       }
     }
-    component.forEach((piece) => visited.add(piece));
-    const componentNodes = new Set(component.flatMap((piece) => [piece.startNode, piece.endNode]));
-    if (component.length < 2 || [...componentNodes].some((node) => node.pieces.length !== 2)) return;
+  }
 
-    const ordered = [];
-    const used = new Set();
-    let currentPiece = component[0];
-    let currentNode = currentPiece.startNode;
-    const startNode = currentNode;
-    while (currentPiece && !used.has(currentPiece)) {
-      const reversed = currentPiece.endNode === currentNode;
-      ordered.push({ piece: currentPiece, reversed });
-      used.add(currentPiece);
-      currentNode = reversed ? currentPiece.startNode : currentPiece.endNode;
-      currentPiece = currentNode.pieces.find((piece) => !used.has(piece)) || null;
+  const nodes = [];
+  const nodeForPoint = (point) => {
+    const node = nodes.find((candidate) => samePoint(candidate.point, point, options.tolerance));
+    if (node) return node;
+    const created = { point: { ...point }, outgoing: [], id: nodes.length + 1 };
+    nodes.push(created);
+    return created;
+  };
+  const halfEdges = [];
+  const lineEdgeKeys = new Set();
+  const addEdge = (entity, startParameter, endParameter) => {
+    const start = curvePoint(entity, startParameter);
+    const end = curvePoint(entity, endParameter);
+    if (!start || !end || samePoint(start, end, options.tolerance)) return;
+    const from = nodeForPoint(start);
+    const to = nodeForPoint(end);
+    if (entity.type === 'LINE') {
+      const key = from.id < to.id ? `${from.id}:${to.id}` : `${to.id}:${from.id}`;
+      if (lineEdgeKeys.has(key)) return;
+      lineEdgeKeys.add(key);
     }
-    if (used.size !== component.length || currentNode !== startNode) return;
+    const forward = { from, to, entity, startParameter, endParameter, twin: null, active: true, visited: false };
+    const reverse = { from: to, to: from, entity, startParameter: endParameter, endParameter: startParameter, twin: forward, active: true, visited: false };
+    forward.twin = reverse;
+    from.outgoing.push(forward);
+    to.outgoing.push(reverse);
+    halfEdges.push(forward, reverse);
+  };
+  primitives.forEach((entity) => {
+    const sorted = uniqueSortedParameters(parameters.get(entity));
+    for (let index = 0; index < sorted.length - 1; index += 1) {
+      const start = sorted[index];
+      const end = sorted[index + 1];
+      const sweep = entity.type === 'CIRCLE' || entity.type === 'ELLIPSE' ? TWO_PI :
+        entity.type === 'ARC' ? entityArcSweep(entity) :
+          entity.type === 'ELLIPSE_ARC' ? ellipseSweep(entity) : 0;
+      const parts = Math.max(1, Math.ceil(sweep * (end - start) / (Math.PI / 48)));
+      for (let part = 0; part < parts; part += 1) {
+        addEdge(entity, start + (end - start) * part / parts, start + (end - start) * (part + 1) / parts);
+      }
+    }
+  });
 
-    const points = [];
-    const cadIndices = new Set();
-    const smoothIndices = new Set();
-    ordered.forEach(({ piece, reversed }, pieceIndex) => {
-      const piecePoints = reversed ? [...piece.points].reverse() : piece.points;
-      piecePoints.forEach((point, pointIndex) => {
-        if (pieceIndex > 0 && pointIndex === 0) return;
-        const index = points.length;
-        points.push({ ...point });
-        if (pointIndex === 0 || pointIndex === piecePoints.length - 1) cadIndices.add(index);
-        else smoothIndices.add(index);
-      });
+  // A bridge cannot bound a finite planar face. Removing it also ignores hanging interior lines.
+  let changed = true;
+  while (changed) {
+    changed = false;
+    nodes.forEach((node) => {
+      const active = node.outgoing.filter((edge) => edge.active);
+      if (active.length !== 1) return;
+      active[0].active = false;
+      active[0].twin.active = false;
+      changed = true;
     });
-    if (points.length > 1 && samePoint(points[0], points[points.length - 1], options.tolerance)) {
-      points.pop();
-      cadIndices.add(0);
+  }
+  nodes.forEach((node) => sortNodeOutgoing(node, options.tolerance));
+
+  const faces = [];
+  halfEdges.forEach((start) => {
+    if (!start.active || start.visited) return;
+    const edges = [];
+    let edge = start;
+    for (let step = 0; step <= halfEdges.length; step += 1) {
+      if (!edge.active || (edge.visited && edge !== start)) return;
+      edge.visited = true;
+      edges.push(edge);
+      const outgoing = edge.to.outgoing.filter((candidate) => candidate.active);
+      const reverseIndex = outgoing.indexOf(edge.twin);
+      if (reverseIndex < 0) return;
+      edge = outgoing[(reverseIndex - 1 + outgoing.length) % outgoing.length];
+      if (edge === start) break;
     }
-    const area = polygonArea(points);
-    if (points.length < 3 || area <= options.tolerance) return;
-    const firstIndex = Math.min(...component.map((piece) => piece.sourceIndex));
-    const id = `face-composite-${firstIndex}`;
+    if (edge !== start) return;
+    const sourcePolygon = edges.map((item) => item.from.point);
+    if (sourcePolygon.length < 3 || Math.abs(polygonSignedArea(sourcePolygon)) <= options.tolerance) return;
+    const points = sourcePolygon.map((point) => finitePoint(point, options.invertY));
+    if (points.some((point) => !point)) return;
+    const id = `face-composite-${faces.length}`;
+    const exactProfile = exactProfileFromCurvePieces(edges.map((item) => ({
+      entity: item.entity, startParameter: item.startParameter, endParameter: item.endParameter,
+    })), { id, tolerance: options.tolerance });
+    // With the right-turn walk, finite faces are counter-clockwise while the
+    // unbounded exterior is the opposite cycle over the same outer boundary.
+    if (!exactProfile || exactProfile.orientation.outer !== 'ccw') return;
+    const smoothProfileVertexIndices = edges
+      .map((item, index) => edgesMeetTangentially(
+        edges[(index - 1 + edges.length) % edges.length], item,
+      ) ? index : -1)
+      .filter((index) => index >= 0);
+    const smoothProfileVertices = new Set(smoothProfileVertexIndices);
+    const cadProfileVertexIndices = edges
+      .map((_, index) => smoothProfileVertices.has(index) ? -1 : index)
+      .filter((index) => index >= 0);
     faces.push({
-      id,
-      sourceEntity: null,
-      sourceEntities: ordered.map(({ piece }) => piece.entity),
-      sourceEntityType: 'COMPOSITE',
-      exactProfile: exactProfileFromOrderedEntities(
-        ordered.map(({ piece, reversed }) => ({ entity: piece.entity, reversed })),
-        { id },
-      ),
-      points,
-      bounds: boundsFromPoints(points),
-      area,
-      cadProfileVertexIndices: [...cadIndices].filter((index) => index < points.length),
-      smoothProfileVertexIndices: [...smoothIndices].filter((index) => index < points.length),
+      id, sourceEntity: null,
+      sourceEntities: [...new Set(edges.map((item) => item.entity.sourceEntity || item.entity))],
+      sourceEntityType: 'COMPOSITE', exactProfile, points,
+      bounds: boundsFromPoints(points), area: polygonArea(points),
+      cadProfileVertexIndices,
+      smoothProfileVertexIndices,
     });
   });
   return faces;
@@ -294,18 +545,19 @@ export function detectSimpleClosedFaces(entities, options = {}) {
     invertY: options.invertY !== false,
     maxArcSegmentAngle: options.maxArcSegmentAngle,
     maxArcSegments: options.maxArcSegments,
-    tolerance: Number(options.tolerance) || 1e-9,
+    tolerance: Number(options.tolerance) || SNAP_THRESHOLD,
   };
   const sourceEntities = Array.isArray(entities) ? entities : [];
+  const arrangementFaces = arrangementClosedFaces(sourceEntities, settings);
+  const arrangementSourceEntities = new Set(arrangementFaces.flatMap((face) => face.sourceEntities || []));
   const individualFaces = sourceEntities
     .map((entity, index) => {
+      if (arrangementSourceEntities.has(entity)) return null;
       const profile = entity?.type === 'CIRCLE'
         ? circlePoints(entity, settings)
         : entity?.type === 'ELLIPSE'
           ? ellipsePoints(entity, settings)
-        : entity?.type === 'POLYLINE'
-          ? closedPolylinePoints(entity, settings)
-          : null;
+        : null;
       if (!profile?.points) return null;
       const { points } = profile;
       const area = polygonArea(points);
@@ -314,6 +566,7 @@ export function detectSimpleClosedFaces(entities, options = {}) {
         id: faceId(entity, index),
         sourceEntity: entity,
         sourceEntityType: entity.type,
+        exactProfile: exactProfileFromEntity(entity),
         points,
         bounds: boundsFromPoints(points),
         area,
@@ -322,11 +575,17 @@ export function detectSimpleClosedFaces(entities, options = {}) {
       };
     })
     .filter(Boolean);
-  return [...individualFaces, ...compositeClosedFaces(sourceEntities, settings)];
+  return regionsFromNestedFaces([
+    ...individualFaces,
+    ...arrangementFaces,
+  ], settings.tolerance);
 }
 
 export function createFaceMesh(face) {
   const shape = new THREE.Shape(face.points.map((point) => new THREE.Vector2(point.x, point.y)));
+  shape.holes = (face.holes || []).map((hole) => new THREE.Path(
+    hole.map((point) => new THREE.Vector2(point.x, point.y)),
+  ));
   const geometry = new THREE.ShapeGeometry(shape);
   const material = new THREE.MeshBasicMaterial({
     color: FACE_DEFAULT_COLOR,

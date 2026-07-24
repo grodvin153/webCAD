@@ -15,7 +15,7 @@ export function entityToThreeLineObject(entity, options = {}) {
   if (!segments.length) return null;
   const object = createWideLineSegments(segments, {
     color: options.color ?? THREE_VIEW_STYLE.drawingColor,
-    depthTest: false,
+    depthTest: true,
     depthWrite: false,
     linewidth: options.linewidth ?? THREE_VIEW_STYLE.drawingLineWidth,
     renderOrder: THREE_VIEW_STYLE.drawingRenderOrder,

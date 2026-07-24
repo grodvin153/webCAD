@@ -38,7 +38,7 @@ function documentSettingsFromState(state = {}) {
   });
 }
 
-function nextEntityGroupIdFromSnapshot(snapshot) {
+function nextEntityGroupIdFromSnapshot(snapshot, model3d = null) {
   let nextId = 1;
   const visitEntity = (entity) => {
     const match = typeof entity?.groupId === 'string' ? entity.groupId.match(/-(\d+)$/) : null;
@@ -47,10 +47,12 @@ function nextEntityGroupIdFromSnapshot(snapshot) {
   (snapshot?.entities ?? []).forEach(visitEntity);
   (snapshot?.blockDefinitions ?? []).forEach((definition) =>
     (definition.entities ?? []).forEach(visitEntity));
+  (model3d?.sketches ?? []).forEach((sketch) =>
+    (sketch.entities ?? []).forEach(visitEntity));
   return nextId;
 }
 
-function document2dFromSnapshot(snapshot, state, counters = {}) {
+function document2dFromSnapshot(snapshot, state, counters = {}, model3d = null) {
   return {
     snapshot: cloneJson({
       entities: snapshot?.entities ?? [],
@@ -60,7 +62,7 @@ function document2dFromSnapshot(snapshot, state, counters = {}) {
     counters: {
       nextEntityGroupId: Math.max(
         Number(counters.nextEntityGroupId) || 1,
-        nextEntityGroupIdFromSnapshot(snapshot),
+        nextEntityGroupIdFromSnapshot(snapshot, model3d),
       ),
     },
   };
@@ -71,12 +73,13 @@ export function createWebcadProject({ appVersion = null, counters = {}, doc, sta
     throw new TypeError('No hay documento webCAD para guardar');
   }
   const snapshot = doc.snapshot();
+  const model3d = serializeModel3d(doc.model3d ?? snapshot.model3d);
   return {
     format: WEBCAD_PROJECT_FORMAT,
     version: WEBCAD_PROJECT_VERSION,
     appVersion,
-    document2d: document2dFromSnapshot(snapshot, state, counters),
-    model3d: serializeModel3d(doc.model3d ?? snapshot.model3d),
+    document2d: document2dFromSnapshot(snapshot, state, counters, model3d),
+    model3d,
   };
 }
 
@@ -114,6 +117,7 @@ export function parseWebcadProject(text) {
   if (snapshot.blockDefinitions !== undefined && !Array.isArray(snapshot.blockDefinitions)) {
     throw new Error('Archivo .webcad no valido: bloques 2D incorrectos');
   }
+  const model3d = parseSerializedModel3d(project.model3d);
   return {
     format: WEBCAD_PROJECT_FORMAT,
     version: WEBCAD_PROJECT_VERSION,
@@ -127,10 +131,10 @@ export function parseWebcadProject(text) {
       counters: cloneJson({
         nextEntityGroupId: Math.max(
           Number(document2d.counters?.nextEntityGroupId) || 1,
-          nextEntityGroupIdFromSnapshot(snapshot),
+          nextEntityGroupIdFromSnapshot(snapshot, model3d),
         ),
       }),
     },
-    model3d: parseSerializedModel3d(project.model3d),
+    model3d,
   };
 }

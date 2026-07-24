@@ -2,6 +2,10 @@
 
 import { visibleDocumentSolids } from '../3d/stl-exporter.js';
 
+function refreshThreeDocumentView() {
+  globalThis.window?.webcadThreeMode?.refreshDocument?.();
+}
+
 export function createDocumentActions({
   state,
   doc,
@@ -23,13 +27,14 @@ export function createDocumentActions({
   syncProperties,
 }) {
   function newDrawing() {
-    if (state.blockEditDraft) {
-      state.statusText = 'Guarde o descarte la edicion del bloque antes de crear un dibujo';
+    if (state.blockEditDraft || state.sketchEditDraft) {
+      state.statusText = 'Finalice la edicion actual antes de crear un dibujo';
       controller.updateUiStatus();
       renderer.draw();
       return false;
     }
     doc.clear();
+    refreshThreeDocumentView();
     localFileManager?.clearCurrentFile();
     state.layers = defaultLayers.map((layer) => ({ ...layer }));
     state.activeLayer = defaultLayer.name;
@@ -46,6 +51,7 @@ export function createDocumentActions({
     ].forEach((key) => { state[key] = null; });
     state.lastTextHeight = activeDrawingProfile().defaultTextHeight;
     state.previousSelection = [];
+    state.sketchReferenceEntities = [];
     state.distanceInput = '';
     orthogonalInference.clear(state);
     state.statusText = `Nuevo dibujo · ${activeDrawingProfile().label} (${getUnitsLabel()})`;
@@ -70,8 +76,8 @@ export function createDocumentActions({
   }
 
   function importDxf() {
-    if (state.blockEditDraft) {
-      state.statusText = 'Guarde o descarte la edicion del bloque antes de importar';
+    if (state.blockEditDraft || state.sketchEditDraft) {
+      state.statusText = 'Finalice la edicion actual antes de importar';
       controller.updateUiStatus();
       renderer.draw();
       return false;
@@ -82,8 +88,8 @@ export function createDocumentActions({
   }
 
   function openWebcadProject() {
-    if (state.blockEditDraft) {
-      state.statusText = 'Guarde o descarte la edicion del bloque antes de abrir un proyecto';
+    if (state.blockEditDraft || state.sketchEditDraft) {
+      state.statusText = 'Finalice la edicion actual antes de abrir un proyecto';
       controller.updateUiStatus();
       renderer.draw();
       return false;
@@ -143,6 +149,7 @@ export function createDocumentActions({
     }
     resetInteractionState();
     doc.undo();
+    refreshThreeDocumentView();
     state.statusText = 'Deshecho';
     controller.updateUiStatus();
     renderer.draw();
@@ -157,6 +164,7 @@ export function createDocumentActions({
     }
     resetInteractionState();
     doc.redo();
+    refreshThreeDocumentView();
     state.statusText = 'Rehecho';
     controller.updateUiStatus();
     renderer.draw();

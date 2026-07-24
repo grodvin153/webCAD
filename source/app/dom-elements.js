@@ -96,6 +96,7 @@ export function createDomElements(root = document) {
     blockEditorDiscardButton: byId('block-editor-discard'),
     statusOrthoButton: byId('status-ortho'),
     statusGridButton: byId('status-grid'),
+    statusAxesButton: byId('status-axes'),
     statusLineWeightButton: byId('status-lineweight'),
     statusTool: byId('status-tool'),
     statusCursor: byId('status-cursor'),
