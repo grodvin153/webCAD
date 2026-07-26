@@ -6,6 +6,7 @@ import {
   cloneExactProfile,
   exactProfileFromCircle,
   exactProfileFromEntity,
+  exactProfileFromOrderedEntities,
   exactProfileFromPolyline,
   exactProfileWithHoles,
   sampleExactProfile,
@@ -20,9 +21,11 @@ import {
 } from '../source/3d/exact-extrusion.js';
 import { extrudeClosedProfile } from '../source/3d/extrusion.js';
 import {
+  analyticSideSurfaceNormalAtPoint,
   deriveSolidAnalyticEdges,
   deriveSolidAnalyticSideSurfaces,
   deriveSolidAnalyticTopology,
+  pointOnAnalyticSideSurface,
   sampleSolidAnalyticEdges,
 } from '../source/3d/analytic-edges.js';
 import {
@@ -74,11 +77,16 @@ import {
   profilePointsFromPolylineLike,
 } from '../source/3d/profile-adapter.js';
 import { cloneSolid3d, computeSolidBounds3d, isValidSolid3d } from '../source/3d/solid.js';
+import {
+  booleanWeldTolerance,
+  editableBooleanMeshTolerance,
+} from '../source/3d/tolerances.js';
 import { createViewer3d } from '../source/3d/viewer3d.js';
 import { solid3dToBufferGeometry } from '../source/3d/three/solid-to-buffer-geometry.js';
 import { entitiesToThreeEntityGroup } from '../source/3d/three/entity-line-objects.js';
 import { visibleEntitiesForThreeView } from '../source/3d/three/entity-visibility.js';
 import {
+  createPushSolidMeshFromSolid,
   createPushSolidGroupFromSolid,
   createPushSolidGroup,
   isPushSolidIntegrityValid,
@@ -1536,6 +1544,7 @@ assert.equal(solidFaceFromMeshHit({
 const perforatedSelection = createSolidFaceSelectionMesh(perforatedTopFace);
 assert.ok(perforatedSelection.geometry.getIndex().count > 3);
 assert.equal(perforatedSelection.renderOrder, SOLID_FACE_SELECTION_RENDER_ORDER);
+assert.equal(perforatedSelection.material.depthTest, true);
 assert.ok(SOLID_FACE_SUPPORT_RENDER_ORDER < SOLID_FACE_HOVER_RENDER_ORDER);
 assert.ok(SOLID_FACE_HOVER_RENDER_ORDER < SOLID_FACE_SELECTION_RENDER_ORDER);
 assert.ok(SOLID_FACE_SELECTION_RENDER_ORDER < PUSH_SOLID_STYLE.edgeRenderOrder);
@@ -2215,6 +2224,984 @@ disposeThreeObject(skAxes);
 await initializeManifoldBoolean();
 assert.equal(isManifoldBooleanReady(), true);
 
+const firstInclinedUnionDepth = 137.52811211300715;
+const firstInclinedUnionRun = 130.71891010987662;
+const firstInclinedUnionRise = 78.00648847077004;
+const firstInclinedUnionArcEnd = {
+  x: 15.998540544552299,
+  y: -86.00758285437546,
+  z: 0,
+};
+const firstInclinedBasePlane = principalSketchPlane('YZ');
+const firstInclinedBaseProfile = exactProfileFromOrderedEntities([
+  {
+    type: 'LINE',
+    start: { x: firstInclinedUnionRun, y: 0, z: 0 },
+    end: { x: 0, y: 0, z: 0 },
+  },
+  {
+    type: 'LINE',
+    start: { x: 0, y: 0, z: 0 },
+    end: { x: 0, y: -firstInclinedUnionRise, z: 0 },
+  },
+  {
+    type: 'ARC',
+    center: { x: 10, y: -firstInclinedUnionRise, z: 0 },
+    radius: 10,
+    startAngle: Math.PI,
+    endAngle: 5.355707669724821,
+    clockwise: true,
+  },
+  {
+    type: 'LINE',
+    start: firstInclinedUnionArcEnd,
+    end: { x: firstInclinedUnionRun, y: 0, z: 0 },
+  },
+], { id: 'first-inclined-union-base' });
+const firstInclinedBasePoints = sampleExactProfile(
+  firstInclinedBaseProfile,
+  { segments: 64 },
+).map((point) => ({ x: point.x, y: -point.y, z: point.z }));
+const firstInclinedBaseFace = faceOnSketchPlane({
+  id: 'first-inclined-union-base',
+  points: firstInclinedBasePoints,
+  holes: [],
+  exactProfile: firstInclinedBaseProfile,
+  cadProfileVertexIndices: firstInclinedBasePoints.map((_, index) => index),
+  smoothProfileVertexIndices: [],
+}, firstInclinedBasePlane, 'first-inclined-union-base-sketch');
+const firstInclinedBaseSolid = solidFromFacePush(
+  firstInclinedBaseFace,
+  -firstInclinedUnionDepth,
+);
+const firstInclinedNormal = {
+  x: 0,
+  y: 0.5998540544552299,
+  z: 0.8001094383605423,
+};
+const firstInclinedPlane = {
+  type: 'fixed',
+  id: null,
+  label: 'Cara plana',
+  origin: {
+    x: 0,
+    y: firstInclinedUnionArcEnd.x,
+    z: -firstInclinedUnionArcEnd.y,
+  },
+  xAxis: { x: 1, y: 0, z: 0 },
+  yAxis: { x: 0, y: 0.8001094383605423, z: -0.5998540544552299 },
+  normal: firstInclinedNormal,
+};
+const firstInclinedCircle = {
+  id: 'first-inclined-union-circle',
+  type: 'CIRCLE',
+  center: { x: -69.79923939052188, y: -74.66681569996402, z: 0 },
+  radius: 29.916761014979265,
+};
+const firstInclinedCircleProfile = exactProfileFromCircle(firstInclinedCircle);
+const firstInclinedCirclePoints = sampleExactProfile(
+  firstInclinedCircleProfile,
+  { segments: 64 },
+).map((point) => ({ x: point.x, y: -point.y, z: point.z }));
+const firstInclinedCircleFace = faceOnSketchPlane({
+  id: 'first-inclined-union-circle-face',
+  points: firstInclinedCirclePoints,
+  holes: [],
+  exactProfile: firstInclinedCircleProfile,
+  cadProfileVertexIndices: [],
+  smoothProfileVertexIndices: firstInclinedCirclePoints.map((_, index) => index),
+}, firstInclinedPlane, 'first-inclined-union-circle-sketch');
+firstInclinedCircleFace.supportSolid = firstInclinedBaseSolid;
+const firstInclinedSupportLength = Math.hypot(
+  firstInclinedUnionRun - firstInclinedUnionArcEnd.x,
+  firstInclinedUnionArcEnd.y,
+);
+firstInclinedCircleFace.supportLoops = {
+  outer: [
+    { x: 0, y: 0, z: 0 },
+    { x: -firstInclinedUnionDepth, y: 0, z: 0 },
+    { x: -firstInclinedUnionDepth, y: firstInclinedSupportLength, z: 0 },
+    { x: 0, y: firstInclinedSupportLength, z: 0 },
+  ].map((point) => pointOnSketchPlane(point, firstInclinedPlane)),
+  holes: [],
+};
+firstInclinedCircleFace.sourceSolidDocumentId = 'first-inclined-union-solid';
+const firstInclinedUnionDistance = 77.09186173033247;
+const firstInclinedUnion = profileFeaturePushSolid(
+  firstInclinedCircleFace,
+  firstInclinedUnionDistance,
+);
+assert.ok(firstInclinedUnion);
+const firstInclinedEdgeUses = new Map();
+firstInclinedUnion.faces.forEach((face) => face.forEach((start, index) => {
+  const end = face[(index + 1) % face.length];
+  const key = start < end ? `${start}:${end}` : `${end}:${start}`;
+  firstInclinedEdgeUses.set(key, (firstInclinedEdgeUses.get(key) ?? 0) + 1);
+}));
+assert.ok([...firstInclinedEdgeUses.values()].every((count) => count === 2));
+const firstInclinedFeature = firstInclinedUnion.metadata.profileFeatures.at(-1);
+const firstInclinedExactCircle = firstInclinedFeature.exactProfile.outerLoop.segments[0];
+assert.equal(firstInclinedFeature.type, 'union');
+assert.equal(firstInclinedExactCircle.type, 'circle');
+assert.deepEqual(firstInclinedExactCircle.center, firstInclinedCircle.center);
+assert.equal(firstInclinedExactCircle.radius, firstInclinedCircle.radius);
+const firstInclinedAxis = new THREE.Vector3(
+  firstInclinedNormal.x,
+  firstInclinedNormal.y,
+  firstInclinedNormal.z,
+).normalize();
+const firstInclinedSupportOrigin = new THREE.Vector3(
+  firstInclinedPlane.origin.x,
+  firstInclinedPlane.origin.y,
+  firstInclinedPlane.origin.z,
+);
+const firstInclinedWorldCenter = pointOnSketchPlane({
+  x: firstInclinedCircle.center.x,
+  y: -firstInclinedCircle.center.y,
+  z: 0,
+}, firstInclinedPlane);
+const firstInclinedLevel = (point) => new THREE.Vector3(
+  point.x,
+  point.y,
+  point.z,
+).sub(firstInclinedSupportOrigin).dot(firstInclinedAxis);
+const firstInclinedSupportGroups = (
+  firstInclinedUnion.metadata.planarFaceGroups ?? []
+).filter((group) =>
+  group.indices?.length &&
+  group.indices.every((faceIndex) =>
+    firstInclinedUnion.faces[faceIndex].every((vertexIndex) =>
+      Math.abs(firstInclinedLevel(firstInclinedUnion.vertices[vertexIndex])) <= 1e-4)));
+assert.equal(firstInclinedSupportGroups.length, 1);
+assert.equal(firstInclinedSupportGroups[0].innerLoops.length, 1);
+const firstInclinedHoleRadialErrors = firstInclinedSupportGroups[0].innerLoops[0]
+  .map((point) => Math.abs(new THREE.Vector3(
+    point.x - firstInclinedWorldCenter.x,
+    point.y - firstInclinedWorldCenter.y,
+    point.z - firstInclinedWorldCenter.z,
+  ).length() - firstInclinedCircle.radius));
+assert.ok(
+  Math.max(...firstInclinedHoleRadialErrors) <=
+    Math.max(5e-5, booleanWeldTolerance(firstInclinedUnion) * 0.1),
+  'El limite interior de la cara inclinada debe permanecer sobre el circulo exacto',
+);
+const firstInclinedTopology = deriveSolidAnalyticTopology(firstInclinedUnion);
+const firstInclinedCylinderSurfaces = firstInclinedTopology.sideSurfaces.filter((surface) =>
+  surface.regionId === firstInclinedFeature.analyticRegionId);
+assert.equal(firstInclinedCylinderSurfaces.length, 1);
+assert.ok(firstInclinedTopology.faceSurfaceIds.some((surfaceId) =>
+  surfaceId === firstInclinedCylinderSurfaces[0].id));
+const firstInclinedEdges = deriveSolidAnalyticEdges(firstInclinedUnion);
+const firstInclinedSupportCurves = firstInclinedEdges.curves.filter((curve) =>
+  curve.closed &&
+  Math.abs(new THREE.Vector3(
+    curve.center.x,
+    curve.center.y,
+    curve.center.z,
+  ).sub(firstInclinedSupportOrigin).dot(firstInclinedAxis)) <= 1e-4);
+assert.equal(firstInclinedSupportCurves.length, 1);
+assert.equal(firstInclinedSupportCurves[0].radiusX, firstInclinedCircle.radius);
+assert.equal(firstInclinedEdges.lines.some((line) => {
+  const points = [line.start, line.end];
+  if (!points.every((point) => Math.abs(firstInclinedLevel(point)) <= 1e-4)) return false;
+  return points.some((point) => new THREE.Vector3(
+    point.x - firstInclinedWorldCenter.x,
+    point.y - firstInclinedWorldCenter.y,
+    point.z - firstInclinedWorldCenter.z,
+  ).length() < firstInclinedCircle.radius - 1e-3);
+}), false);
+const firstInclinedMesh = createPushSolidMeshFromSolid(firstInclinedUnion);
+const firstInclinedTriangleMap =
+  firstInclinedMesh.geometry.userData.webcadFaceTriangleMap ?? [];
+const firstInclinedSupportFaces = firstInclinedTriangleMap.flatMap(
+  (faceIndex, triangleIndex) =>
+    firstInclinedSupportGroups[0].indices.includes(faceIndex)
+      ? [solidFaceFromMeshHit({ object: firstInclinedMesh, faceIndex: triangleIndex })]
+      : [],
+).filter(Boolean);
+assert.ok(firstInclinedSupportFaces.length > 1);
+assert.equal(new Set(firstInclinedSupportFaces.map((face) => face.id)).size, 1);
+const firstInclinedTopFaces = firstInclinedTriangleMap.flatMap((faceIndex, triangleIndex) => {
+  const face = firstInclinedUnion.faces[faceIndex];
+  return face?.every((vertexIndex) =>
+    Math.abs(firstInclinedLevel(firstInclinedUnion.vertices[vertexIndex]) -
+      firstInclinedUnionDistance) <= 1e-4)
+    ? [solidFaceFromMeshHit({ object: firstInclinedMesh, faceIndex: triangleIndex })]
+    : [];
+}).filter(Boolean);
+assert.ok(firstInclinedTopFaces.length > 1);
+assert.equal(new Set(firstInclinedTopFaces.map((face) => face.id)).size, 1);
+assert.equal(
+  firstInclinedTopFaces[0].exactProfile.outerLoop.segments[0].type,
+  'circle',
+);
+const firstInclinedReducedDistance = -51.39457689181589;
+const firstInclinedReduced = movedSolidFacePush(
+  firstInclinedTopFaces[0],
+  firstInclinedReducedDistance,
+);
+assert.ok(firstInclinedReduced);
+const assertFirstInclinedReplay = (solid, expectedDistance) => {
+  assert.equal(isValidSolid3d(solid), true);
+  assert.equal(solid.metadata.profileFeatures.length, 1);
+  assert.equal(
+    solid.metadata.profileFeatures[0].analyticRegionId,
+    firstInclinedFeature.analyticRegionId,
+  );
+  assert.ok(Math.abs(
+    solid.metadata.profileFeatures[0].distance - expectedDistance,
+  ) <= 1e-9);
+  const supportGroups = (solid.metadata.planarFaceGroups ?? []).filter((group) =>
+    group.indices?.length &&
+    group.indices.every((faceIndex) =>
+      solid.faces[faceIndex].every((vertexIndex) =>
+        Math.abs(firstInclinedLevel(solid.vertices[vertexIndex])) <= 1e-4)));
+  assert.equal(supportGroups.length, 1);
+  assert.equal(supportGroups[0].innerLoops.length, 1);
+  assert.ok(supportGroups[0].innerLoops[0].every((point) =>
+    Math.abs(new THREE.Vector3(
+      point.x - firstInclinedWorldCenter.x,
+      point.y - firstInclinedWorldCenter.y,
+      point.z - firstInclinedWorldCenter.z,
+    ).length() - firstInclinedCircle.radius) <=
+      Math.max(5e-5, booleanWeldTolerance(solid) * 0.1)));
+  const edgeUses = new Map();
+  solid.faces.forEach((face) => face.forEach((start, index) => {
+    const end = face[(index + 1) % face.length];
+    const key = start < end ? `${start}:${end}` : `${end}:${start}`;
+    edgeUses.set(key, (edgeUses.get(key) ?? 0) + 1);
+  }));
+  assert.ok([...edgeUses.values()].every((count) => count === 2));
+  assert.equal(deriveSolidAnalyticEdges(solid).lines.some((line) => {
+    const points = [line.start, line.end];
+    return points.every((point) => Math.abs(firstInclinedLevel(point)) <= 1e-4) &&
+      points.some((point) => new THREE.Vector3(
+        point.x - firstInclinedWorldCenter.x,
+        point.y - firstInclinedWorldCenter.y,
+        point.z - firstInclinedWorldCenter.z,
+      ).length() < firstInclinedCircle.radius - 1e-3);
+  }), false);
+};
+assertFirstInclinedReplay(firstInclinedReduced, 25.697284838516595);
+const firstInclinedReducedMesh = createPushSolidMeshFromSolid(firstInclinedReduced);
+const firstInclinedReducedMap =
+  firstInclinedReducedMesh.geometry.userData.webcadFaceTriangleMap ?? [];
+const firstInclinedReducedCap = firstInclinedReducedMap.flatMap((_, triangleIndex) => {
+  const face = solidFaceFromMeshHit({
+    object: firstInclinedReducedMesh,
+    faceIndex: triangleIndex,
+  });
+  return face?.analyticRegionId === firstInclinedFeature.analyticRegionId &&
+    face.analyticCapIndex === 1
+    ? [face]
+    : [];
+})[0];
+assert.ok(firstInclinedReducedCap);
+const firstInclinedExtended = movedSolidFacePush(
+  firstInclinedReducedCap,
+  12.5,
+);
+assert.ok(firstInclinedExtended);
+assertFirstInclinedReplay(firstInclinedExtended, 38.197284838516595);
+firstInclinedReducedMesh.geometry.dispose();
+firstInclinedReducedMesh.material.dispose();
+firstInclinedMesh.geometry.dispose();
+firstInclinedMesh.material.dispose();
+const firstInclinedModel = createModel3d();
+addModel3dSolid(firstInclinedModel, firstInclinedExtended, {
+  id: 'first-inclined-union-solid',
+});
+const reopenedFirstInclinedUnion = parseSerializedModel3d(
+  JSON.parse(JSON.stringify(serializeModel3d(firstInclinedModel))),
+).solids[0].solid;
+assert.deepEqual(
+  reopenedFirstInclinedUnion.metadata.profileFeatures[0].exactProfile,
+  firstInclinedExtended.metadata.profileFeatures[0].exactProfile,
+);
+assertFirstInclinedReplay(reopenedFirstInclinedUnion, 38.197284838516595);
+
+const localAxisPushNormal = {
+  x: 0,
+  y: 0.8409328308294408,
+  z: 0.5411395143890191,
+};
+const localAxisPushPlane = {
+  type: 'fixed',
+  id: null,
+  label: 'Cara plana',
+  origin: { x: 0, y: 0, z: 98.46869239810151 },
+  xAxis: { x: -1, y: 0, z: 0 },
+  yAxis: { x: 0, y: -0.5411395143890191, z: 0.8409328308294408 },
+  normal: localAxisPushNormal,
+};
+const localAxisTrianglePlane = principalSketchPlane('YZ');
+const localAxisTriangleProfile = exactProfileFromOrderedEntities([
+  {
+    type: 'LINE',
+    start: { x: 63.3645143028525, y: 0, z: 0 },
+    end: { x: 0, y: 0, z: 0 },
+  },
+  {
+    type: 'LINE',
+    start: { x: 0, y: 0, z: 0 },
+    end: { x: 0, y: -98.46869239810151, z: 0 },
+  },
+  {
+    type: 'LINE',
+    start: { x: 0, y: -98.46869239810151, z: 0 },
+    end: { x: 63.3645143028525, y: 0, z: 0 },
+  },
+], { id: 'local-axis-triangle' });
+const localAxisTriangleFace = faceOnSketchPlane({
+  id: 'local-axis-triangle',
+  points: [
+    { x: 63.3645143028525, y: 0, z: 0 },
+    { x: 0, y: 0, z: 0 },
+    { x: 0, y: 98.46869239810151, z: 0 },
+  ],
+  holes: [],
+  exactProfile: localAxisTriangleProfile,
+  cadProfileVertexIndices: [0, 1, 2],
+  smoothProfileVertexIndices: [],
+}, localAxisTrianglePlane, 'local-axis-sketch-1');
+const localAxisInitialSolid = solidFromFacePush(
+  localAxisTriangleFace,
+  -58.11018483430643,
+);
+const localAxisCircle = {
+  type: 'CIRCLE',
+  center: { x: 29.055092417153215, y: 58.5472993728753, z: 0 },
+  radius: 8.447054795100902,
+};
+const localAxisCircleProfile = exactProfileFromCircle(localAxisCircle);
+const localAxisCirclePoints = sampleExactProfile(localAxisCircleProfile, { segments: 64 })
+  .map((point) => ({ x: point.x, y: -point.y, z: point.z }));
+const localAxisSupportLoop = [
+  { x: 0, y: 0, z: 0 },
+  { x: 58.11018483430643, y: 0, z: 0 },
+  { x: 58.11018483430643, y: -117.0945987457506, z: 0 },
+  { x: 0, y: -117.0945987457506, z: 0 },
+].map((point) => pointOnSketchPlane(point, localAxisPushPlane));
+const localAxisCircleFace = faceOnSketchPlane({
+  id: 'local-axis-circle',
+  points: localAxisCirclePoints,
+  holes: [],
+  exactProfile: localAxisCircleProfile,
+  cadProfileVertexIndices: [],
+  smoothProfileVertexIndices: localAxisCirclePoints.map((_, index) => index),
+}, localAxisPushPlane, 'local-axis-sketch-3');
+localAxisCircleFace.supportSolid = localAxisInitialSolid;
+localAxisCircleFace.supportLoops = { outer: localAxisSupportLoop, holes: [] };
+localAxisCircleFace.sourceSolidDocumentId = 'local-axis-solid';
+
+const localAxisProjection = (point) =>
+  point.x * localAxisPushNormal.x +
+  point.y * localAxisPushNormal.y +
+  point.z * localAxisPushNormal.z;
+const localAxisMaxProjection = (solid) =>
+  Math.max(...solid.vertices.map(localAxisProjection));
+const localAxisCircleWorldCenter = pointOnSketchPlane({
+  x: localAxisCircle.center.x,
+  y: -localAxisCircle.center.y,
+  z: 0,
+}, localAxisPushPlane);
+const localAxisCapCenter = (distance) => ({
+  x: localAxisCircleWorldCenter.x + localAxisPushNormal.x * distance,
+  y: localAxisCircleWorldCenter.y + localAxisPushNormal.y * distance,
+  z: localAxisCircleWorldCenter.z + localAxisPushNormal.z * distance,
+});
+const localAxisCircularCap = (solid, distance) => {
+  const mesh = createPushSolidMeshFromSolid(solid, {
+    name: `local-axis-solid-${distance}`,
+  });
+  const extremeProjection = localAxisMaxProjection(solid);
+  const expectedCenter = new THREE.Vector3(...Object.values(localAxisCapCenter(distance)));
+  const triangleMap = mesh.geometry.userData.webcadFaceTriangleMap ?? [];
+  const faces = new Map();
+  triangleMap.forEach((_, triangleIndex) => {
+    const face = solidFaceFromMeshHit({ object: mesh, faceIndex: triangleIndex });
+    if (face) faces.set(face.id, face);
+  });
+  const selected = [...faces.values()].find((face) => {
+    const normal = new THREE.Vector3(face.normal.x, face.normal.y, face.normal.z);
+    if (normal.dot(new THREE.Vector3(
+      localAxisPushNormal.x,
+      localAxisPushNormal.y,
+      localAxisPushNormal.z,
+    )) < 1 - 1e-4) return false;
+    if (!face.points.length || face.points.some((point) =>
+      Math.abs(localAxisProjection(point) - extremeProjection) > 2e-3)) return false;
+    return face.points.every((point) =>
+      Math.abs(new THREE.Vector3(point.x, point.y, point.z)
+        .distanceTo(expectedCenter) - localAxisCircle.radius) < 2e-2);
+  });
+  mesh.geometry.dispose();
+  mesh.material.dispose();
+  return selected ?? null;
+};
+const localAxisComponentCount = (solid) => {
+  const parents = solid.vertices.map((_, index) => index);
+  const root = (index) => {
+    let current = index;
+    while (parents[current] !== current) {
+      parents[current] = parents[parents[current]];
+      current = parents[current];
+    }
+    return current;
+  };
+  const join = (first, second) => {
+    const firstRoot = root(first);
+    const secondRoot = root(second);
+    if (firstRoot !== secondRoot) parents[secondRoot] = firstRoot;
+  };
+  const used = new Set();
+  solid.faces.forEach((face) => face.forEach((vertexIndex, index) => {
+    used.add(vertexIndex);
+    join(vertexIndex, face[(index + 1) % face.length]);
+  }));
+  return new Set([...used].map(root)).size;
+};
+
+const localAxisInitialDistance = 65.22133323476602;
+const localAxisExtendedDistance = 60.37548499300373;
+const localAxisRetractedDistance = -58.02521693354633;
+const localAxisInitialUnion = profileFeaturePushSolid(
+  localAxisCircleFace,
+  localAxisInitialDistance,
+);
+assert.ok(localAxisInitialUnion);
+const localAxisFirstCap = localAxisCircularCap(
+  localAxisInitialUnion,
+  localAxisInitialDistance,
+);
+assert.ok(localAxisFirstCap, 'La tapa circular inicial debe poder seleccionarse por hit-testing');
+assert.ok(Math.abs(
+  new THREE.Vector3(
+    localAxisFirstCap.normal.x,
+    localAxisFirstCap.normal.y,
+    localAxisFirstCap.normal.z,
+  ).dot(new THREE.Vector3(
+    localAxisPushNormal.x,
+    localAxisPushNormal.y,
+    localAxisPushNormal.z,
+  )) - 1,
+) < 1e-10, 'La tapa analitica debe usar exactamente el eje local del workplane');
+assert.ok(localAxisFirstCap.exactProfile);
+assert.ok(Math.abs(
+  localAxisMaxProjection(localAxisInitialUnion) -
+  localAxisProjection(localAxisCircleWorldCenter) -
+  localAxisInitialDistance,
+) < 2e-3);
+
+const localAxisExtendedSolid = movedSolidFacePush(
+  localAxisFirstCap,
+  localAxisExtendedDistance,
+);
+assert.ok(localAxisExtendedSolid);
+const localAxisOldCapProjection = localAxisMaxProjection(localAxisExtendedSolid);
+assert.ok(Math.abs(
+  localAxisOldCapProjection -
+  localAxisMaxProjection(localAxisInitialUnion) -
+  localAxisExtendedDistance,
+) < 2e-3, 'La extension debe avanzar exactamente sobre la normal local');
+const localAxisExtendedCap = localAxisCircularCap(
+  localAxisExtendedSolid,
+  localAxisInitialDistance + localAxisExtendedDistance,
+);
+assert.ok(localAxisExtendedCap, 'La nueva tapa circular debe poder volver a seleccionarse');
+assert.ok(localAxisExtendedCap.exactProfile);
+assert.ok(Math.abs(
+  new THREE.Vector3(
+    localAxisExtendedCap.normal.x,
+    localAxisExtendedCap.normal.y,
+    localAxisExtendedCap.normal.z,
+  ).dot(new THREE.Vector3(
+    localAxisPushNormal.x,
+    localAxisPushNormal.y,
+    localAxisPushNormal.z,
+  )) - 1,
+) < 1e-10, 'La tapa extendida debe conservar el eje analitico exacto');
+const localAxisExactPlaneShift = new THREE.Vector3(
+  localAxisExtendedCap.exactProfile.plane.origin.x -
+    localAxisFirstCap.exactProfile.plane.origin.x,
+  localAxisExtendedCap.exactProfile.plane.origin.y -
+    localAxisFirstCap.exactProfile.plane.origin.y,
+  localAxisExtendedCap.exactProfile.plane.origin.z -
+    localAxisFirstCap.exactProfile.plane.origin.z,
+);
+assert.ok(Math.abs(
+  localAxisExactPlaneShift.dot(new THREE.Vector3(
+    localAxisPushNormal.x,
+    localAxisPushNormal.y,
+    localAxisPushNormal.z,
+  )) - localAxisExtendedDistance,
+) < 2e-3);
+assert.ok(localAxisExactPlaneShift.clone().cross(new THREE.Vector3(
+  localAxisPushNormal.x,
+  localAxisPushNormal.y,
+  localAxisPushNormal.z,
+)).length() < 2e-3);
+
+const localAxisRetractedSolid = movedSolidFacePush(
+  localAxisExtendedCap,
+  localAxisRetractedDistance,
+);
+assert.ok(localAxisRetractedSolid);
+const localAxisExpectedProjection =
+  localAxisOldCapProjection + localAxisRetractedDistance;
+assert.ok(Math.abs(
+  localAxisMaxProjection(localAxisRetractedSolid) - localAxisExpectedProjection,
+) < 2e-3, 'La retraccion debe retirar por completo la prolongacion anterior');
+assert.equal(localAxisRetractedSolid.vertices.some((point) =>
+  localAxisProjection(point) > localAxisExpectedProjection + 2e-3), false);
+assert.equal(localAxisRetractedSolid.vertices.some((point) =>
+  Math.abs(localAxisProjection(point) - localAxisOldCapProjection) < 2e-3), false);
+assert.equal(isValidSolid3d(localAxisRetractedSolid), true);
+assert.equal(localAxisComponentCount(localAxisRetractedSolid), 1);
+const localAxisFinalCap = localAxisCircularCap(
+  localAxisRetractedSolid,
+  localAxisInitialDistance +
+    localAxisExtendedDistance +
+    localAxisRetractedDistance,
+);
+assert.ok(localAxisFinalCap);
+assert.ok(Math.abs(
+  localAxisFinalCap.exactProfile.outerLoop.segments[0].radius -
+    localAxisCircle.radius,
+) < 2e-3);
+const localAxisCircularSurfaces = deriveSolidAnalyticSideSurfaces(localAxisRetractedSolid)
+  .filter((surface) =>
+    Math.abs(surface.radiusX - localAxisCircle.radius) < 2e-3 &&
+    Math.abs(surface.radiusY - localAxisCircle.radius) < 2e-3);
+assert.ok(localAxisCircularSurfaces.length > 0);
+
+const inclinedShortenNormal = {
+  x: 0,
+  y: 0.705919637773969,
+  z: 0.708291934872245,
+};
+const inclinedShortenPlane = {
+  type: 'fixed',
+  id: null,
+  label: 'Cara plana',
+  origin: { x: 0, y: 0, z: 86.79187959088799 },
+  xAxis: { x: 1, y: 0, z: 0 },
+  yAxis: { x: 0, y: 0.708291934872245, z: -0.705919637773969 },
+  normal: inclinedShortenNormal,
+};
+const inclinedShortenTriangleProfile = exactProfileFromOrderedEntities([
+  {
+    type: 'LINE',
+    start: { x: 87.08355036060428, y: 0, z: 0 },
+    end: { x: 0, y: 0, z: 0 },
+  },
+  {
+    type: 'LINE',
+    start: { x: 0, y: 0, z: 0 },
+    end: { x: 0, y: -86.79187959088799, z: 0 },
+  },
+  {
+    type: 'LINE',
+    start: { x: 0, y: -86.79187959088799, z: 0 },
+    end: { x: 87.08355036060428, y: 0, z: 0 },
+  },
+], { id: 'inclined-shorten-triangle' });
+const inclinedShortenBaseFace = faceOnSketchPlane({
+  id: 'inclined-shorten-triangle',
+  points: [
+    { x: 87.08355036060428, y: 0, z: 0 },
+    { x: 0, y: 0, z: 0 },
+    { x: 0, y: 86.79187959088799, z: 0 },
+  ],
+  holes: [],
+  exactProfile: inclinedShortenTriangleProfile,
+  cadProfileVertexIndices: [0, 1, 2],
+  smoothProfileVertexIndices: [],
+}, principalSketchPlane('YZ'), 'inclined-shorten-sketch-1');
+const inclinedShortenBase = solidFromFacePush(
+  inclinedShortenBaseFace,
+  -73.9664720206875,
+);
+const inclinedShortenCircle = {
+  type: 'CIRCLE',
+  center: { x: -38.139693759999716, y: -63.419406704420524, z: 0 },
+  radius: 16.072109179153678,
+};
+const inclinedShortenCircleProfile = exactProfileFromCircle(inclinedShortenCircle);
+const inclinedShortenCirclePoints = sampleExactProfile(
+  inclinedShortenCircleProfile,
+  { segments: 64 },
+).map((point) => ({ x: point.x, y: -point.y, z: point.z }));
+const inclinedShortenSupportLength = Math.hypot(
+  87.08355036060428,
+  86.79187959088799,
+);
+const inclinedShortenSupportLoop = [
+  { x: 0, y: 0, z: 0 },
+  { x: -73.9664720206875, y: 0, z: 0 },
+  { x: -73.9664720206875, y: inclinedShortenSupportLength, z: 0 },
+  { x: 0, y: inclinedShortenSupportLength, z: 0 },
+].map((point) => pointOnSketchPlane(point, inclinedShortenPlane));
+const inclinedShortenCircleFace = faceOnSketchPlane({
+  id: 'inclined-shorten-circle',
+  points: inclinedShortenCirclePoints,
+  holes: [],
+  exactProfile: inclinedShortenCircleProfile,
+  cadProfileVertexIndices: [],
+  smoothProfileVertexIndices: inclinedShortenCirclePoints.map((_, index) => index),
+}, inclinedShortenPlane, 'inclined-shorten-sketch-2');
+inclinedShortenCircleFace.supportSolid = inclinedShortenBase;
+inclinedShortenCircleFace.supportLoops = {
+  outer: inclinedShortenSupportLoop,
+  holes: [],
+};
+inclinedShortenCircleFace.sourceSolidDocumentId = 'inclined-shorten-solid';
+
+const inclinedShortenProjection = (point) => {
+  const relative = new THREE.Vector3(
+    point.x - inclinedShortenPlane.origin.x,
+    point.y - inclinedShortenPlane.origin.y,
+    point.z - inclinedShortenPlane.origin.z,
+  );
+  return relative.dot(new THREE.Vector3(
+    inclinedShortenNormal.x,
+    inclinedShortenNormal.y,
+    inclinedShortenNormal.z,
+  ));
+};
+const inclinedShortenCap = (solid, distance) => {
+  const mesh = createPushSolidMeshFromSolid(solid);
+  const triangleMap = mesh.geometry.userData.webcadFaceTriangleMap ?? [];
+  const candidates = new Map();
+  triangleMap.forEach((_, triangleIndex) => {
+    const face = solidFaceFromMeshHit({ object: mesh, faceIndex: triangleIndex });
+    if (face) candidates.set(face.id, face);
+  });
+  const face = [...candidates.values()].find((candidate) => {
+    const circle = candidate.exactProfile?.outerLoop?.segments?.[0];
+    return circle?.type === 'circle' &&
+      Math.abs(circle.radius - inclinedShortenCircle.radius) < 2e-3 &&
+      candidate.points.every((point) =>
+        Math.abs(inclinedShortenProjection(point) - distance) < 2e-3);
+  });
+  mesh.geometry.dispose();
+  mesh.material.dispose();
+  return face ?? null;
+};
+const inclinedShortenMaxEdgeUse = (solid) => {
+  const tolerance = booleanWeldTolerance(solid);
+  const pointKey = (point) =>
+    `${Math.round(point.x / tolerance)}:` +
+    `${Math.round(point.y / tolerance)}:` +
+    `${Math.round(point.z / tolerance)}`;
+  const uses = new Map();
+  solid.faces.forEach((face) => face.forEach((startIndex, index) => {
+    const endIndex = face[(index + 1) % face.length];
+    const start = pointKey(solid.vertices[startIndex]);
+    const end = pointKey(solid.vertices[endIndex]);
+    if (start === end) return;
+    const key = start < end ? `${start}|${end}` : `${end}|${start}`;
+    uses.set(key, (uses.get(key) ?? 0) + 1);
+  }));
+  return Math.max(0, ...uses.values());
+};
+
+const inclinedShortenInitialDistance = 89.7614298621783;
+const inclinedShortenMoveDistance = -59.84095306427038;
+const inclinedShortenExpectedDistance =
+  inclinedShortenInitialDistance + inclinedShortenMoveDistance;
+const inclinedShortenUnion = profileFeaturePushSolid(
+  inclinedShortenCircleFace,
+  inclinedShortenInitialDistance,
+);
+assert.ok(inclinedShortenUnion);
+const inclinedShortenOldCap = inclinedShortenCap(
+  inclinedShortenUnion,
+  inclinedShortenInitialDistance,
+);
+assert.ok(inclinedShortenOldCap);
+const inclinedShortenResult = movedSolidFacePush(
+  inclinedShortenOldCap,
+  inclinedShortenMoveDistance,
+);
+assert.ok(inclinedShortenResult);
+assert.ok(Math.abs(
+  Math.max(...inclinedShortenResult.vertices.map(inclinedShortenProjection)) -
+    inclinedShortenExpectedDistance,
+) < 2e-3);
+assert.equal(inclinedShortenResult.vertices.some((point) =>
+  Math.abs(inclinedShortenProjection(point) - inclinedShortenInitialDistance) < 2e-3), false);
+assert.ok(inclinedShortenMaxEdgeUse(inclinedShortenResult) <= 2);
+assert.equal(isValidSolid3d(inclinedShortenResult), true);
+assert.equal(inclinedShortenResult.metadata.profileFeatures.length, 1);
+assert.equal(inclinedShortenResult.metadata.profileFeatures[0].type, 'union');
+assert.ok(Math.abs(
+  inclinedShortenResult.metadata.profileFeatures[0].distance -
+    inclinedShortenExpectedDistance,
+) < 2e-3);
+const inclinedShortenExactCircle =
+  inclinedShortenResult.metadata.profileFeatures[0].exactProfile.outerLoop.segments[0];
+assert.equal(inclinedShortenExactCircle.type, 'circle');
+assert.ok(Math.abs(inclinedShortenExactCircle.center.x -
+  inclinedShortenCircle.center.x) < 1e-9);
+assert.ok(Math.abs(inclinedShortenExactCircle.center.y -
+  inclinedShortenCircle.center.y) < 1e-9);
+assert.ok(Math.abs(inclinedShortenExactCircle.radius -
+  inclinedShortenCircle.radius) < 1e-9);
+const inclinedShortenEndCenter = pointOnSketchPlane({
+  x: inclinedShortenCircle.center.x,
+  y: -inclinedShortenCircle.center.y,
+  z: inclinedShortenExpectedDistance,
+}, inclinedShortenPlane);
+assert.equal(deriveSolidAnalyticEdges(inclinedShortenResult).curves.filter((curve) =>
+  curve.closed &&
+  Math.abs(curve.radiusX - inclinedShortenCircle.radius) < 2e-3 &&
+  Math.hypot(
+    curve.center.x - inclinedShortenEndCenter.x,
+    curve.center.y - inclinedShortenEndCenter.y,
+    curve.center.z - inclinedShortenEndCenter.z,
+  ) < 2e-3).length, 1);
+
+const inclinedRecessInitialDistance = -18;
+const inclinedRecess = profileFeaturePushSolid({
+  ...inclinedShortenCircleFace,
+  id: 'inclined-recess-circle',
+  supportSolid: inclinedShortenBase,
+}, inclinedRecessInitialDistance);
+assert.ok(inclinedRecess);
+const inclinedRecessBottom = inclinedShortenCap(
+  inclinedRecess,
+  inclinedRecessInitialDistance,
+);
+assert.ok(inclinedRecessBottom);
+const inclinedRecessAxis = new THREE.Vector3(
+  inclinedShortenNormal.x,
+  inclinedShortenNormal.y,
+  inclinedShortenNormal.z,
+);
+const inclinedRecessBottomNormal = new THREE.Vector3(
+  inclinedRecessBottom.normal.x,
+  inclinedRecessBottom.normal.y,
+  inclinedRecessBottom.normal.z,
+);
+assert.ok(inclinedRecessBottomNormal.dot(
+  inclinedRecessAxis.clone().multiplyScalar(Math.sign(inclinedRecessInitialDistance)),
+) < -1 + 1e-10);
+const inclinedRecessDeepenMove = -6;
+const inclinedRecessDeepDistance = inclinedRecessInitialDistance +
+  inclinedRecessBottomNormal.clone()
+    .multiplyScalar(inclinedRecessDeepenMove)
+    .dot(inclinedRecessAxis);
+const inclinedRecessDeep = movedSolidFacePush(
+  inclinedRecessBottom,
+  inclinedRecessDeepenMove,
+);
+assert.ok(inclinedRecessDeep);
+assert.equal(inclinedRecessDeep.metadata.profileFeatures.length, 1);
+assert.equal(inclinedRecessDeep.metadata.profileFeatures[0].type, 'subtract');
+assert.ok(Math.abs(
+  inclinedRecessDeep.metadata.profileFeatures[0].distance -
+    inclinedRecessDeepDistance,
+) < 2e-3);
+assert.equal(inclinedRecessDeep.metadata.profileFeatures.some((feature) =>
+  feature.type === 'union'), false);
+assert.ok(inclinedShortenMaxEdgeUse(inclinedRecessDeep) <= 2);
+assert.equal(isValidSolid3d(inclinedRecessDeep), true);
+const inclinedRecessDeepBottom = inclinedShortenCap(
+  inclinedRecessDeep,
+  inclinedRecessDeepDistance,
+);
+assert.ok(inclinedRecessDeepBottom);
+
+const inclinedRecessReduceMove = 9;
+const inclinedRecessReducedDistance = inclinedRecessDeepDistance +
+  new THREE.Vector3(
+    inclinedRecessDeepBottom.normal.x,
+    inclinedRecessDeepBottom.normal.y,
+    inclinedRecessDeepBottom.normal.z,
+  ).multiplyScalar(inclinedRecessReduceMove).dot(inclinedRecessAxis);
+const inclinedRecessReduced = movedSolidFacePush(
+  inclinedRecessDeepBottom,
+  inclinedRecessReduceMove,
+);
+assert.ok(inclinedRecessReduced);
+assert.equal(inclinedRecessReduced.metadata.profileFeatures.length, 1);
+assert.equal(inclinedRecessReduced.metadata.profileFeatures[0].type, 'subtract');
+assert.ok(Math.abs(
+  inclinedRecessReduced.metadata.profileFeatures[0].distance -
+    inclinedRecessReducedDistance,
+) < 2e-3);
+assert.equal(inclinedRecessReduced.metadata.profileFeatures.some((feature) =>
+  feature.type === 'union'), false);
+assert.equal(inclinedRecessReduced.vertices.some((point) =>
+  Math.abs(inclinedShortenProjection(point) - inclinedRecessDeepDistance) < 2e-3), false);
+assert.ok(inclinedShortenMaxEdgeUse(inclinedRecessReduced) <= 2);
+assert.equal(isValidSolid3d(inclinedRecessReduced), true);
+const inclinedRecessCircle =
+  inclinedRecessReduced.metadata.profileFeatures[0].exactProfile.outerLoop.segments[0];
+assert.equal(inclinedRecessCircle.type, 'circle');
+assert.ok(Math.abs(inclinedRecessCircle.center.x -
+  inclinedShortenCircle.center.x) < 1e-9);
+assert.ok(Math.abs(inclinedRecessCircle.center.y -
+  inclinedShortenCircle.center.y) < 1e-9);
+assert.ok(Math.abs(inclinedRecessCircle.radius -
+  inclinedShortenCircle.radius) < 1e-9);
+const inclinedRecessEndCenter = pointOnSketchPlane({
+  x: inclinedShortenCircle.center.x,
+  y: -inclinedShortenCircle.center.y,
+  z: inclinedRecessReducedDistance,
+}, inclinedShortenPlane);
+assert.equal(deriveSolidAnalyticEdges(inclinedRecessReduced).curves.filter((curve) =>
+  curve.closed &&
+  Math.abs(curve.radiusX - inclinedShortenCircle.radius) < 2e-3 &&
+  Math.hypot(
+    curve.center.x - inclinedRecessEndCenter.x,
+    curve.center.y - inclinedRecessEndCenter.y,
+    curve.center.z - inclinedRecessEndCenter.z,
+  ) < 2e-3).length, 1);
+
+const inclinedCrossUnionDistance = 76.2047981535852;
+const inclinedCrossUnionMove = -143.49333073820688;
+const inclinedCrossSubtractDistance =
+  inclinedCrossUnionDistance + inclinedCrossUnionMove;
+const inclinedCrossUnion = profileFeaturePushSolid(
+  inclinedShortenCircleFace,
+  inclinedCrossUnionDistance,
+);
+assert.ok(inclinedCrossUnion);
+const inclinedCrossUnionCap = inclinedShortenCap(
+  inclinedCrossUnion,
+  inclinedCrossUnionDistance,
+);
+assert.ok(inclinedCrossUnionCap);
+const inclinedCrossSubtract = movedSolidFacePush(
+  inclinedCrossUnionCap,
+  inclinedCrossUnionMove,
+);
+assert.ok(inclinedCrossSubtract);
+assert.equal(inclinedCrossSubtract.metadata.profileFeatures.length, 1);
+assert.equal(inclinedCrossSubtract.metadata.profileFeatures[0].type, 'subtract');
+assert.equal(inclinedCrossSubtract.metadata.profileFeatures.some((feature) =>
+  feature.type === 'union'), false);
+assert.ok(Math.abs(
+  inclinedCrossSubtract.metadata.profileFeatures[0].distance -
+    inclinedCrossSubtractDistance,
+) < 2e-3);
+assert.equal(inclinedCrossSubtract.vertices.some((point) =>
+  Math.abs(inclinedShortenProjection(point) - inclinedCrossUnionDistance) < 2e-3), false);
+assert.ok(inclinedShortenMaxEdgeUse(inclinedCrossSubtract) <= 2);
+assert.equal(isValidSolid3d(inclinedCrossSubtract), true);
+const inclinedCrossSubtractProfile =
+  inclinedCrossSubtract.metadata.profileFeatures[0].exactProfile;
+const inclinedCrossSubtractCircle = inclinedCrossSubtractProfile.outerLoop.segments[0];
+assert.equal(inclinedCrossSubtractCircle.type, 'circle');
+assert.ok(Math.abs(inclinedCrossSubtractCircle.center.x -
+  inclinedShortenCircle.center.x) < 1e-9);
+assert.ok(Math.abs(inclinedCrossSubtractCircle.center.y -
+  inclinedShortenCircle.center.y) < 1e-9);
+assert.ok(Math.abs(inclinedCrossSubtractCircle.radius -
+  inclinedShortenCircle.radius) < 1e-9);
+for (const key of ['origin', 'xAxis', 'yAxis', 'normal']) {
+  for (const axis of ['x', 'y', 'z']) {
+    assert.ok(Math.abs(
+      inclinedCrossSubtractProfile.plane[key][axis] -
+        inclinedShortenCircleFace.exactProfile.plane[key][axis],
+    ) < 1e-12);
+  }
+}
+const inclinedCrossSubtractSurfaces =
+  deriveSolidAnalyticSideSurfaces(inclinedCrossSubtract)
+    .filter((surface) =>
+      Math.abs(surface.radiusX - inclinedShortenCircle.radius) < 2e-3 &&
+      Math.abs(surface.radiusY - inclinedShortenCircle.radius) < 2e-3);
+assert.equal(inclinedCrossSubtractSurfaces.length, 1);
+assert.ok(Math.abs(
+  new THREE.Vector3(
+    inclinedCrossSubtractSurfaces[0].offset.x,
+    inclinedCrossSubtractSurfaces[0].offset.y,
+    inclinedCrossSubtractSurfaces[0].offset.z,
+  ).dot(inclinedRecessAxis) - inclinedCrossSubtractDistance,
+) < 2e-3);
+
+const inclinedCrossRecessDistance = -18;
+const inclinedCrossUnionExpectedDistance = 7;
+const inclinedCrossRecess = profileFeaturePushSolid({
+  ...inclinedShortenCircleFace,
+  id: 'inclined-cross-recess-circle',
+  supportSolid: inclinedShortenBase,
+}, inclinedCrossRecessDistance);
+assert.ok(inclinedCrossRecess);
+const inclinedCrossRecessBottom = inclinedShortenCap(
+  inclinedCrossRecess,
+  inclinedCrossRecessDistance,
+);
+assert.ok(inclinedCrossRecessBottom);
+const inclinedCrossRecessNormal = new THREE.Vector3(
+  inclinedCrossRecessBottom.normal.x,
+  inclinedCrossRecessBottom.normal.y,
+  inclinedCrossRecessBottom.normal.z,
+);
+const inclinedCrossFromRecessMove = (
+  inclinedCrossUnionExpectedDistance - inclinedCrossRecessDistance
+) / inclinedCrossRecessNormal.dot(inclinedRecessAxis);
+const inclinedCrossUnionResult = movedSolidFacePush(
+  inclinedCrossRecessBottom,
+  inclinedCrossFromRecessMove,
+);
+assert.ok(inclinedCrossUnionResult);
+assert.equal(inclinedCrossUnionResult.metadata.profileFeatures.length, 1);
+assert.equal(inclinedCrossUnionResult.metadata.profileFeatures[0].type, 'union');
+assert.equal(inclinedCrossUnionResult.metadata.profileFeatures.some((feature) =>
+  feature.type === 'subtract'), false);
+assert.ok(Math.abs(
+  inclinedCrossUnionResult.metadata.profileFeatures[0].distance -
+    inclinedCrossUnionExpectedDistance,
+) < 2e-3);
+assert.equal(inclinedCrossUnionResult.vertices.some((point) =>
+  Math.abs(inclinedShortenProjection(point) - inclinedCrossRecessDistance) < 2e-3), false);
+assert.ok(inclinedShortenMaxEdgeUse(inclinedCrossUnionResult) <= 2);
+assert.equal(isValidSolid3d(inclinedCrossUnionResult), true);
+const inclinedCrossUnionSurface = deriveSolidAnalyticSideSurfaces(
+  inclinedCrossUnionResult,
+).find((surface) =>
+  Math.abs(surface.radiusX - inclinedShortenCircle.radius) < 2e-3 &&
+  Math.abs(surface.radiusY - inclinedShortenCircle.radius) < 2e-3);
+assert.ok(inclinedCrossUnionSurface);
+assert.ok(Math.abs(
+  new THREE.Vector3(
+    inclinedCrossUnionSurface.offset.x,
+    inclinedCrossUnionSurface.offset.y,
+    inclinedCrossUnionSurface.offset.z,
+  ).dot(inclinedRecessAxis) - inclinedCrossUnionExpectedDistance,
+) < 2e-3);
+
+const inclinedZeroUnionDistance = 12;
+const inclinedZeroUnion = profileFeaturePushSolid(
+  inclinedShortenCircleFace,
+  inclinedZeroUnionDistance,
+);
+assert.ok(inclinedZeroUnion);
+const inclinedZeroUnionCap = inclinedShortenCap(
+  inclinedZeroUnion,
+  inclinedZeroUnionDistance,
+);
+assert.ok(inclinedZeroUnionCap);
+const inclinedZeroResult = movedSolidFacePush(
+  inclinedZeroUnionCap,
+  -inclinedZeroUnionDistance,
+);
+assert.ok(inclinedZeroResult);
+assert.equal(inclinedZeroResult.metadata.profileFeatures.length, 0);
+assert.equal(isValidSolid3d(inclinedZeroResult), true);
+const inclinedZeroBounds = computeSolidBounds3d(inclinedZeroResult);
+const inclinedBaseBounds = computeSolidBounds3d(inclinedShortenBase);
+for (const key of ['minX', 'minY', 'minZ', 'maxX', 'maxY', 'maxZ']) {
+  assert.ok(Math.abs(inclinedZeroBounds[key] - inclinedBaseBounds[key]) < 1e-9);
+}
+assert.equal(deriveSolidAnalyticSideSurfaces(inclinedZeroResult).some((surface) =>
+  Math.abs(surface.radiusX - inclinedShortenCircle.radius) < 2e-3 &&
+  Math.abs(surface.radiusY - inclinedShortenCircle.radius) < 2e-3), false);
+
 const flatTangentNormal = { x: 0, y: 0, z: 1 };
 const smoothTangentNormal = { x: 0.02, y: 0, z: 0.9998 };
 const nextCurveNormal = { x: 0.04, y: 0, z: 0.9992 };
@@ -2447,6 +3434,42 @@ const phaseZeroRoofPlane = {
     z: phaseZeroRoofRun / phaseZeroRoofLength,
   },
 };
+const phaseZeroHouseExactProfile = exactProfileFromOrderedEntities([
+  {
+    type: 'LINE',
+    start: { x: 0, y: 0, z: 0 },
+    end: { x: 0, y: -phaseZeroWallHeight, z: 0 },
+  },
+  {
+    type: 'LINE',
+    start: { x: 0, y: -phaseZeroWallHeight, z: 0 },
+    end: { x: phaseZeroRoofRun, y: -phaseZeroRidgeHeight, z: 0 },
+  },
+  {
+    type: 'LINE',
+    start: { x: phaseZeroRoofRun, y: -phaseZeroRidgeHeight, z: 0 },
+    end: { x: phaseZeroRoofRun * 2, y: -phaseZeroWallHeight, z: 0 },
+  },
+  {
+    type: 'LINE',
+    start: { x: phaseZeroRoofRun * 2, y: -phaseZeroWallHeight, z: 0 },
+    end: { x: phaseZeroRoofRun * 2, y: 0, z: 0 },
+  },
+  {
+    type: 'LINE',
+    start: { x: phaseZeroRoofRun * 2, y: 0, z: 0 },
+    end: { x: 0, y: 0, z: 0 },
+  },
+], {
+  id: 'phase-zero-house-profile',
+  plane: {
+    type: 'plane',
+    origin: { x: 0, y: 0, z: 0 },
+    xAxis: { x: 0, y: 1, z: 0 },
+    yAxis: { x: 0, y: 0, z: 1 },
+    normal: { x: 1, y: 0, z: 0 },
+  },
+});
 const phaseZeroHouseSolid = solidFromFacePush({
   id: 'phase-zero-house-profile',
   points: [
@@ -2458,6 +3481,7 @@ const phaseZeroHouseSolid = solidFromFacePush({
   ],
   holes: [],
   normal: { x: -1, y: 0, z: 0 },
+  exactProfile: phaseZeroHouseExactProfile,
   cadProfileVertexIndices: [0, 1, 2, 3, 4],
   smoothProfileVertexIndices: [],
 }, phaseZeroHouseDepth);
@@ -2513,6 +3537,11 @@ const phaseZeroUnion = profileFeaturePushSolid(
   phaseZeroExtrusionDistance,
 );
 assert.ok(phaseZeroUnion);
+assert.ok(
+  editableBooleanMeshTolerance(phaseZeroUnion) <
+    phaseZeroCircleRadius * (1 - Math.cos(Math.PI / 32)),
+  'La limpieza booleana editable no debe poder colapsar una faceta circular analítica',
+);
 const phaseZeroAnalyticEdges = deriveSolidAnalyticEdges(phaseZeroUnion);
 const [phaseZeroCircularSide] = deriveSolidAnalyticSideSurfaces(phaseZeroUnion);
 const phaseZeroAnalyticTopology = deriveSolidAnalyticTopology(phaseZeroUnion);
@@ -2689,6 +3718,936 @@ assert.deepEqual({
   longitudinalMeshSeams: 0,
 }, 'Las curvas circulares conocidas deben conservar una identidad analitica por contorno');
 
+// A semicircular subtractive push whose arc is coincident with the existing
+// cylinder must not promote Manifold triangulation loops to analytic curves.
+const coincidentCutRadius = phaseZeroCircleRadius;
+const coincidentCutDistance = -30.993881308189756;
+const coincidentCutCenter = pointOnSketchPlane({
+  x: phaseZeroCircleCenter.x,
+  y: phaseZeroCircleCenter.y,
+  z: 0,
+}, phaseZeroRoofPlane);
+const coincidentCutStartCenter = {
+  x: coincidentCutCenter.x + phaseZeroRoofPlane.normal.x * phaseZeroExtrusionDistance,
+  y: coincidentCutCenter.y + phaseZeroRoofPlane.normal.y * phaseZeroExtrusionDistance,
+  z: coincidentCutCenter.z + phaseZeroRoofPlane.normal.z * phaseZeroExtrusionDistance,
+};
+const coincidentCutPlane = {
+  ...phaseZeroRoofPlane,
+  origin: {
+    x: coincidentCutStartCenter.x + coincidentCutRadius,
+    y: coincidentCutStartCenter.y,
+    z: coincidentCutStartCenter.z,
+  },
+};
+const coincidentCutProfile = exactProfileFromOrderedEntities([
+  {
+    type: 'LINE',
+    start: { x: -coincidentCutRadius * 2, y: 0, z: 0 },
+    end: { x: 0, y: 0, z: 0 },
+  },
+  {
+    type: 'ARC',
+    center: { x: -coincidentCutRadius, y: 0, z: 0 },
+    radius: coincidentCutRadius,
+    startAngle: 0,
+    endAngle: Math.PI,
+    clockwise: true,
+  },
+], {
+  id: 'phase-zero-coincident-cut-profile',
+});
+const coincidentCutLocalPoints = sampleExactProfile(coincidentCutProfile, { segments: 64 });
+const coincidentCutFace = faceOnSketchPlane({
+  id: 'phase-zero-coincident-cut-face',
+  points: coincidentCutLocalPoints.map((point) => ({
+    x: point.x,
+    y: -point.y,
+    z: point.z,
+  })),
+  holes: [],
+  cadProfileVertexIndices: [0, coincidentCutLocalPoints.length - 1],
+  smoothProfileVertexIndices: coincidentCutLocalPoints
+    .map((_, index) => index)
+    .filter((index) => index > 0 && index < coincidentCutLocalPoints.length - 1),
+  exactProfile: coincidentCutProfile,
+}, coincidentCutPlane, 'phase-zero-coincident-cut-sketch');
+coincidentCutFace.supportSolid = phaseZeroUnion;
+coincidentCutFace.supportLoops = {
+  outer: phaseZeroCircleFace.points.map((point) => ({
+    x: point.x + phaseZeroRoofPlane.normal.x * phaseZeroExtrusionDistance,
+    y: point.y + phaseZeroRoofPlane.normal.y * phaseZeroExtrusionDistance,
+    z: point.z + phaseZeroRoofPlane.normal.z * phaseZeroExtrusionDistance,
+  })),
+  holes: [],
+};
+coincidentCutFace.sourceSolidDocumentId = 'phase-zero-house-solid';
+const coincidentCutSolid = profileFeaturePushSolid(
+  coincidentCutFace,
+  coincidentCutDistance,
+);
+assert.ok(coincidentCutSolid);
+const coincidentCutAnalyticEdges = deriveSolidAnalyticEdges(coincidentCutSolid);
+const coincidentCutEndCenter = {
+  x: coincidentCutStartCenter.x + phaseZeroRoofPlane.normal.x * coincidentCutDistance,
+  y: coincidentCutStartCenter.y + phaseZeroRoofPlane.normal.y * coincidentCutDistance,
+  z: coincidentCutStartCenter.z + phaseZeroRoofPlane.normal.z * coincidentCutDistance,
+};
+const curvesAtCenter = (center) => coincidentCutAnalyticEdges.curves.filter((curve) =>
+  Math.hypot(
+    curve.center.x - center.x,
+    curve.center.y - center.y,
+    curve.center.z - center.z,
+  ) <= 1e-2);
+const coincidentCutStartCurves = curvesAtCenter(coincidentCutStartCenter);
+const coincidentCutEndCurves = curvesAtCenter(coincidentCutEndCenter);
+assert.equal(
+  coincidentCutStartCurves.filter((curve) => curve.sweep < Math.PI / 16).length,
+  0,
+  'Los ciclos triangulares de la booleana no deben convertirse en arcos CAD',
+);
+assert.equal(
+  coincidentCutEndCurves.length,
+  1,
+  'El fondo del vaciado debe conservar un unico arco analitico',
+);
+assert.ok(
+  Math.abs(coincidentCutEndCurves[0].sweep - Math.PI) <= 1e-2,
+  `El arco reconstruido cubre ${coincidentCutEndCurves[0].sweep} radianes`,
+);
+const isCoincidentCutStartCapSeam = ({ start, end }) => {
+  const locations = [start, end].map((point) => {
+    const relative = new THREE.Vector3(
+      point.x - coincidentCutStartCenter.x,
+      point.y - coincidentCutStartCenter.y,
+      point.z - coincidentCutStartCenter.z,
+    );
+    const axial = relative.dot(new THREE.Vector3(
+      phaseZeroRoofPlane.normal.x,
+      phaseZeroRoofPlane.normal.y,
+      phaseZeroRoofPlane.normal.z,
+    ));
+    return {
+      axial,
+      radial: relative.addScaledVector(
+        new THREE.Vector3(
+          phaseZeroRoofPlane.normal.x,
+          phaseZeroRoofPlane.normal.y,
+          phaseZeroRoofPlane.normal.z,
+        ),
+        -axial,
+      ).length(),
+    };
+  });
+  const length = new THREE.Vector3(
+    end.x - start.x,
+    end.y - start.y,
+    end.z - start.z,
+  ).length();
+  return length < coincidentCutRadius * 0.5 && locations.every((location) =>
+    Math.abs(location.axial) <= 5e-2 &&
+    Math.abs(location.radial - coincidentCutRadius) <= 5e-2);
+};
+assert.equal(
+  coincidentCutAnalyticEdges.lines.filter(isCoincidentCutStartCapSeam).length,
+  0,
+  'Las costuras rechazadas como curvas tampoco deben reaparecer como lineas ocultas',
+);
+const coincidentCutGroup = createPushSolidGroupFromSolid(coincidentCutSolid);
+const coincidentCutDisplayMesh = coincidentCutGroup.children.find((child) =>
+  child.userData?.type === 'webcad-push-solid');
+const coincidentCutStaticEdges = coincidentCutGroup.children.find((child) =>
+  child.userData?.type === 'webcad-push-solid-edges');
+assert.equal(
+  coincidentCutStaticEdges.userData.sourceSegments.filter((segment, index) =>
+    isCoincidentCutStartCapSeam(segment) &&
+    !coincidentCutStaticEdges.userData.curveGroupIds[index]).length,
+  0,
+  'El overlay 3D no debe recibir costuras de triangulacion de la tapa curva',
+);
+const coplanarPatchEdges = deriveSolidAnalyticEdges({
+  vertices: [
+    { x: 0, y: 0, z: 0 },
+    { x: 1, y: 0, z: 0 },
+    { x: 2, y: 0, z: 0 },
+    { x: 2, y: 1, z: 0 },
+    { x: 0, y: 1, z: 0 },
+  ],
+  faces: [
+    [0, 1, 4],
+    [1, 3, 4],
+    [1, 2, 3],
+  ],
+  edges: [
+    [0, 1], [1, 2], [2, 3], [3, 4], [4, 0],
+    [1, 4], [1, 3],
+  ],
+  metadata: {},
+});
+assert.equal(
+  coplanarPatchEdges.lines.length,
+  4,
+  'Las fronteras coplanares internas no son aristas CAD y los tramos colineales se consolidan',
+);
+assert.ok(
+  coplanarPatchEdges.lines.some((line) =>
+    line.sourceEdgeIndices.length === 2 &&
+    Math.abs(line.start.y) <= 1e-9 &&
+    Math.abs(line.end.y) <= 1e-9),
+  'Una arista CAD recta debe conservar una única identidad aunque la malla la fragmente',
+);
+const continuedCylinderSeam = {
+  vertices: [
+    { x: 1, y: 0, z: 0 },
+    { x: 1, y: 0, z: 2 },
+    { x: 0, y: 0, z: 0 },
+  ],
+  faces: [[0, 1, 2]],
+  edges: [[0, 1], [1, 2], [2, 0]],
+  metadata: {
+    exactGeometry: {
+      extrusion: {
+        distance: 1,
+        direction: { x: 0, y: 0, z: 1 },
+        profile: {
+          plane: {
+            origin: { x: 0, y: 0, z: 0 },
+            xAxis: { x: 1, y: 0, z: 0 },
+            yAxis: { x: 0, y: 1, z: 0 },
+            normal: { x: 0, y: 0, z: 1 },
+          },
+          outerLoop: {
+            segments: [{
+              type: 'circle',
+              center: { x: 0, y: 0, z: 0 },
+              radius: 1,
+            }],
+          },
+          innerLoops: [],
+        },
+      },
+    },
+    profileFeatures: [{
+      type: 'union',
+      distance: 1,
+      exactProfile: {
+        plane: {
+          origin: { x: 0, y: 0, z: 1 },
+          xAxis: { x: 1, y: 0, z: 0 },
+          yAxis: { x: 0, y: 1, z: 0 },
+          normal: { x: 0, y: 0, z: 1 },
+        },
+        outerLoop: {
+          segments: [{
+            type: 'circle',
+            center: { x: 0, y: 0, z: 0 },
+            radius: 1,
+          }],
+        },
+        innerLoops: [],
+      },
+    }],
+  },
+};
+assert.equal(
+  deriveSolidAnalyticEdges(continuedCylinderSeam).lines.some((line) =>
+    line.sourceEdgeIndices.some(([start, end]) =>
+      start === 0 && end === 1 || start === 1 && end === 0)),
+  false,
+  'Una costura que atraviesa extrusiones cilíndricas continuas no es una arista CAD',
+);
+const continuedCylinderFacet = {
+  ...structuredClone(continuedCylinderSeam),
+  vertices: [
+    { x: 1, y: 0, z: 0 },
+    { x: 1, y: 0, z: 2 },
+    { x: Math.cos(0.2), y: -Math.sin(0.2), z: 2 },
+    { x: Math.cos(0.2), y: -Math.sin(0.2), z: 0 },
+  ],
+  faces: [
+    [0, 1, 2],
+    [0, 2, 3],
+  ],
+  edges: [
+    [0, 1], [1, 2], [2, 3], [3, 0], [0, 2],
+  ],
+};
+assert.equal(
+  deriveSolidAnalyticTopology(continuedCylinderFacet).faceSurfaceIds.every(Boolean),
+  true,
+  'Una faceta que cruza extrusiones cilíndricas continuas sigue siendo una cara curva',
+);
+const coincidentCutDisplaySlivers = coincidentCutDisplayMesh.userData.solid.faces
+  .filter((face) => {
+    const points = face.map((vertexIndex) => new THREE.Vector3(
+      coincidentCutDisplayMesh.userData.solid.vertices[vertexIndex].x,
+      coincidentCutDisplayMesh.userData.solid.vertices[vertexIndex].y,
+      coincidentCutDisplayMesh.userData.solid.vertices[vertexIndex].z,
+    ));
+    const longestEdge = Math.max(
+      points[0].distanceTo(points[1]),
+      points[1].distanceTo(points[2]),
+      points[2].distanceTo(points[0]),
+    );
+    const area = points[1].clone().sub(points[0])
+      .cross(points[2].clone().sub(points[0])).length() * 0.5;
+    const altitude = longestEdge > 0 ? area * 2 / longestEdge : 0;
+    return longestEdge >= Math.abs(coincidentCutDistance) * 0.25 &&
+      altitude < 1e-1;
+  });
+assert.equal(
+  coincidentCutDisplaySlivers.length,
+  0,
+  'La malla de relleno no debe conservar tiras degeneradas de la booleana coincidente',
+);
+const coincidentCutDisplaySolid = coincidentCutDisplayMesh.userData.solid;
+const solidShellCount = (solid) => {
+  const neighbors = solid.faces.map(() => []);
+  const uses = new Map();
+  solid.faces.forEach((face, faceIndex) => face.forEach((start, index) => {
+    const end = face[(index + 1) % face.length];
+    const key = start < end ? `${start}:${end}` : `${end}:${start}`;
+    if (!uses.has(key)) uses.set(key, []);
+    uses.get(key).push(faceIndex);
+  }));
+  uses.forEach((faceIndices) => {
+    if (faceIndices.length !== 2) return;
+    const [first, second] = faceIndices;
+    neighbors[first].push(second);
+    neighbors[second].push(first);
+  });
+  const visited = new Set();
+  let shells = 0;
+  solid.faces.forEach((_, faceIndex) => {
+    if (visited.has(faceIndex)) return;
+    shells += 1;
+    const pending = [faceIndex];
+    visited.add(faceIndex);
+    while (pending.length) {
+      neighbors[pending.pop()].forEach((neighbor) => {
+        if (visited.has(neighbor)) return;
+        visited.add(neighbor);
+        pending.push(neighbor);
+      });
+    }
+  });
+  return shells;
+};
+const coincidentCutAxis = new THREE.Vector3(
+  phaseZeroRoofPlane.normal.x,
+  phaseZeroRoofPlane.normal.y,
+  phaseZeroRoofPlane.normal.z,
+).normalize();
+const coincidentCutStartPlanarGroupIndex = (
+  coincidentCutDisplaySolid.metadata.planarFaceGroups ?? []
+).findIndex((group) =>
+  group.outerLoop?.length >= 3 &&
+  group.smoothProfileVertexIndices?.length > 0 &&
+  group.cadProfileVertexIndices?.length > 0 &&
+  group.outerLoop.every((point) => Math.abs(new THREE.Vector3(
+    point.x - coincidentCutStartCenter.x,
+    point.y - coincidentCutStartCenter.y,
+    point.z - coincidentCutStartCenter.z,
+  ).dot(coincidentCutAxis)) <= 5e-2));
+assert.ok(
+  coincidentCutStartPlanarGroupIndex >= 0,
+  'La semicara superior restante debe conservar un grupo plano seleccionable',
+);
+const coincidentCutStartPlanarGroup =
+  coincidentCutDisplaySolid.metadata.planarFaceGroups[coincidentCutStartPlanarGroupIndex];
+const coincidentCutStartFace = solidFaceFromPlanarGroup(
+  coincidentCutDisplayMesh,
+  coincidentCutStartPlanarGroupIndex,
+);
+assert.ok(coincidentCutStartFace);
+const noisyCoincidentCut = structuredClone(coincidentCutDisplaySolid);
+const noisyCoincidentGroup =
+  noisyCoincidentCut.metadata.planarFaceGroups[coincidentCutStartPlanarGroupIndex];
+const noisyCoincidentTopology = deriveSolidAnalyticTopology(noisyCoincidentCut);
+const noisyCoincidentSemantic = noisyCoincidentTopology.semanticPlanarFaces.find((group) =>
+  group.indices.includes(noisyCoincidentGroup.indices[0]));
+assert.ok(noisyCoincidentSemantic);
+const noisyCoincidentNormal = new THREE.Vector3(
+  noisyCoincidentSemantic.normal.x + 2e-5,
+  noisyCoincidentSemantic.normal.y,
+  noisyCoincidentSemantic.normal.z,
+).normalize();
+noisyCoincidentGroup.normal = {
+  x: noisyCoincidentNormal.x,
+  y: noisyCoincidentNormal.y,
+  z: noisyCoincidentNormal.z,
+};
+const noisyCoincidentMesh = new THREE.Mesh();
+noisyCoincidentMesh.userData = {
+  type: 'webcad-push-solid',
+  solid: noisyCoincidentCut,
+};
+noisyCoincidentMesh.geometry.userData.webcadFaceTriangleMap = [
+  noisyCoincidentGroup.indices[0],
+];
+const expectedCoincidentNormal = new THREE.Vector3(
+  noisyCoincidentSemantic.normal.x,
+  noisyCoincidentSemantic.normal.y,
+  noisyCoincidentSemantic.normal.z,
+).normalize();
+if (expectedCoincidentNormal.dot(noisyCoincidentNormal) < 0) {
+  expectedCoincidentNormal.multiplyScalar(-1);
+}
+[
+  solidFaceFromPlanarGroup(noisyCoincidentMesh, coincidentCutStartPlanarGroupIndex),
+  solidFaceFromMeshHit({ object: noisyCoincidentMesh, faceIndex: 0 }),
+].forEach((face) => {
+  assert.ok(face);
+  assert.ok(new THREE.Vector3(face.normal.x, face.normal.y, face.normal.z)
+    .distanceTo(expectedCoincidentNormal) <= 1e-10);
+  assert.ok(new THREE.Vector3(
+    face.exactProfile.plane.normal.x,
+    face.exactProfile.plane.normal.y,
+    face.exactProfile.plane.normal.z,
+  ).distanceTo(expectedCoincidentNormal) <= 1e-10);
+});
+noisyCoincidentMesh.geometry.dispose();
+const coincidentCutTriangleMap =
+  coincidentCutDisplayMesh.geometry.userData.webcadFaceTriangleMap;
+const coincidentCutStartTriangleIndex = coincidentCutTriangleMap.findIndex((faceIndex) =>
+  coincidentCutStartPlanarGroup.indices.includes(faceIndex));
+const coincidentCutStartHitFace = solidFaceFromMeshHit({
+  object: coincidentCutDisplayMesh,
+  faceIndex: coincidentCutStartTriangleIndex,
+});
+assert.equal(
+  coincidentCutStartHitFace?.id,
+  coincidentCutStartFace.id,
+  'El clic sobre la semicara superior no debe seleccionar el círculo histórico completo',
+);
+assert.ok(
+  coincidentCutStartHitFace.exactProfile?.outerLoop?.segments.some((segment) =>
+    segment.type === 'arc-circle') &&
+  coincidentCutStartHitFace.exactProfile.outerLoop.segments.some((segment) =>
+    segment.type === 'line'),
+  'La selección superior debe conservar por separado el arco y su cuerda',
+);
+assert.equal(
+  coincidentCutStartHitFace.exactProfile.outerLoop.segments.length,
+  2,
+  'La semicara superior no debe fragmentar su perfil analítico',
+);
+const coincidentCutSelection = createSolidFaceSelectionMesh(coincidentCutStartHitFace);
+assert.ok(
+  coincidentCutSelection.geometry.getAttribute('position').count >= 40,
+  'El resaltado de una cara curva debe rasterizar su perfil analítico, no las facetas booleanas',
+);
+disposeThreeObject(coincidentCutSelection);
+const coincidentCutStartRepushDistance = 2;
+const coincidentCutStartRepush = movedSolidFacePush(
+  coincidentCutStartHitFace,
+  coincidentCutStartRepushDistance,
+);
+assert.ok(
+  coincidentCutStartRepush && isPushSolidIntegrityValid(coincidentCutStartRepush),
+  'El Push coplanario de la semicara superior debe producir un sólido íntegro',
+);
+assert.equal(
+  solidShellCount(coincidentCutStartRepush),
+  1,
+  'El Push coplanario superior debe fusionarse en una única envolvente',
+);
+const coincidentCutStartRepushEdges = deriveSolidAnalyticEdges(coincidentCutStartRepush);
+const coincidentCutStartRepushCenter = {
+  x: coincidentCutStartCenter.x +
+    coincidentCutStartHitFace.normal.x * coincidentCutStartRepushDistance,
+  y: coincidentCutStartCenter.y +
+    coincidentCutStartHitFace.normal.y * coincidentCutStartRepushDistance,
+  z: coincidentCutStartCenter.z +
+    coincidentCutStartHitFace.normal.z * coincidentCutStartRepushDistance,
+};
+const linesOnCircularCap = (edges, center, normal) => edges.lines.filter((line) => {
+  const capNormal = new THREE.Vector3(normal.x, normal.y, normal.z).normalize();
+  const locations = [line.start, line.end].map((point) => {
+    const relative = new THREE.Vector3(
+      point.x - center.x,
+      point.y - center.y,
+      point.z - center.z,
+    );
+    const axial = relative.dot(capNormal);
+    return {
+      axial,
+      radial: relative.addScaledVector(capNormal, -axial).length(),
+    };
+  });
+  return locations.every((location) =>
+    Math.abs(location.axial) <= 5e-2 &&
+    location.radial <= coincidentCutRadius * 1.05) &&
+    new THREE.Vector3(
+      line.end.x - line.start.x,
+      line.end.y - line.start.y,
+      line.end.z - line.start.z,
+    ).length() >= coincidentCutRadius * 1.8;
+});
+assert.ok(
+  coincidentCutStartRepushEdges.curves.some((curve) =>
+    Math.hypot(
+      curve.center.x - coincidentCutStartRepushCenter.x,
+      curve.center.y - coincidentCutStartRepushCenter.y,
+      curve.center.z - coincidentCutStartRepushCenter.z,
+    ) <= 5e-2 &&
+    Math.abs(curve.sweep - Math.PI) <= 1e-2),
+  'La tapa superior desplazada debe conservar un único arco semicircular',
+);
+assert.equal(
+  linesOnCircularCap(
+    coincidentCutStartRepushEdges,
+    coincidentCutStartRepushCenter,
+    coincidentCutStartHitFace.normal,
+  ).length,
+  1,
+  'La cuerda superior debe publicarse como una única arista analítica continua',
+);
+assert.equal(
+  coincidentCutStartRepushEdges.curves.filter((curve) =>
+    Math.hypot(
+      curve.center.x - coincidentCutStartCenter.x,
+      curve.center.y - coincidentCutStartCenter.y,
+      curve.center.z - coincidentCutStartCenter.z,
+    ) <= 5e-2).length,
+  0,
+  'La unión no debe conservar el arco de la interfaz coplanaria inicial',
+);
+assert.equal(
+  linesOnCircularCap(
+    coincidentCutStartRepushEdges,
+    coincidentCutStartCenter,
+    coincidentCutStartHitFace.normal,
+  ).length,
+  0,
+  'La unión no debe conservar la cuerda de la interfaz coplanaria inicial',
+);
+const coincidentCutStartRepushSurface =
+  deriveSolidAnalyticSideSurfaces(coincidentCutStartRepush).find((surface) =>
+    Math.abs(new THREE.Vector3(
+      surface.offset.x,
+      surface.offset.y,
+      surface.offset.z,
+    ).length() - coincidentCutStartRepushDistance) <= 5e-2 &&
+    Math.hypot(
+      surface.center.x - coincidentCutStartCenter.x,
+      surface.center.y - coincidentCutStartCenter.y,
+      surface.center.z - coincidentCutStartCenter.z,
+    ) <= 5e-2);
+assert.ok(coincidentCutStartRepushSurface);
+assert.ok(
+  coincidentCutStartRepushEdges.lines.filter((line) => {
+    const direction = new THREE.Vector3(
+      line.end.x - line.start.x,
+      line.end.y - line.start.y,
+      line.end.z - line.start.z,
+    );
+    return direction.length() >= coincidentCutStartRepushDistance * 0.75 &&
+      Math.abs(direction.normalize().dot(new THREE.Vector3(
+        coincidentCutStartHitFace.normal.x,
+        coincidentCutStartHitFace.normal.y,
+        coincidentCutStartHitFace.normal.z,
+      ))) >= 0.99 &&
+      [line.start, line.end].every((point) =>
+        pointOnAnalyticSideSurface(
+          coincidentCutStartRepush,
+          point,
+          coincidentCutStartRepushSurface,
+        ));
+  }).length <= 2,
+  'La unión superior solo debe publicar las dos generatrices CAD del semicírculo',
+);
+const coincidentCutEndPlanarGroupIndex = (
+  coincidentCutDisplaySolid.metadata.planarFaceGroups ?? []
+).findIndex((group) =>
+  group.outerLoop?.length >= 3 &&
+  group.smoothProfileVertexIndices?.length > 0 &&
+  group.cadProfileVertexIndices?.length > 0 &&
+  group.outerLoop.every((point) => Math.abs(new THREE.Vector3(
+    point.x - coincidentCutEndCenter.x,
+    point.y - coincidentCutEndCenter.y,
+    point.z - coincidentCutEndCenter.z,
+  ).dot(coincidentCutAxis)) <= 5e-2));
+assert.ok(
+  coincidentCutEndPlanarGroupIndex >= 0,
+  'La tapa semicircular real debe conservar un grupo plano seleccionable',
+);
+const coincidentCutEndPlanarGroup =
+  coincidentCutDisplaySolid.metadata.planarFaceGroups[coincidentCutEndPlanarGroupIndex];
+const coincidentCutEndFace = solidFaceFromPlanarGroup(
+  coincidentCutDisplayMesh,
+  coincidentCutEndPlanarGroupIndex,
+);
+assert.ok(coincidentCutEndFace);
+assert.ok(
+  coincidentCutEndFace.cadProfileVertexIndices.length > 0 &&
+  coincidentCutEndFace.smoothProfileVertexIndices.length > 0,
+  'La selección debe usar el contorno semicircular booleano, no la tapa circular histórica',
+);
+assert.ok(
+  coincidentCutEndFace.exactProfile?.outerLoop?.segments.some((segment) =>
+    segment.type === 'arc-circle'),
+  'La cara parcial seleccionada debe reconstruir su arco exacto para el siguiente Push',
+);
+const coincidentCutEndTriangleIndex = coincidentCutTriangleMap.findIndex((faceIndex) =>
+  coincidentCutEndPlanarGroup.indices.includes(faceIndex));
+const coincidentCutEndHitFace = solidFaceFromMeshHit({
+  object: coincidentCutDisplayMesh,
+  faceIndex: coincidentCutEndTriangleIndex,
+});
+assert.equal(
+  coincidentCutEndHitFace?.id,
+  coincidentCutEndFace.id,
+  'El hit de la malla debe resolver la misma semicara que el grupo plano consolidado',
+);
+const coincidentCutEndRepushDistance = 2;
+const coincidentCutEndRepush = movedSolidFacePush(
+  coincidentCutEndHitFace,
+  coincidentCutEndRepushDistance,
+);
+assert.ok(
+  coincidentCutEndRepush && isPushSolidIntegrityValid(coincidentCutEndRepush),
+  'El Push de la tapa semicircular debe producir un sólido íntegro',
+);
+assert.equal(
+  solidShellCount(coincidentCutEndRepush),
+  1,
+  'El Push de la tapa semicircular debe fusionarse en una única envolvente',
+);
+const coincidentCutRepushCenter = {
+  x: coincidentCutEndCenter.x +
+    coincidentCutEndHitFace.normal.x * coincidentCutEndRepushDistance,
+  y: coincidentCutEndCenter.y +
+    coincidentCutEndHitFace.normal.y * coincidentCutEndRepushDistance,
+  z: coincidentCutEndCenter.z +
+    coincidentCutEndHitFace.normal.z * coincidentCutEndRepushDistance,
+};
+const coincidentCutRepushCurves = deriveSolidAnalyticEdges(coincidentCutEndRepush).curves
+  .filter((curve) => Math.hypot(
+    curve.center.x - coincidentCutRepushCenter.x,
+    curve.center.y - coincidentCutRepushCenter.y,
+    curve.center.z - coincidentCutRepushCenter.z,
+  ) <= 5e-2);
+const coincidentCutRepushEdges = deriveSolidAnalyticEdges(coincidentCutEndRepush);
+const coincidentRegionId =
+  coincidentCutEndRepush.metadata.profileFeatures[1].analyticRegionId;
+const coincidentRegionDistance =
+  coincidentCutEndRepush.metadata.profileFeatures[1].distance;
+const coincidentCutRepushSurface = deriveSolidAnalyticSideSurfaces(coincidentCutEndRepush)
+  .find((surface) =>
+    surface.regionId === coincidentRegionId &&
+    Math.abs(new THREE.Vector3(
+      surface.offset.x,
+      surface.offset.y,
+      surface.offset.z,
+    ).length() - Math.abs(coincidentRegionDistance)) <= 5e-2 &&
+    Math.hypot(
+      surface.center.x - coincidentCutStartCenter.x,
+      surface.center.y - coincidentCutStartCenter.y,
+      surface.center.z - coincidentCutStartCenter.z,
+    ) <= 5e-2);
+assert.ok(coincidentCutRepushSurface);
+const coincidentCutRepushLongitudinalLines = coincidentCutRepushEdges.lines.filter((line) => {
+  const direction = new THREE.Vector3(
+    line.end.x - line.start.x,
+    line.end.y - line.start.y,
+    line.end.z - line.start.z,
+  );
+  return direction.length() >= coincidentCutEndRepushDistance * 0.75 &&
+    Math.abs(direction.normalize().dot(new THREE.Vector3(
+      coincidentCutEndHitFace.normal.x,
+      coincidentCutEndHitFace.normal.y,
+      coincidentCutEndHitFace.normal.z,
+    ))) >= 0.99 &&
+    [line.start, line.end].every((point) =>
+      pointOnAnalyticSideSurface(coincidentCutEndRepush, point, coincidentCutRepushSurface));
+});
+assert.ok(
+  coincidentCutRepushCurves.some((curve) => Math.abs(curve.sweep - Math.PI) <= 1e-2),
+  'El Push repetido debe conservar la identidad del arco semicircular desplazado',
+);
+assert.ok(
+  coincidentCutRepushLongitudinalLines.length <= 2,
+  'El Push repetido no debe publicar las generatrices facetadas de la superficie curva',
+);
+assert.equal(
+  coincidentCutEndRepush.metadata.profileFeatures.length,
+  coincidentCutSolid.metadata.profileFeatures.length,
+  'Editar la tapa terminal debe actualizar su feature semantico sin acumular otro',
+);
+assert.ok(coincidentRegionId);
+assert.equal(coincidentCutEndHitFace.analyticRegionId, coincidentRegionId);
+
+const analyticRegionHit = (solid, predicate) => {
+  const mesh = createPushSolidMeshFromSolid(solid);
+  const triangleMap = mesh.geometry.userData.webcadFaceTriangleMap ?? [];
+  const hits = triangleMap.flatMap((_, triangleIndex) => {
+    const face = solidFaceFromMeshHit({ object: mesh, faceIndex: triangleIndex });
+    return face && predicate(face) ? [face] : [];
+  });
+  const identities = new Set(hits.map((face) => face.id));
+  const face = hits[0] ?? null;
+  mesh.geometry.dispose();
+  mesh.material.dispose();
+  return { face, hitCount: hits.length, identityCount: identities.size };
+};
+const assertDividedRegionFeature = (solid, regionId) => {
+  const feature = solid.metadata.profileFeatures.find((candidate) =>
+    candidate.analyticRegionId === regionId);
+  assert.ok(feature);
+  const segments = feature.exactProfile?.outerLoop?.segments ?? [];
+  assert.equal(segments.length, 2);
+  const line = segments.find((segment) => segment.type === 'line');
+  const arc = segments.find((segment) => segment.type === 'arc-circle');
+  assert.ok(line);
+  assert.ok(arc);
+  assert.equal(line.source?.role, 'divider');
+  assert.equal(arc.source?.role, 'profile-boundary');
+  assert.ok([line, arc].every((segment) =>
+    Math.abs(segment.source?.orientation) === 1));
+  const lineLength = Math.hypot(
+    line.end.x - line.start.x,
+    line.end.y - line.start.y,
+    (line.end.z ?? 0) - (line.start.z ?? 0),
+  );
+  assert.ok(lineLength > coincidentCutRadius * 1.9);
+  segments.forEach((segment, index) => {
+    const next = segments[(index + 1) % segments.length];
+    assert.ok(Math.hypot(
+      segment.end.x - next.start.x,
+      segment.end.y - next.start.y,
+      (segment.end.z ?? 0) - (next.start.z ?? 0),
+    ) <= booleanWeldTolerance(solid));
+  });
+  assert.ok(Math.abs(arc.radius - coincidentCutRadius) <= 1e-9);
+  return feature;
+};
+
+let repeatedDividedRegionSolid = coincidentCutEndRepush;
+const repeatedDividedRegionFeatureCount =
+  repeatedDividedRegionSolid.metadata.profileFeatures.length;
+for (const moveDistance of [1.25, -0.5, 0.75]) {
+  const selection = analyticRegionHit(
+    repeatedDividedRegionSolid,
+    (face) =>
+      face.analyticRegionId === coincidentRegionId &&
+      face.analyticCapIndex === 1,
+  );
+  assert.ok(selection.face);
+  assert.ok(selection.hitCount > 1);
+  assert.equal(selection.identityCount, 1);
+  assert.deepEqual(
+    selection.face.exactProfile.outerLoop.segments.map((segment) => segment.type),
+    ['line', 'arc-circle'],
+  );
+  repeatedDividedRegionSolid = movedSolidFacePush(selection.face, moveDistance);
+  assert.ok(repeatedDividedRegionSolid);
+  assert.equal(
+    repeatedDividedRegionSolid.metadata.profileFeatures.length,
+    repeatedDividedRegionFeatureCount,
+  );
+  assertDividedRegionFeature(repeatedDividedRegionSolid, coincidentRegionId);
+  assert.equal(isValidSolid3d(repeatedDividedRegionSolid), true);
+  assert.equal(solidShellCount(repeatedDividedRegionSolid), 1);
+}
+const repeatedDividedSurface = deriveSolidAnalyticSideSurfaces(
+  repeatedDividedRegionSolid,
+).find((surface) =>
+  surface.regionId === coincidentRegionId &&
+  Math.abs(surface.radiusX - coincidentCutRadius) <= 1e-9);
+assert.ok(repeatedDividedSurface);
+
+const oppositeRegionSelection = analyticRegionHit(
+  repeatedDividedRegionSolid,
+  (face) => {
+    const segments = face.exactProfile?.outerLoop?.segments ?? [];
+    return !face.analyticRegionId &&
+      segments.length === 2 &&
+      segments.some((segment) => segment.type === 'line') &&
+      segments.some((segment) => segment.type === 'arc-circle') &&
+      face.points.every((point) => Math.abs(new THREE.Vector3(
+        point.x - coincidentCutStartCenter.x,
+        point.y - coincidentCutStartCenter.y,
+        point.z - coincidentCutStartCenter.z,
+      ).dot(coincidentCutAxis)) <= 5e-2);
+  },
+);
+assert.ok(oppositeRegionSelection.face);
+assert.equal(oppositeRegionSelection.identityCount, 1);
+const oppositeRegionSolid = movedSolidFacePush(
+  oppositeRegionSelection.face,
+  1.5,
+);
+assert.ok(oppositeRegionSolid);
+assert.equal(
+  oppositeRegionSolid.metadata.profileFeatures.length,
+  repeatedDividedRegionFeatureCount + 1,
+);
+const oppositeRegionId =
+  oppositeRegionSolid.metadata.profileFeatures.at(-1).analyticRegionId;
+assert.ok(oppositeRegionId);
+assert.notEqual(oppositeRegionId, coincidentRegionId);
+assertDividedRegionFeature(oppositeRegionSolid, oppositeRegionId);
+
+const firstAlternatingSelection = analyticRegionHit(
+  oppositeRegionSolid,
+  (face) =>
+    face.analyticRegionId === coincidentRegionId &&
+    face.analyticCapIndex === 1,
+);
+assert.ok(firstAlternatingSelection.face);
+const firstAlternatingSolid = movedSolidFacePush(
+  firstAlternatingSelection.face,
+  0.5,
+);
+assert.ok(firstAlternatingSolid);
+assert.equal(
+  firstAlternatingSolid.metadata.profileFeatures.length,
+  repeatedDividedRegionFeatureCount + 1,
+);
+const secondAlternatingSelection = analyticRegionHit(
+  firstAlternatingSolid,
+  (face) =>
+    face.analyticRegionId === oppositeRegionId &&
+    face.analyticCapIndex === 1,
+);
+assert.ok(secondAlternatingSelection.face);
+const alternatingDividedRegionsSolid = movedSolidFacePush(
+  secondAlternatingSelection.face,
+  0.75,
+);
+assert.ok(alternatingDividedRegionsSolid);
+assert.equal(
+  alternatingDividedRegionsSolid.metadata.profileFeatures.length,
+  repeatedDividedRegionFeatureCount + 1,
+);
+assertDividedRegionFeature(alternatingDividedRegionsSolid, coincidentRegionId);
+assertDividedRegionFeature(alternatingDividedRegionsSolid, oppositeRegionId);
+assert.equal(isValidSolid3d(alternatingDividedRegionsSolid), true);
+assert.equal(solidShellCount(alternatingDividedRegionsSolid), 1);
+
+const dividedRegionModel = createModel3d();
+addModel3dSolid(dividedRegionModel, alternatingDividedRegionsSolid, {
+  id: 'divided-analytic-regions-solid',
+});
+const reopenedDividedRegionSolid = parseSerializedModel3d(
+  JSON.parse(JSON.stringify(serializeModel3d(dividedRegionModel))),
+).solids[0].solid;
+assert.deepEqual(
+  reopenedDividedRegionSolid.metadata.profileFeatures.map((feature) =>
+    feature.analyticRegionId),
+  alternatingDividedRegionsSolid.metadata.profileFeatures.map((feature) =>
+    feature.analyticRegionId),
+);
+for (const regionId of [coincidentRegionId, oppositeRegionId]) {
+  assertDividedRegionFeature(reopenedDividedRegionSolid, regionId);
+  const selection = analyticRegionHit(
+    reopenedDividedRegionSolid,
+    (face) =>
+      face.analyticRegionId === regionId &&
+      face.analyticCapIndex === 1,
+  );
+  assert.ok(selection.face);
+  assert.equal(selection.identityCount, 1);
+}
+assert.equal(
+  deriveSolidAnalyticEdges(alternatingDividedRegionsSolid).lines.some((line) =>
+    line.sourceEdgeIndices.length === 1 &&
+    new THREE.Vector3(
+      line.end.x - line.start.x,
+      line.end.y - line.start.y,
+      line.end.z - line.start.z,
+    ).length() < 1e-4),
+  false,
+  'Las regiones exactas no deben publicar fragmentos lineales diminutos',
+);
+const coincidentCutLongitudinalEdges = coincidentCutAnalyticEdges.lines.filter((line) => {
+  const direction = new THREE.Vector3(
+    line.end.x - line.start.x,
+    line.end.y - line.start.y,
+    line.end.z - line.start.z,
+  );
+  return direction.length() >= Math.abs(coincidentCutDistance) * 0.25 &&
+    Math.abs(direction.normalize().dot(phaseZeroSideAxis)) >= 0.99 &&
+    phaseZeroRadialError(line.start) <= 5e-2 &&
+    phaseZeroRadialError(line.end) <= 5e-2;
+});
+assert.equal(
+  coincidentCutLongitudinalEdges.length,
+  2,
+  'El sólido recargado solo debe publicar las dos generatrices límite del arco parcial',
+);
+const analyticOnlyOverlaySolid = structuredClone(coincidentCutDisplayMesh.userData.solid);
+const strayLineStart = analyticOnlyOverlaySolid.vertices.length;
+analyticOnlyOverlaySolid.vertices.push(
+  pointOnSketchPlane({
+    x: -coincidentCutRadius * 1.2,
+    y: coincidentCutRadius * 0.25,
+    z: 0,
+  }, coincidentCutPlane),
+  pointOnSketchPlane({
+    x: -coincidentCutRadius * 0.8,
+    y: coincidentCutRadius * 0.25,
+    z: 0,
+  }, coincidentCutPlane),
+);
+analyticOnlyOverlaySolid.edges.push([strayLineStart, strayLineStart + 1]);
+assert.equal(
+  deriveSolidAnalyticEdges(
+    solidWithDerivedSurfaceTopology(analyticOnlyOverlaySolid),
+  ).lines.some((line) =>
+    line.sourceEdgeIndices.some((edge) =>
+      edge.includes(strayLineStart) || edge.includes(strayLineStart + 1))),
+  false,
+  'El visor no debe publicar una arista que solo exista en la malla de relleno',
+);
+disposeThreeObject(coincidentCutGroup);
+const facetedCoincidentCut = structuredClone(coincidentCutSolid);
+const facetedCoincidentTopology = deriveSolidAnalyticTopology(facetedCoincidentCut);
+facetedCoincidentTopology.faceSurfaceIds.forEach((surfaceId, faceIndex) => {
+  if (!surfaceId) return;
+  const face = facetedCoincidentCut.faces[faceIndex];
+  const first = new THREE.Vector3(
+    facetedCoincidentCut.vertices[face[1]].x - facetedCoincidentCut.vertices[face[0]].x,
+    facetedCoincidentCut.vertices[face[1]].y - facetedCoincidentCut.vertices[face[0]].y,
+    facetedCoincidentCut.vertices[face[1]].z - facetedCoincidentCut.vertices[face[0]].z,
+  );
+  const second = new THREE.Vector3(
+    facetedCoincidentCut.vertices[face[2]].x - facetedCoincidentCut.vertices[face[0]].x,
+    facetedCoincidentCut.vertices[face[2]].y - facetedCoincidentCut.vertices[face[0]].y,
+    facetedCoincidentCut.vertices[face[2]].z - facetedCoincidentCut.vertices[face[0]].z,
+  );
+  const normal = first.cross(second).normalize();
+  facetedCoincidentCut.metadata.faceVertexNormals[faceIndex] =
+    face.map(() => ({ x: normal.x, y: normal.y, z: normal.z }));
+});
+const repairedCoincidentCut = solidWithDerivedSurfaceTopology(facetedCoincidentCut);
+const repairedCoincidentTopology = deriveSolidAnalyticTopology(repairedCoincidentCut);
+const repairedSurfaceById = new Map(
+  repairedCoincidentTopology.sideSurfaces.map((surface) => [surface.id, surface]),
+);
+let repairedAnalyticFaceCount = 0;
+repairedCoincidentTopology.faceSurfaceIds.forEach((surfaceId, faceIndex) => {
+  const surface = repairedSurfaceById.get(surfaceId);
+  if (!surface) return;
+  repairedAnalyticFaceCount += 1;
+  const face = repairedCoincidentCut.faces[faceIndex];
+  const storedNormals = repairedCoincidentCut.metadata.faceVertexNormals[faceIndex];
+  assert.equal(storedNormals.length, face.length);
+  face.forEach((vertexIndex, cornerIndex) => {
+    const expected = analyticSideSurfaceNormalAtPoint(
+      repairedCoincidentCut.vertices[vertexIndex],
+      surface,
+    );
+    assert.ok(expected);
+    const stored = storedNormals[cornerIndex];
+    assert.ok(Math.abs(Math.abs(
+      expected.x * stored.x + expected.y * stored.y + expected.z * stored.z
+    ) - 1) <= 1e-8);
+  });
+});
+assert.ok(repairedAnalyticFaceCount > 0);
+
 const exactCircleProjection = projectModel3dEdgesToSketch({ solids: [{
   id: 'solid3d-analytic-circle',
   visible: true,
@@ -2726,6 +4685,12 @@ const circularHoleFace = solidFaceFromPlanarGroup({
   userData: { type: 'webcad-push-solid', solid: manifoldCircleThrough },
   parent: null,
 }, circularHoleGroupIndex);
+assert.equal(circularHoleFace.holes.length, 1);
+assert.equal(
+  circularHoleFace.holes[0].length,
+  64,
+  'La selección de una cara perforada debe usar un único contorno circular analítico',
+);
 assert.equal(circularHoleFace.holeCadProfileVertexIndices[0].length, 0);
 assert.equal(
   circularHoleFace.holeSmoothProfileVertexIndices[0].length,

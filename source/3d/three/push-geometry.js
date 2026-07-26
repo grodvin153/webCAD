@@ -3,7 +3,10 @@
 import * as THREE from 'three';
 
 import { createExactExtrusion } from '../exact-extrusion.js';
-import { exactProfileFromEntity } from '../exact-profile.js';
+import {
+  exactProfileFromEntity,
+  sampleExactProfile,
+} from '../exact-profile.js';
 import { extrudeClosedProfile } from '../extrusion.js';
 import {
   exactProfileOnSketchPlane,
@@ -15,16 +18,25 @@ import { createSolid3d, isValidSolid3d } from '../solid.js';
 import { solid3dToBufferGeometry } from './solid-to-buffer-geometry.js';
 import { createWideLineSegments, disposeThreeObject } from './three-scene-style.js';
 import { profileTangencyIndices } from './profile-tangency.js';
-import { sampleSolidAnalyticEdges } from '../analytic-edges.js';
+import {
+  exactProfileWithAnalyticSources,
+  sampleSolidAnalyticEdges,
+} from '../analytic-edges.js';
+import {
+  booleanContactOverlap,
+  booleanWeldTolerance,
+} from '../tolerances.js';
 import {
   booleanSolid3d,
   isManifoldBooleanReady,
   solidWithDerivedSurfaceTopology,
+  solidWithSimplifiedBooleanMesh,
   subtractFacePushSolid3d,
   subtractionCutterDistance,
 } from './manifold-boolean.js';
 
 const SOLID_INTEGRITY_EPSILON = 1e-6;
+let analyticRegionSequence = 0;
 
 export const PUSH_SOLID_STYLE = {
   edgeColor: 0x000000,
@@ -75,8 +87,64 @@ function normalizedNormal(normal) {
   return vector.lengthSq() > 1e-12 ? vector.normalize() : null;
 }
 
+export function createAnalyticRegionId() {
+  const uuid = globalThis.crypto?.randomUUID?.();
+  if (uuid) return `analytic-region-${uuid}`;
+  analyticRegionSequence += 1;
+  return `analytic-region-runtime-${analyticRegionSequence}`;
+}
+
 function cloneJson(value) {
   return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+}
+
+function translatedPoint(point, direction, distance) {
+  return {
+    x: Number(point?.x) + direction.x * distance,
+    y: Number(point?.y) + direction.y * distance,
+    z: (Number(point?.z) || 0) + direction.z * distance,
+  };
+}
+
+function faceWithBooleanUnionOverlap(face, direction, overlap) {
+  const shifted = {
+    ...face,
+    points: (face?.points ?? []).map((point) =>
+      translatedPoint(point, direction, -overlap)),
+    holes: (face?.holes ?? []).map((loop) => loop.map((point) =>
+      translatedPoint(point, direction, -overlap))),
+  };
+  if (face?.workplane) {
+    shifted.workplane = {
+      ...cloneJson(face.workplane),
+      origin: translatedPoint(face.workplane.origin, direction, -overlap),
+    };
+  }
+  if (face?.exactProfile?.plane) {
+    shifted.exactProfile = cloneJson(face.exactProfile);
+    shifted.exactProfile.plane.origin = translatedPoint(
+      face.exactProfile.plane.origin,
+      direction,
+      -overlap,
+    );
+  }
+  return shifted;
+}
+
+export function solidFromBooleanFeatureTool(sourceSolid, face, distance) {
+  const cleanDistance = pushHeightValue(distance);
+  const axis = normalizedNormal(
+    face?.analyticAxis ??
+    face?.normal ??
+    face?.exactProfile?.plane?.normal,
+  );
+  if (cleanDistance === null || !axis) return null;
+  const direction = axis.multiplyScalar(Math.sign(cleanDistance));
+  const overlap = booleanContactOverlap(sourceSolid);
+  return solidFromFacePush(
+    faceWithBooleanUnionOverlap(face, direction, overlap),
+    cleanDistance + Math.sign(cleanDistance) * overlap,
+  );
 }
 
 function unavailableExactGeometry(reason, details = {}) {
@@ -453,22 +521,252 @@ export function solidFromFacePush(face, height, options = {}) {
   return solid;
 }
 
+function exactProfileWorldLoops(profile) {
+  const sampled = sampleExactProfile(profile, {
+    segments: 64,
+    structured: true,
+  });
+  if (!sampled?.outerLoop?.length) return null;
+  const plane = profile?.plane;
+  const origin = vertexVector(plane?.origin);
+  const xAxis = vertexVector(plane?.xAxis);
+  const normal = vertexVector(plane?.normal);
+  if (xAxis.lengthSq() <= 1e-12 || normal.lengthSq() <= 1e-12) return null;
+  xAxis.normalize();
+  normal.normalize();
+  const storedYAxis = vertexVector(plane?.yAxis);
+  const yAxis = storedYAxis.lengthSq() > 1e-12
+    ? storedYAxis.normalize()
+    : normal.clone().cross(xAxis).normalize();
+  const worldLoop = (loop) => loop.map((point) => {
+    const world = origin.clone()
+      .addScaledVector(xAxis, Number(point.x))
+      .addScaledVector(yAxis, -Number(point.y));
+    return { x: world.x, y: world.y, z: world.z };
+  });
+  return {
+    outer: worldLoop(sampled.outerLoop),
+    holes: sampled.innerLoops.map(worldLoop),
+  };
+}
+
+function faceFromExactFeature(profile) {
+  const loops = exactProfileWorldLoops(profile);
+  const normal = normalizedNormal(profile?.plane?.normal);
+  if (!loops || !normal || loops.outer.length < 3) return null;
+  const smoothOuter = profile.outerLoop?.segments?.length === 1 &&
+    ['circle', 'ellipse'].includes(profile.outerLoop.segments[0]?.type);
+  const smoothHoles = (profile.innerLoops ?? []).map((loop) =>
+    loop?.segments?.length === 1 &&
+    ['circle', 'ellipse'].includes(loop.segments[0]?.type));
+  return {
+    points: loops.outer,
+    holes: loops.holes,
+    normal: { x: normal.x, y: normal.y, z: normal.z },
+    exactProfile: cloneJson(profile),
+    cadProfileVertexIndices: smoothOuter
+      ? []
+      : loops.outer.map((_, index) => index),
+    smoothProfileVertexIndices: smoothOuter
+      ? loops.outer.map((_, index) => index)
+      : [],
+    holeCadProfileVertexIndices: loops.holes.map((loop, loopIndex) =>
+      smoothHoles[loopIndex] ? [] : loop.map((_, index) => index)),
+    holeSmoothProfileVertexIndices: loops.holes.map((loop, loopIndex) =>
+      smoothHoles[loopIndex] ? loop.map((_, index) => index) : []),
+  };
+}
+
+function copyExactProfileSegmentSources(targetProfile, sourceProfile) {
+  const targetLoops = [
+    targetProfile?.outerLoop,
+    ...(targetProfile?.innerLoops ?? []),
+  ];
+  const sourceLoops = [
+    sourceProfile?.outerLoop,
+    ...(sourceProfile?.innerLoops ?? []),
+  ];
+  targetLoops.forEach((targetLoop, loopIndex) => {
+    const sourceSegments = sourceLoops[loopIndex]?.segments ?? [];
+    (targetLoop?.segments ?? []).forEach((segment, segmentIndex) => {
+      const source = sourceSegments[segmentIndex]?.source;
+      if (source?.role) segment.source = cloneJson(source);
+    });
+  });
+  if (targetProfile?.outerLoop) {
+    targetProfile.segments = targetProfile.outerLoop.segments;
+  }
+}
+
+function solidFromExactBase(sourceSolid) {
+  const base = sourceSolid?.metadata?.exactGeometry?.base ??
+    (sourceSolid?.metadata?.exactGeometry?.extrusion
+      ? sourceSolid.metadata.exactGeometry
+      : null);
+  const extrusion = base?.extrusion;
+  const profile = extrusion?.profile ?? base?.profile;
+  const distance = Number(extrusion?.distance);
+  const face = faceFromExactFeature(profile);
+  if (!face || !Number.isFinite(distance) || Math.abs(distance) <= 1e-9) return null;
+  const extrusionDirection = normalizedNormal(extrusion?.direction);
+  if (!extrusionDirection) return null;
+  const solid = solidFromFacePush({
+    ...face,
+    normal: {
+      x: extrusionDirection.x,
+      y: extrusionDirection.y,
+      z: extrusionDirection.z,
+    },
+    id: profile.id ?? null,
+    sketchId: extrusion.metadata?.sketchId ?? null,
+    sketchPlane: extrusion.metadata?.sketchPlane ?? null,
+  }, distance);
+  if (!isValidSolid3d(solid)) return null;
+  solid.metadata = {
+    ...solid.metadata,
+    exactGeometry: cloneJson(base),
+    profileFeatures: [],
+  };
+  return solid;
+}
+
+function replayExactProfileFeature(sourceSolid, face, moveDistance) {
+  const features = sourceSolid?.metadata?.profileFeatures;
+  const semanticFeatureIndex = Number(face?.analyticFeatureIndex);
+  const featureIndex = face?.analyticRegionId
+    ? features?.findIndex((feature) =>
+      feature?.analyticRegionId === face.analyticRegionId)
+    : semanticFeatureIndex;
+  if (!Array.isArray(features) ||
+      !Number.isInteger(featureIndex) ||
+      featureIndex < 0 ||
+      face?.analyticCapIndex !== 1 ||
+      !['union', 'subtract'].includes(face?.analyticOperationType) ||
+      !isManifoldBooleanReady()) {
+    return null;
+  }
+  const creator = features?.[featureIndex];
+  if (!['union', 'subtract'].includes(creator?.type) ||
+      !creator?.exactProfile?.plane) {
+    return null;
+  }
+  const selectedNormal = normalizedNormal(face?.normal);
+  const featureAxis = normalizedNormal(creator.exactProfile.plane.normal);
+  if (!selectedNormal || !featureAxis) return null;
+  const deltaAlongFeatureAxis = selectedNormal
+    .multiplyScalar(moveDistance)
+    .dot(featureAxis);
+  const previousDistance = Number(creator.distance);
+  const nextDistance = previousDistance + deltaAlongFeatureAxis;
+  if (!Number.isFinite(previousDistance) || !Number.isFinite(nextDistance)) return null;
+  const tolerance = booleanWeldTolerance(sourceSolid);
+  const replacementType = nextDistance > tolerance
+    ? 'union'
+    : nextDistance < -tolerance
+      ? 'subtract'
+      : null;
+
+  let rebuilt = solidFromExactBase(sourceSolid);
+  if (!rebuilt) return null;
+  for (let index = 0; index < features.length; index += 1) {
+    const sourceFeature = features[index];
+    if (!['union', 'subtract'].includes(sourceFeature?.type) ||
+        !sourceFeature?.exactProfile) {
+      return null;
+    }
+    const replacingCreator = index === featureIndex;
+    const distance = replacingCreator ? nextDistance : Number(sourceFeature.distance);
+    if (!Number.isFinite(distance)) return null;
+    if (Math.abs(distance) <= tolerance) continue;
+    const featureFace = faceFromExactFeature(sourceFeature.exactProfile);
+    if (!featureFace) return null;
+    const operationType = replacingCreator ? replacementType : sourceFeature.type;
+    if (!operationType) continue;
+    const operation = cloneJson(sourceFeature);
+    if (replacingCreator && face?.exactProfile) {
+      copyExactProfileSegmentSources(operation.exactProfile, face.exactProfile);
+    }
+    operation.type = operationType;
+    operation.distance = distance;
+    operation.requestedDistance = distance;
+    delete operation.kernelDistance;
+    let next = null;
+    if (operationType === 'subtract') {
+      const featureNormal = normalizedNormal(featureFace.normal);
+      const featureOrigin = vertexVector(featureFace.points[0]);
+      operation.through = featureNormal
+        ? distance <= Math.min(...rebuilt.vertices.map((vertex) =>
+          vertexVector(vertex).sub(featureOrigin).dot(featureNormal))) + tolerance
+        : false;
+      next = subtractFacePushSolid3d(rebuilt, featureFace, distance, {
+        operation,
+      });
+    }
+    else {
+      operation.through = false;
+      const tool = solidFromBooleanFeatureTool(rebuilt, featureFace, distance);
+      next = booleanSolid3d(rebuilt, tool, {
+        operationType: 'union',
+        operation,
+      });
+    }
+    if (!isValidSolid3d(next)) return null;
+    rebuilt = next;
+  }
+  return {
+    ...rebuilt,
+    metadata: {
+      ...rebuilt.metadata,
+      lastPushDistance: moveDistance,
+      lastPushFaceIndex: face.sourceSolidFaceIndex ?? null,
+      lastPushFaceIndices: Array.isArray(face.sourceSolidFaceIndices)
+        ? [...face.sourceSolidFaceIndices]
+        : [],
+      lastPushRequestedDistance: moveDistance,
+      lastPushNormal: {
+        x: face.normal.x,
+        y: face.normal.y,
+        z: face.normal.z,
+      },
+      sourceSolidDocumentId: sourceSolid.metadata?.sourceSolidDocumentId ??
+        rebuilt.metadata?.sourceSolidDocumentId ??
+        null,
+    },
+  };
+}
+
 export function movedSolidFacePush(face, distance) {
   const cleanDistance = pushHeightValue(distance);
   const sourceSolid = face?.sourceSolid;
   const faceIndex = face?.sourceSolidFaceIndex;
-  const unitNormal = normalizedNormal(face?.normal);
+  const unitNormal = normalizedNormal(
+    face?.exactProfile ? face?.analyticAxis ?? face?.normal : face?.normal,
+  );
   if (cleanDistance === null) {
     throw new RangeError('La distancia de Push debe ser distinta de cero');
   }
   if (!sourceSolid || !Number.isInteger(faceIndex) || !unitNormal) {
     return null;
   }
+  const analyticFace = {
+    ...face,
+    normal: { x: unitNormal.x, y: unitNormal.y, z: unitNormal.z },
+    analyticAxis: { x: unitNormal.x, y: unitNormal.y, z: unitNormal.z },
+  };
+  const replayedFeature = replayExactProfileFeature(
+    sourceSolid,
+    analyticFace,
+    cleanDistance,
+  );
+  if (replayedFeature) return replayedFeature;
   const faceIndices = Array.isArray(face?.sourceSolidFaceIndices) && face.sourceSolidFaceIndices.length
     ? face.sourceSolidFaceIndices
     : [faceIndex];
   if (isManifoldBooleanReady()) {
-    const origin = vertexVector(face?.points?.[0] ?? sourceSolid.vertices?.[sourceSolid.faces?.[faceIndex]?.[0]]);
+    const origin = vertexVector(
+      analyticFace.points?.[0] ??
+      sourceSolid.vertices?.[sourceSolid.faces?.[faceIndex]?.[0]],
+    );
     const operationType = cleanDistance < 0 ? 'subtract' : 'union';
     const kernelDistance = operationType === 'subtract'
       ? subtractionCutterDistance(sourceSolid, cleanDistance, origin, unitNormal)
@@ -476,6 +774,9 @@ export function movedSolidFacePush(face, distance) {
     const depth = Math.min(...sourceSolid.vertices.map((vertex) =>
       vertexVector(vertex).sub(origin).dot(unitNormal)));
     const through = cleanDistance < 0 && cleanDistance <= depth + SOLID_INTEGRITY_EPSILON;
+    const analyticRegionId = analyticFace.exactProfile
+      ? analyticFace.analyticRegionId ?? createAnalyticRegionId()
+      : null;
     const operation = {
       type: operationType,
       distance: cleanDistance,
@@ -485,6 +786,18 @@ export function movedSolidFacePush(face, distance) {
       sourceSolidFaceIndex: faceIndex,
       sourceSolidFaceIndices: faceIndices,
       normal: { x: unitNormal.x, y: unitNormal.y, z: unitNormal.z },
+      analyticAxis: { x: unitNormal.x, y: unitNormal.y, z: unitNormal.z },
+      sketchId: analyticFace.sketchId ?? null,
+      exactProfile: analyticFace.exactProfile
+        ? exactProfileWithAnalyticSources(
+          sourceSolid,
+          analyticFace.exactProfile,
+          analyticRegionId,
+        )
+        : null,
+      ...(analyticRegionId ? {
+        analyticRegionId,
+      } : {}),
     };
     const metadata = {
       lastPushFaceIndex: faceIndex,
@@ -494,15 +807,19 @@ export function movedSolidFacePush(face, distance) {
       lastPushNormal: operation.normal,
     };
     if (operationType === 'subtract') {
-      return subtractFacePushSolid3d(sourceSolid, face, cleanDistance, {
+      return subtractFacePushSolid3d(sourceSolid, analyticFace, cleanDistance, {
         kernelDistance,
         operation,
         metadata,
       });
     }
+    const unionOverlap = booleanWeldTolerance(sourceSolid);
     let toolSolid = null;
     try {
-      toolSolid = solidFromFacePush(face, kernelDistance);
+      toolSolid = solidFromFacePush(
+        faceWithBooleanUnionOverlap(analyticFace, unitNormal, unionOverlap),
+        kernelDistance + unionOverlap,
+      );
     }
     catch {
       return null;
@@ -585,7 +902,10 @@ export function movedSolidFacePush(face, distance) {
 }
 
 export function createPushSolidMeshFromSolid(solid, options = {}) {
-  const displaySolid = solidWithDerivedSurfaceTopology(solid);
+  const analyticSolid = solidWithDerivedSurfaceTopology(solid);
+  const displaySolid = solidWithDerivedSurfaceTopology(
+    solidWithSimplifiedBooleanMesh(solid),
+  );
   const geometry = solid3dToBufferGeometry(displaySolid);
   const material = new THREE.MeshStandardMaterial({
     color: options.faceColor ?? options.color ?? PUSH_SOLID_STYLE.faceColor,
@@ -619,6 +939,7 @@ export function createPushSolidMeshFromSolid(solid, options = {}) {
     exactGeometry: displaySolid.metadata.exactGeometry,
     cadProfileVertexIndices: displaySolid.metadata.cadProfileVertexIndices,
     smoothProfileVertexIndices: displaySolid.metadata.smoothProfileVertexIndices,
+    analyticSolid,
     solid: displaySolid,
   };
   return mesh;
@@ -629,7 +950,7 @@ export function createPushSolidMesh(face, height, options = {}) {
 }
 
 export function createPushEdges(mesh, options = {}) {
-  const solid = mesh.userData?.solid;
+  const solid = mesh.userData?.analyticSolid ?? mesh.userData?.solid;
   const analyticEdges = sampleSolidAnalyticEdges(solid);
   const smoothProfileVertexIndices = new Set(
     Array.isArray(solid?.metadata?.smoothProfileVertexIndices)
@@ -740,7 +1061,7 @@ export function createPushEdges(mesh, options = {}) {
 }
 
 export function createPushTangentEdges(mesh, options = {}) {
-  const solid = mesh.userData?.solid;
+  const solid = mesh.userData?.analyticSolid ?? mesh.userData?.solid;
   const segments = (solid?.metadata?.tangentEdges ?? []).flatMap((edge) => {
     const start = solid.vertices?.[edge.startIndex];
     const end = solid.vertices?.[edge.endIndex];
@@ -816,7 +1137,8 @@ export function createPushSolidGroupFromSolid(solid, options = {}) {
     sourceSolidFaceIndex: mesh.userData.sourceSolidFaceIndex,
     sourceKey: mesh.userData.sourceKey,
     exactGeometry: mesh.userData.exactGeometry,
-    solid: mesh.userData.solid,
+    analyticSolid: mesh.userData.analyticSolid,
+    solid,
     showCurveGeneratrices: true,
     showHiddenEdges: options.showHiddenEdges === true,
   };

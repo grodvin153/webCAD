@@ -2,6 +2,7 @@
 
 import * as THREE from 'three';
 
+import { exactProfileWithAnalyticSources } from '../analytic-edges.js';
 import { normalizeSketchPlane, pointFromSketchPlane } from '../sketch-plane.js';
 import { createSolid3d, isValidSolid3d } from '../solid.js';
 import {
@@ -10,7 +11,11 @@ import {
   subtractFacePushSolid3d,
   subtractionCutterDistance,
 } from './manifold-boolean.js';
-import { solidFromFacePush } from './push-geometry.js';
+import {
+  createAnalyticRegionId,
+  solidFromBooleanFeatureTool,
+  solidFromFacePush,
+} from './push-geometry.js';
 
 const TOLERANCE = 1e-7;
 
@@ -143,6 +148,9 @@ export function profileFeaturePushSolid(face, distance) {
     const kernelDistance = operationType === 'subtract'
       ? subtractionCutterDistance(sourceSolid, distance, supportOuter[0], normal)
       : distance;
+    const analyticRegionId = face.exactProfile
+      ? face.analyticRegionId ?? createAnalyticRegionId()
+      : null;
     const operation = {
       type: operationType,
       distance,
@@ -151,7 +159,16 @@ export function profileFeaturePushSolid(face, distance) {
       through,
       tangentContact: additiveContact,
       sketchId: face.sketchId ?? null,
-      exactProfile: face.exactProfile ?? null,
+      exactProfile: face.exactProfile
+        ? exactProfileWithAnalyticSources(
+          sourceSolid,
+          face.exactProfile,
+          analyticRegionId,
+        )
+        : null,
+      ...(analyticRegionId ? {
+        analyticRegionId,
+      } : {}),
     };
     if (operationType === 'subtract') {
       return subtractFacePushSolid3d(sourceSolid, face, distance, {
@@ -164,7 +181,11 @@ export function profileFeaturePushSolid(face, distance) {
     }
     let toolSolid = null;
     try {
-      toolSolid = solidFromFacePush(face, kernelDistance);
+      toolSolid = solidFromBooleanFeatureTool(
+        sourceSolid,
+        face,
+        kernelDistance,
+      );
     }
     catch {
       return null;
