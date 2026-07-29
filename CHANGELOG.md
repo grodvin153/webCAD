@@ -1,5 +1,26 @@
 # Historial de cambios
 
+## 0.8.0 - 2026-07-29
+
+### Edición y reconstrucción 3D
+
+- Añadidas líneas espaciales con snaps sobre sólidos, intersecciones y apoyo en caras analíticas.
+- Incorporadas copia, desplazamiento y giro de sólidos completos mediante colocaciones documentales, conservadas al guardar y exportar STL.
+- Reforzada la reconstrucción posterior a booleanas para consolidar caras coplanarias, recuperar perímetros CAD y eliminar residuos o costuras internas.
+- Añadida la reconstrucción manual del modelo con tolerancia configurable y un único paso de historial.
+
+### Geometría analítica
+
+- Consolidadas caras semánticas y regiones residuales para mantener identidad, selección y continuidad después de operaciones Push.
+- Recuperadas aristas circulares parciales y completas sin publicar pequeñas generatrices facetadas como aristas CAD.
+- Añadidos snaps de centro y cuadrante sobre curvas analíticas de caras, con soporte para sólidos colocados.
+- Endurecidos los límites de espesor y las auditorías de topología antes y después de operaciones booleanas.
+
+### Archivos y calidad
+
+- Centralizado el selector de destino de guardado para solicitar nombre y carpeta mediante la capacidad disponible del navegador.
+- Añadidas regresiones portables para reconstrucción, caras coplanarias, booleanas curvas, colocaciones, herramientas 3D y guardado local.
+
 ## 0.7.0 - 2026-07-24
 
 ### Modelado 3D

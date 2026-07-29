@@ -7,8 +7,8 @@
   <meta name="author" content="Gonzalo Rodriguez">
   <meta name="copyright" content="Copyright (C) 2026 Gonzalo Rodriguez">
   <title>webCAD</title>
-  <script type="module" crossorigin src="./assets/main-DrRNV3_o.js"></script>
-  <link rel="stylesheet" crossorigin href="./assets/main-BwPKWc0L.css">
+  <script type="module" crossorigin src="./assets/main-BzC3gYdW.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/main-BnW_4G5G.css">
 </head>
 <body>
   <header class="menu-bar">
@@ -40,6 +40,9 @@
             <button class="submenu-item" type="button" data-command="select-set">Seleccionar conjunto (DS)</button>
             <button class="submenu-item" type="button" data-command="toggle-ortho">Modo ortogonal</button>
             <button class="submenu-item" type="button" data-command="toggle-grid">Snap a rejilla</button>
+            <button class="submenu-item" type="button" data-command="rebuild-model3d">
+              Reconstruir modelo 3D...
+            </button>
           </div>
         </div>
         <div class="menu-item">
@@ -1049,6 +1052,19 @@
       <section class="tool-section tool-section-3d" aria-labelledby="tools-3d-title">
         <h2 id="tools-3d-title" class="tool-section-title">3D</h2>
         <button
+          id="tool-line-3d"
+          class="tool-button"
+          type="button"
+          title="Línea 3D (L)"
+          aria-label="Línea 3D"
+        >
+          <svg viewBox="0 0 48 48" aria-hidden="true">
+            <path d="M9 36 38 10"></path>
+            <circle cx="9" cy="36" r="3"></circle>
+            <circle cx="38" cy="10" r="3"></circle>
+          </svg>
+        </button>
+        <button
           id="tool-push"
           class="tool-button"
           type="button"
@@ -1059,6 +1075,42 @@
             <path d="M13 31 24 37 35 31 24 25z"></path>
             <path d="M13 18 24 24 35 18 24 12zM13 18v13M35 18v13M24 24v13"></path>
             <path d="M24 8v-4M19 8l5-5 5 5"></path>
+          </svg>
+        </button>
+        <button
+          id="tool-copy-solid"
+          class="tool-button"
+          type="button"
+          title="Copiar sólido 3D (C)"
+          aria-label="Copiar sólido"
+        >
+          <svg viewBox="0 0 48 48" aria-hidden="true">
+            <path d="M8 27 19 33 30 27 19 21zM8 14 19 20 30 14 19 8zM8 14v13M30 14v13M19 20v13"></path>
+            <path d="M25 33 33 37 41 33 33 29zM25 24l8 4 8-4-8-4zM25 24v9M41 24v9M33 28v9"></path>
+          </svg>
+        </button>
+        <button
+          id="tool-move-solid"
+          class="tool-button"
+          type="button"
+          title="Mover sólido 3D (D)"
+          aria-label="Mover sólido"
+        >
+          <svg viewBox="0 0 48 48" aria-hidden="true">
+            <path d="M13 31 24 37 35 31 24 25zM13 18 24 24 35 18 24 12zM13 18v13M35 18v13M24 24v13"></path>
+            <path d="M24 4v14M17 11l7-7 7 7M44 24H30M37 17l7 7-7 7M24 44V30M17 37l7 7 7-7M4 24h14M11 17l-7 7 7 7"></path>
+          </svg>
+        </button>
+        <button
+          id="tool-rotate-solid"
+          class="tool-button"
+          type="button"
+          title="Girar sólido 3D (G)"
+          aria-label="Girar sólido"
+        >
+          <svg viewBox="0 0 48 48" aria-hidden="true">
+            <path d="M13 31 24 37 35 31 24 25zM13 18 24 24 35 18 24 12zM13 18v13M35 18v13M24 24v13"></path>
+            <path d="M8 15a18 18 0 0 1 31 7M40 12v10H30M40 33A18 18 0 0 1 9 26M8 36V26h10"></path>
           </svg>
         </button>
         <button
@@ -1206,6 +1258,30 @@
     </section>
   </div>
 
+  <div id="save-file-dialog" class="cad-dialog-backdrop" hidden>
+    <section class="cad-dialog" role="dialog" aria-modal="true" aria-labelledby="save-file-dialog-title">
+      <header>
+        <div>
+          <span class="cad-dialog-kicker">ARCHIVO LOCAL</span>
+          <h2 id="save-file-dialog-title">Guardar archivo</h2>
+        </div>
+        <button id="save-file-dialog-close" class="cad-dialog-close" type="button" aria-label="Cerrar">×</button>
+      </header>
+      <label class="cad-dialog-field">
+        <span>Nombre del archivo</span>
+        <input id="save-file-name" type="text" maxlength="240" autocomplete="off">
+      </label>
+      <p id="save-file-dialog-note" class="cad-dialog-note">
+        Si el navegador no ofrece un selector de carpeta, se descargará una copia.
+      </p>
+      <div id="save-file-dialog-error" class="cad-dialog-error" aria-live="polite"></div>
+      <footer>
+        <button id="save-file-dialog-cancel" type="button">Cancelar</button>
+        <button id="save-file-dialog-confirm" class="is-primary" type="button">Guardar</button>
+      </footer>
+    </section>
+  </div>
+
   <div id="settings-dialog" class="cad-dialog-backdrop" hidden>
     <section class="cad-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-dialog-title">
       <header>
@@ -1245,10 +1321,98 @@
           <option value="4">0,0000°</option>
         </select>
       </label>
-      <p class="cad-dialog-note">La precision se aplica a los textos de cota del dibujo. No modifica su geometria.</p>
+      <div class="cad-dialog-field">
+        <label for="settings-coplanar-tolerance-factor">
+          Factor de reconciliacion 3D
+        </label>
+        <div class="cad-dialog-input-action">
+          <input
+            id="settings-coplanar-tolerance-factor"
+            type="number"
+            min="0.1"
+            max="10"
+            step="0.1"
+            value="1"
+            inputmode="decimal"
+            aria-describedby="settings-coplanar-tolerance-help settings-coplanar-tolerance-error"
+          >
+          <button id="settings-coplanar-tolerance-reset" type="button">
+            Restaurar valor predeterminado
+          </button>
+        </div>
+        <small id="settings-coplanar-tolerance-help">
+          1 es el valor recomendado. Un valor mayor admite mas ruido numerico;
+          uno menor exige caras mas exactas.
+        </small>
+        <span
+          id="settings-coplanar-tolerance-error"
+          class="cad-dialog-error"
+          aria-live="polite"
+        ></span>
+      </div>
+      <p class="cad-dialog-note">
+        La precision de cotas solo cambia sus textos. El factor 3D controla
+        cuándo dos superficies conectadas se consideran el mismo plano; no
+        aumenta la soldadura, no deforma la malla y no cambia el espesor minimo
+        3D de 0.1.
+      </p>
       <footer>
         <button id="settings-dialog-cancel" type="button">Cancelar</button>
         <button id="settings-dialog-confirm" class="is-primary" type="button">Aplicar</button>
+      </footer>
+    </section>
+  </div>
+
+  <div id="rebuild-model-dialog" class="cad-dialog-backdrop" hidden>
+    <section
+      class="cad-dialog"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="rebuild-model-dialog-title"
+    >
+      <header>
+        <div>
+          <span class="cad-dialog-kicker">REPARACION TOPOLOGICA 3D</span>
+          <h2 id="rebuild-model-dialog-title">Reconstruir modelo</h2>
+        </div>
+        <button
+          id="rebuild-model-dialog-close"
+          class="cad-dialog-close"
+          type="button"
+          aria-label="Cerrar"
+        >×</button>
+      </header>
+      <label class="cad-dialog-field" for="rebuild-model-tolerance-factor">
+        <span>Factor de consolidacion</span>
+        <input
+          id="rebuild-model-tolerance-factor"
+          type="number"
+          min="1"
+          max="10"
+          step="0.5"
+          value="1"
+          inputmode="decimal"
+          aria-describedby="rebuild-model-tolerance-help rebuild-model-dialog-error"
+        >
+      </label>
+      <small id="rebuild-model-tolerance-help">
+        1 es el valor recomendado. Aumentelo solo si siguen apareciendo caras
+        coplanarias separadas por residuos numericos.
+      </small>
+      <p class="cad-dialog-note">
+        Consolida planos conectados, elimina divisiones internas y reconstruye
+        las aristas CAD de todos los solidos. La operacion se puede deshacer.
+      </p>
+      <div
+        id="rebuild-model-dialog-error"
+        class="cad-dialog-error"
+        aria-live="polite"
+      ></div>
+      <footer>
+        <button id="rebuild-model-dialog-cancel" type="button">Cancelar</button>
+        <button id="rebuild-model-dialog-confirm" class="is-primary" type="button">
+          Reconstruir
+        </button>
       </footer>
     </section>
   </div>
@@ -1403,7 +1567,7 @@
       <header>
         <div>
           <span class="cad-dialog-kicker">AUTORIA Y VERSION</span>
-          <h2 id="about-dialog-title">webCAD 0.7.0</h2>
+          <h2 id="about-dialog-title">webCAD 0.8.0</h2>
         </div>
         <button id="about-dialog-close" class="cad-dialog-close" type="button" aria-label="Cerrar">×</button>
       </header>
@@ -1413,7 +1577,7 @@
         <div>
           <strong>Gonzalo Rodriguez</strong>
           <span>Autor y desarrollador de webCAD</span>
-          <small>gonzalorv@gmail.com · Editor CAD 2D/3D experimental para navegador · Versión estable 0.7.0</small>
+          <small>gonzalorv@gmail.com · Editor CAD 2D/3D experimental para navegador · Versión estable 0.8.0</small>
         </div>
       </div>
 
@@ -1442,13 +1606,13 @@
           </ul>
         </section>
         <section class="about-feature-card is-release">
-          <h3>Novedades de 0.7.0</h3>
+          <h3>Novedades de 0.8.0</h3>
           <ul>
-            <li>Croquis en planos principales y caras, con edición, referencias por sección o proyección y persistencia.</li>
-            <li>Extrusión y push de perfiles o caras con uniones y sustracciones mediante Manifold.</li>
-            <li>Selección completa de caras, aristas y snaps de sólidos en el visor 3D.</li>
-            <li>Curvas analíticas conservadas sin costuras ni generatrices de teselación visibles.</li>
-            <li>Proyectos webCAD compatibles con sólidos, operaciones y croquis apoyados.</li>
+            <li>Líneas espaciales y transformaciones de sólidos completos con colocación documental.</li>
+            <li>Reconstrucción automática y manual de caras coplanarias, perímetros y aristas CAD.</li>
+            <li>Curvas de caras conservadas como entidades analíticas con snaps de centro y cuadrante.</li>
+            <li>Booleanas y Push reforzados frente a residuos, costuras internas y espesores degenerados.</li>
+            <li>Selector modular de guardado para elegir nombre y carpeta de destino.</li>
           </ul>
         </section>
       </div>
