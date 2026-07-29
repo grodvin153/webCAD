@@ -7,6 +7,7 @@ import { PUSH_SOLID_STYLE } from './push-geometry.js';
 import { profileTangencyIndices } from './profile-tangency.js';
 import { classifySolidEdgeEntries } from './solid-edge-interaction.js';
 import {
+  deriveSolidAnalyticTopology,
   deriveSolidAnalyticSideSurfaces,
   pointOnAnalyticCurve,
 } from '../analytic-edges.js';
@@ -281,8 +282,9 @@ function angleDistance(first, second) {
   return Math.abs(Math.atan2(Math.sin(first - second), Math.cos(first - second)));
 }
 
-function analyticSurfaceIntervals(solid, surface, targetAngle) {
-  const curvedFaces = new Set(solid?.metadata?.curvedSideFaceIndices ?? []);
+function analyticSurfaceIntervals(solid, surface, targetAngle, faceSurfaceIds) {
+  const curvedFaces = new Set(faceSurfaceIds.flatMap((surfaceId, faceIndex) =>
+    surfaceId === surface.id ? [faceIndex] : []));
   const intervals = [...curvedFaces].flatMap((faceIndex) => {
     const locations = (solid.faces?.[faceIndex] ?? [])
       .map((vertexIndex) => analyticSideLocation(solid.vertices?.[vertexIndex], surface));
@@ -311,12 +313,17 @@ function analyticSurfaceIntervals(solid, surface, targetAngle) {
   return merged.filter((interval) => interval.end - interval.start > 1e-6);
 }
 
-function analyticGeneratrixSegments(solid, camera) {
+function analyticGeneratrixSegments(solid, camera, surfaces, faceSurfaceIds) {
   const seen = new Set();
-  return deriveSolidAnalyticSideSurfaces(solid).flatMap((surface) => {
+  return surfaces.flatMap((surface) => {
     return analyticSurfaceTangentAngles(surface, camera).flatMap((angle) => {
       const origin = pointOnAnalyticCurve(surface, angle);
-      return analyticSurfaceIntervals(solid, surface, angle).flatMap((interval) => {
+      return analyticSurfaceIntervals(
+        solid,
+        surface,
+        angle,
+        faceSurfaceIds,
+      ).flatMap((interval) => {
         const start = {
           x: origin.x + surface.offset.x * interval.start,
           y: origin.y + surface.offset.y * interval.start,
@@ -339,8 +346,15 @@ function analyticGeneratrixSegments(solid, camera) {
 
 export function buildPushGeneratrixSilhouetteSegments(solid, camera) {
   if (isProfileFeatureSolid(solid)) {
-    const analytic = analyticGeneratrixSegments(solid, camera);
-    if (analytic.length) return analytic;
+    const analyticTopology = deriveSolidAnalyticTopology(solid);
+    const analyticSurfaces = analyticTopology.sideSurfaces;
+    const analytic = analyticGeneratrixSegments(
+      solid,
+      camera,
+      analyticSurfaces,
+      analyticTopology.faceSurfaceIds,
+    );
+    if (analyticSurfaces.length) return analytic;
     const entries = solid.metadata?.curvedFeatureGeneratrices ?? [];
     const faceInfos = solid.faces.map((face) => faceInfo(face, solid.vertices));
     if (entries.length) {
@@ -381,7 +395,7 @@ export function updatePushSilhouetteGroup(group, camera, options = {}) {
   const edgeObject = group.children.find((child) => child.userData?.type === 'webcad-push-solid-edges');
   const tangentEdgeObject = group.children.find((child) =>
     child.userData?.type === 'webcad-push-solid-tangent-edges');
-  const solid = mesh?.userData?.solid;
+  const solid = mesh?.userData?.analyticSolid ?? mesh?.userData?.solid;
   if (!solid) return null;
   const key = cameraKey(camera);
   const requestedVisibilitySamples = Math.max(

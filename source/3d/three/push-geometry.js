@@ -11,6 +11,7 @@ import { extrudeClosedProfile } from '../extrusion.js';
 import {
   exactProfileOnSketchPlane,
   pointFromSketchPlane,
+  pointOnExactProfilePlane,
   sketchPlaneFromFace,
   solidOnSketchPlane,
 } from '../sketch-plane.js';
@@ -25,12 +26,15 @@ import {
 import {
   booleanContactOverlap,
   booleanWeldTolerance,
+  coplanarFaceTolerance,
+  meetsMinimum3dThickness,
+  MINIMUM_3D_THICKNESS,
+  minimumBooleanOperationDistance,
 } from '../tolerances.js';
 import {
   booleanSolid3d,
   isManifoldBooleanReady,
   solidWithDerivedSurfaceTopology,
-  solidWithSimplifiedBooleanMesh,
   subtractFacePushSolid3d,
   subtractionCutterDistance,
 } from './manifold-boolean.js';
@@ -62,7 +66,15 @@ export function pushSourceKeyFromEntity(entity) {
   return null;
 }
 
+export function pushSourceKeyFromAnalyticRegion(analyticRegionId) {
+  return analyticRegionId
+    ? `solid-region:${analyticRegionId}`
+    : null;
+}
+
 export function pushSourceKeyFromFace(face) {
+  const regionKey = pushSourceKeyFromAnalyticRegion(face?.analyticRegionId);
+  if (regionKey) return regionKey;
   const entity = face?.sourceEntity;
   const entityKey = pushSourceKeyFromEntity(entity);
   if (entityKey) return face?.sketchId ? `${face.sketchId}:${entityKey}` : entityKey;
@@ -85,6 +97,31 @@ function normalizedNormal(normal) {
     Number(normal?.z),
   );
   return vector.lengthSq() > 1e-12 ? vector.normalize() : null;
+}
+
+export function snapBooleanOperationDistance(
+  solid,
+  origin,
+  normal,
+  requestedDistance,
+) {
+  const distance = Number(requestedDistance);
+  const axis = normalizedNormal(normal);
+  if (!isValidSolid3d(solid) || !axis || !Number.isFinite(distance)) return distance;
+  const start = vertexVector(origin);
+  if (![start.x, start.y, start.z].every(Number.isFinite)) return distance;
+  const tolerance = coplanarFaceTolerance(solid);
+  let nearest = distance;
+  let nearestDelta = tolerance;
+  solid.vertices.forEach((vertex) => {
+    const level = vertexVector(vertex).sub(start).dot(axis);
+    const delta = Math.abs(level - distance);
+    if (delta <= nearestDelta) {
+      nearest = level;
+      nearestDelta = delta;
+    }
+  });
+  return nearest;
 }
 
 export function createAnalyticRegionId() {
@@ -251,9 +288,29 @@ function movedFaceKeepsMaterial(sourceSolid, movingVertices, unitNormal, distanc
       .dot(unitNormal);
     if (Math.abs(originalThickness) <= SOLID_INTEGRITY_EPSILON) return true;
     const movedThickness = originalThickness + distance;
-    return originalThickness > 0
+    const keepsOrientation = originalThickness > 0
       ? movedThickness > SOLID_INTEGRITY_EPSILON
       : movedThickness < -SOLID_INTEGRITY_EPSILON;
+    if (!keepsOrientation) return false;
+    if (Math.abs(originalThickness) + SOLID_INTEGRITY_EPSILON <
+        MINIMUM_3D_THICKNESS) {
+      return true;
+    }
+    return meetsMinimum3dThickness(movedThickness);
+  });
+}
+
+function faceCoversMovingVertices(face, sourceSolid, movingVertices) {
+  const points = Array.isArray(face?.points) ? face.points : [];
+  if (!points.length || points.length !== movingVertices.size) return false;
+  const tolerance = booleanWeldTolerance(sourceSolid);
+  return [...movingVertices].every((vertexIndex) => {
+    const vertex = sourceSolid.vertices[vertexIndex];
+    return points.some((point) => Math.hypot(
+      Number(point.x) - vertex.x,
+      Number(point.y) - vertex.y,
+      Number(point.z ?? 0) - vertex.z,
+    ) <= tolerance);
   });
 }
 
@@ -455,6 +512,8 @@ export function solidFromFacePush(face, height, options = {}) {
   if (cleanHeight === null) {
     throw new RangeError('La altura de Push debe ser distinta de cero');
   }
+  if (!meetsMinimum3dThickness(cleanHeight) &&
+      options.allowSubMinimumThickness !== true) return null;
   const usesSketchPlane = Boolean(face?.workplane && Array.isArray(face?.localPoints));
   const needsDerivedPlane = !usesSketchPlane && Array.isArray(face?.holes) && face.holes.length > 0 &&
     face?.normal;
@@ -528,22 +587,11 @@ function exactProfileWorldLoops(profile) {
   });
   if (!sampled?.outerLoop?.length) return null;
   const plane = profile?.plane;
-  const origin = vertexVector(plane?.origin);
   const xAxis = vertexVector(plane?.xAxis);
   const normal = vertexVector(plane?.normal);
   if (xAxis.lengthSq() <= 1e-12 || normal.lengthSq() <= 1e-12) return null;
-  xAxis.normalize();
-  normal.normalize();
-  const storedYAxis = vertexVector(plane?.yAxis);
-  const yAxis = storedYAxis.lengthSq() > 1e-12
-    ? storedYAxis.normalize()
-    : normal.clone().cross(xAxis).normalize();
-  const worldLoop = (loop) => loop.map((point) => {
-    const world = origin.clone()
-      .addScaledVector(xAxis, Number(point.x))
-      .addScaledVector(yAxis, -Number(point.y));
-    return { x: world.x, y: world.y, z: world.z };
-  });
+  const worldLoop = (loop) => loop.map((point) =>
+    pointOnExactProfilePlane(point, plane));
   return {
     outer: worldLoop(sampled.outerLoop),
     holes: sampled.innerLoops.map(worldLoop),
@@ -736,16 +784,29 @@ function replayExactProfileFeature(sourceSolid, face, moveDistance) {
 }
 
 export function movedSolidFacePush(face, distance) {
-  const cleanDistance = pushHeightValue(distance);
+  const requestedDistance = pushHeightValue(distance);
   const sourceSolid = face?.sourceSolid;
   const faceIndex = face?.sourceSolidFaceIndex;
   const unitNormal = normalizedNormal(
     face?.exactProfile ? face?.analyticAxis ?? face?.normal : face?.normal,
   );
-  if (cleanDistance === null) {
+  if (requestedDistance === null) {
     throw new RangeError('La distancia de Push debe ser distinta de cero');
   }
   if (!sourceSolid || !Number.isInteger(faceIndex) || !unitNormal) {
+    return null;
+  }
+  const origin = vertexVector(
+    face?.points?.[0] ??
+    sourceSolid.vertices?.[sourceSolid.faces?.[faceIndex]?.[0]],
+  );
+  const cleanDistance = snapBooleanOperationDistance(
+    sourceSolid,
+    origin,
+    unitNormal,
+    requestedDistance,
+  );
+  if (Math.abs(cleanDistance) <= minimumBooleanOperationDistance(sourceSolid)) {
     return null;
   }
   const analyticFace = {
@@ -762,11 +823,20 @@ export function movedSolidFacePush(face, distance) {
   const faceIndices = Array.isArray(face?.sourceSolidFaceIndices) && face.sourceSolidFaceIndices.length
     ? face.sourceSolidFaceIndices
     : [faceIndex];
+  const sourceFaces = faceIndices.map((index) => sourceSolid.faces?.[index]);
+  if (sourceFaces.some((sourceFace) =>
+    !Array.isArray(sourceFace) || sourceFace.length < 3)) return null;
+  const movingVertices = new Set(sourceFaces.flat());
+  if (faceCoversMovingVertices(face, sourceSolid, movingVertices) &&
+      !movedFaceKeepsMaterial(
+        sourceSolid,
+        movingVertices,
+        unitNormal,
+        cleanDistance,
+      )) {
+    return null;
+  }
   if (isManifoldBooleanReady()) {
-    const origin = vertexVector(
-      analyticFace.points?.[0] ??
-      sourceSolid.vertices?.[sourceSolid.faces?.[faceIndex]?.[0]],
-    );
     const operationType = cleanDistance < 0 ? 'subtract' : 'union';
     const kernelDistance = operationType === 'subtract'
       ? subtractionCutterDistance(sourceSolid, cleanDistance, origin, unitNormal)
@@ -780,7 +850,7 @@ export function movedSolidFacePush(face, distance) {
     const operation = {
       type: operationType,
       distance: cleanDistance,
-      requestedDistance: cleanDistance,
+      requestedDistance,
       ...(kernelDistance !== cleanDistance ? { kernelDistance } : {}),
       through,
       sourceSolidFaceIndex: faceIndex,
@@ -803,7 +873,7 @@ export function movedSolidFacePush(face, distance) {
       lastPushFaceIndex: faceIndex,
       lastPushFaceIndices: faceIndices,
       lastPushDistance: cleanDistance,
-      lastPushRequestedDistance: cleanDistance,
+      lastPushRequestedDistance: requestedDistance,
       lastPushNormal: operation.normal,
     };
     if (operationType === 'subtract') {
@@ -819,6 +889,7 @@ export function movedSolidFacePush(face, distance) {
       toolSolid = solidFromFacePush(
         faceWithBooleanUnionOverlap(analyticFace, unitNormal, unionOverlap),
         kernelDistance + unionOverlap,
+        { allowSubMinimumThickness: true },
       );
     }
     catch {
@@ -830,9 +901,6 @@ export function movedSolidFacePush(face, distance) {
       metadata,
     });
   }
-  const sourceFaces = faceIndices.map((index) => sourceSolid.faces?.[index]);
-  if (sourceFaces.some((sourceFace) => !Array.isArray(sourceFace) || sourceFace.length < 3)) return null;
-  const movingVertices = new Set(sourceFaces.flat());
   const effectiveDistance = constrainedMovedFaceDistance(
     sourceSolid,
     movingVertices,
@@ -887,14 +955,14 @@ export function movedSolidFacePush(face, distance) {
           sourceSolidFaceIndex: faceIndex,
           sourceSolidFaceIndices: faceIndices,
           distance: effectiveDistance,
-          requestedDistance: cleanDistance,
+          requestedDistance,
           normal: face.normal,
         },
       }),
       lastPushFaceIndex: faceIndex,
       lastPushFaceIndices: faceIndices,
       lastPushDistance: effectiveDistance,
-      lastPushRequestedDistance: cleanDistance,
+      lastPushRequestedDistance: requestedDistance,
       lastPushNormal: { x: face.normal.x, y: face.normal.y, z: face.normal.z },
     },
   });
@@ -903,9 +971,7 @@ export function movedSolidFacePush(face, distance) {
 
 export function createPushSolidMeshFromSolid(solid, options = {}) {
   const analyticSolid = solidWithDerivedSurfaceTopology(solid);
-  const displaySolid = solidWithDerivedSurfaceTopology(
-    solidWithSimplifiedBooleanMesh(solid),
-  );
+  const displaySolid = analyticSolid;
   const geometry = solid3dToBufferGeometry(displaySolid);
   const material = new THREE.MeshStandardMaterial({
     color: options.faceColor ?? options.color ?? PUSH_SOLID_STYLE.faceColor,
@@ -946,7 +1012,8 @@ export function createPushSolidMeshFromSolid(solid, options = {}) {
 }
 
 export function createPushSolidMesh(face, height, options = {}) {
-  return createPushSolidMeshFromSolid(solidFromFacePush(face, height, options), options);
+  const solid = solidFromFacePush(face, height, options);
+  return solid ? createPushSolidMeshFromSolid(solid, options) : null;
 }
 
 export function createPushEdges(mesh, options = {}) {
@@ -1105,13 +1172,16 @@ export function setPushSolidGroupHiddenEdges(group, visible) {
 }
 
 export function createPushSolidGroup(face, height, options = {}) {
-  return createPushSolidGroupFromSolid(solidFromFacePush(face, height, options), {
+  const solid = solidFromFacePush(face, height, options);
+  if (!solid) return null;
+  return createPushSolidGroupFromSolid(solid, {
     ...options,
     name: options.name ?? `webcad-push-group-${face?.id ?? 'face'}`,
   });
 }
 
 export function createPushSolidGroupFromSolid(solid, options = {}) {
+  if (!isValidSolid3d(solid)) return null;
   const group = new THREE.Group();
   group.name = options.name ?? `webcad-push-group-${solid.metadata?.faceId ?? 'solid'}`;
   const mesh = createPushSolidMeshFromSolid(solid, options);

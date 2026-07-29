@@ -13,7 +13,20 @@ import {
   exactProfileFromOrderedEntities,
   sampleExactProfile,
 } from '../exact-profile.js';
-import { sketchPlaneFromFace } from '../sketch-plane.js';
+import {
+  exactProfileToSketchPlaneV1,
+  pointFromExactProfilePlane,
+  pointFromSketchPlane,
+  pointOnExactProfilePlane,
+  pointOnSketchPlane,
+  sketchPlaneFromFace,
+} from '../sketch-plane.js';
+import {
+  normalizeSolidPlacement,
+  rotatePointByQuaternion,
+  solidLocalToWorld,
+  solidWorldToLocal,
+} from '../solid-placement.js';
 import { booleanWeldTolerance } from '../tolerances.js';
 
 const TWO_PI = Math.PI * 2;
@@ -40,6 +53,82 @@ const INSIDE_TEST_DIRECTIONS = [
 export const SOLID_FACE_SUPPORT_RENDER_ORDER = 24;
 export const SOLID_FACE_HOVER_RENDER_ORDER = 25;
 export const SOLID_FACE_SELECTION_RENDER_ORDER = 26;
+
+export function solidFaceToWorld(face, placement) {
+  if (!face) return null;
+  const cleanPlacement = normalizeSolidPlacement(placement);
+  const transformPoint = (point) => solidLocalToWorld(point, cleanPlacement);
+  const { exactProfile: _exactProfile, ...worldFace } = face;
+  return {
+    ...worldFace,
+    localFace: face,
+    placement: cleanPlacement,
+    points: (face.points ?? []).map(transformPoint),
+    holes: (face.holes ?? []).map((loop) => loop.map(transformPoint)),
+    normal: rotatePointByQuaternion(face.normal, cleanPlacement.quaternion),
+    ...(face.supportLoops ? {
+      supportLoops: {
+        outer: (face.supportLoops.outer ?? []).map(transformPoint),
+        holes: (face.supportLoops.holes ?? []).map((loop) => loop.map(transformPoint)),
+      },
+    } : {}),
+  };
+}
+
+function inversePlacementQuaternion(placement) {
+  return {
+    x: -placement.quaternion.x,
+    y: -placement.quaternion.y,
+    z: -placement.quaternion.z,
+    w: placement.quaternion.w,
+  };
+}
+
+function frameToSolidLocal(frame, placement) {
+  if (!frame || typeof frame !== 'object') return frame ?? null;
+  const inverse = inversePlacementQuaternion(placement);
+  const transformDirection = (direction) =>
+    rotatePointByQuaternion(direction, inverse);
+  const transformed = JSON.parse(JSON.stringify(frame));
+  if (frame.origin) transformed.origin = solidWorldToLocal(frame.origin, placement);
+  if (frame.normal) transformed.normal = transformDirection(frame.normal);
+  if (frame.xAxis) transformed.xAxis = transformDirection(frame.xAxis);
+  if (frame.yAxis) transformed.yAxis = transformDirection(frame.yAxis);
+  return transformed;
+}
+
+export function solidFaceToLocal(face, placement) {
+  if (!face) return null;
+  const cleanPlacement = normalizeSolidPlacement(placement);
+  const transformPoint = (point) => solidWorldToLocal(point, cleanPlacement);
+  const transformDirection = (direction) =>
+    rotatePointByQuaternion(direction, inversePlacementQuaternion(cleanPlacement));
+  const {
+    localFace: _localFace,
+    placement: _placement,
+    ...localFace
+  } = face;
+  const exactProfile = face.exactProfile
+    ? JSON.parse(JSON.stringify(face.exactProfile))
+    : null;
+  if (exactProfile?.plane) {
+    exactProfile.plane = frameToSolidLocal(exactProfile.plane, cleanPlacement);
+  }
+  return {
+    ...localFace,
+    points: (face.points ?? []).map(transformPoint),
+    holes: (face.holes ?? []).map((loop) => loop.map(transformPoint)),
+    normal: transformDirection(face.normal),
+    workplane: frameToSolidLocal(face.workplane, cleanPlacement),
+    ...(face.supportLoops ? {
+      supportLoops: {
+        outer: (face.supportLoops.outer ?? []).map(transformPoint),
+        holes: (face.supportLoops.holes ?? []).map((loop) => loop.map(transformPoint)),
+      },
+    } : {}),
+    ...(exactProfile ? { exactProfile } : {}),
+  };
+}
 
 function vectorFromPoint(point) {
   return new THREE.Vector3(Number(point?.x), Number(point?.y), Number(point?.z) || 0);
@@ -292,6 +381,14 @@ function semanticPlanarBoundarySurvives(solid, semanticEntry) {
 }
 
 function localPointOnExactProfile(point, plane) {
+  if (plane?.coordinateSystem === 'sketch-plane-v1') {
+    const local = pointFromSketchPlane(point, plane);
+    return {
+      x: local.x,
+      y: local.y,
+      planeDistance: Math.abs(local.z),
+    };
+  }
   const relative = vectorFromPoint(point).sub(vectorFromPoint(plane?.origin));
   const xAxis = vectorFromPoint(plane?.xAxis).normalize();
   const yAxis = vectorFromPoint(plane?.yAxis).normalize();
@@ -407,23 +504,12 @@ function nearestVertexIndex(point, solid, tolerance) {
 }
 
 function localExactPoint(point, plane) {
-  const relative = vectorFromPoint(point).sub(vectorFromPoint(plane.origin));
-  const xAxis = vectorFromPoint(plane.xAxis).normalize();
-  const yAxis = vectorFromPoint(plane.yAxis).normalize();
-  return {
-    x: relative.dot(xAxis),
-    y: -relative.dot(yAxis),
-    z: 0,
-  };
+  const local = pointFromExactProfilePlane(point, plane);
+  return { x: local.x, y: local.y, z: 0 };
 }
 
 function worldExactPoint(point, plane) {
-  const origin = vectorFromPoint(plane?.origin);
-  const xAxis = vectorFromPoint(plane?.xAxis).normalize();
-  const yAxis = vectorFromPoint(plane?.yAxis).normalize();
-  return origin
-    .addScaledVector(xAxis, Number(point?.x))
-    .addScaledVector(yAxis, -Number(point?.y));
+  return vectorFromPoint(pointOnExactProfilePlane(point, plane));
 }
 
 function localExactDirection(direction, plane) {
@@ -434,8 +520,69 @@ function localExactDirection(direction, plane) {
   };
 }
 
+export function circularCenterFromPlanarBoundary(
+  start,
+  end,
+  sample,
+  plane,
+  radius,
+) {
+  const first = pointFromSketchPlane(start, plane);
+  const second = pointFromSketchPlane(end, plane);
+  const interior = pointFromSketchPlane(sample, plane);
+  if (!(radius > 0)) return null;
+  const determinant = 2 * (
+    first.x * (second.y - interior.y) +
+    second.x * (interior.y - first.y) +
+    interior.x * (first.y - second.y)
+  );
+  if (Math.abs(determinant) <= radius * radius * 1e-10) return null;
+  const firstSquared = first.x * first.x + first.y * first.y;
+  const secondSquared = second.x * second.x + second.y * second.y;
+  const interiorSquared = interior.x * interior.x + interior.y * interior.y;
+  const center = {
+    x: (
+      firstSquared * (second.y - interior.y) +
+      secondSquared * (interior.y - first.y) +
+      interiorSquared * (first.y - second.y)
+    ) / determinant,
+    y: (
+      firstSquared * (interior.x - second.x) +
+      secondSquared * (first.x - interior.x) +
+      interiorSquared * (second.x - first.x)
+    ) / determinant,
+    z: 0,
+  };
+  if (Math.abs(Math.hypot(
+    first.x - center.x,
+    first.y - center.y,
+  ) - radius) > Math.max(1e-5, radius * 5e-4)) {
+    return null;
+  }
+  return pointOnSketchPlane(center, plane);
+}
+
 function analyticCurveEntity(curve, start, end, sample, plane) {
-  const center = localExactPoint(curve.center, plane);
+  const inheritedCenter = localExactPoint(curve.center, plane);
+  const recoveredWorldCenter = curve.type === 'arc-circle'
+    ? circularCenterFromPlanarBoundary(
+      start,
+      end,
+      sample,
+      plane,
+      curve.radiusX,
+    )
+    : null;
+  const recoveredCenter = recoveredWorldCenter
+    ? localExactPoint(recoveredWorldCenter, plane)
+    : null;
+  const center = recoveredCenter &&
+      Math.hypot(
+        recoveredCenter.x - inheritedCenter.x,
+        recoveredCenter.y - inheritedCenter.y,
+      ) > Math.max(1e-4, curve.radiusX * 1e-3)
+    ? recoveredCenter
+    : inheritedCenter;
   const uAxis = localExactDirection(curve.uAxis, plane);
   const rotation = Math.atan2(uAxis.y, uAxis.x);
   const cosRotation = Math.cos(rotation);
@@ -580,16 +727,121 @@ function straightEntitiesForRun(points, startEdge, runLength, plane, tolerance) 
   return entities;
 }
 
-function exactProfileForPlanarBoundary(solid, points, holes, normal, id) {
-  if (holes.length || points.length < 3) return null;
-  const plane = sketchPlaneFromFace({ points, normal });
-  if (!plane) return null;
-  const tolerance = booleanWeldTolerance(solid);
+function semanticBoundaryCandidates(solid, provenance) {
+  const regionIds = new Set([
+    provenance?.parentRegionId,
+    ...(provenance?.subdivisionRegionIds ?? []),
+  ].filter(Boolean));
+  if (!regionIds.size) return { curves: [], lines: [] };
+  const curves = [];
+  const lines = [];
+  (solid?.metadata?.profileFeatures ?? []).forEach((feature) => {
+    if (!regionIds.has(feature?.analyticRegionId) ||
+        !feature?.exactProfile?.plane) {
+      return;
+    }
+    const profile = feature.exactProfile;
+    const atParentTerminalCap =
+      feature.analyticRegionId === provenance.parentRegionId &&
+      provenance.capIndex === 1;
+    const plane = atParentTerminalCap
+      ? {
+        ...profile.plane,
+        origin: {
+          x: profile.plane.origin.x +
+            profile.plane.normal.x * feature.distance,
+          y: profile.plane.origin.y +
+            profile.plane.normal.y * feature.distance,
+          z: profile.plane.origin.z +
+            profile.plane.normal.z * feature.distance,
+        },
+      }
+      : profile.plane;
+    [
+      profile.outerLoop,
+      ...(profile.innerLoops ?? []),
+    ].forEach((loop) => (loop?.segments ?? []).forEach((segment) => {
+      const source = segment?.source;
+      if (!source?.role ||
+          !regionIds.has(source.regionId) ||
+          (source.role === 'profile-boundary' &&
+            source.regionId !== provenance.parentRegionId) ||
+          (source.role === 'divider' &&
+            !provenance.subdivisionRegionIds?.includes(source.regionId))) {
+        return;
+      }
+      if (segment.type === 'line') {
+        lines.push({
+          start: worldExactPoint(segment.start, plane),
+          end: worldExactPoint(segment.end, plane),
+          analyticSource: JSON.parse(JSON.stringify(source)),
+          ownerRegionId: source.regionId ?? feature.analyticRegionId ?? null,
+        });
+        return;
+      }
+      const circular = ['circle', 'arc-circle'].includes(segment.type);
+      const elliptic = [
+        'ellipse',
+        'arc-ellipse',
+        'ellipse-arc',
+      ].includes(segment.type);
+      if (!circular && !elliptic) return;
+      const center = worldExactPoint(segment.center, plane);
+      const rotation = Number(segment.rotation) || 0;
+      const uPoint = worldExactPoint({
+        x: segment.center.x + Math.cos(rotation),
+        y: segment.center.y + Math.sin(rotation),
+        z: 0,
+      }, plane);
+      const vPoint = worldExactPoint({
+        x: segment.center.x - Math.sin(rotation),
+        y: segment.center.y + Math.cos(rotation),
+        z: 0,
+      }, plane);
+      const closed = segment.type === 'circle' || segment.type === 'ellipse';
+      const startAngle = closed ? 0 : Number(segment.startAngle);
+      const endAngle = closed ? 0 : Number(segment.endAngle);
+      const clockwise = segment.clockwise !== false;
+      curves.push({
+        type: circular ? 'arc-circle' : 'arc-ellipse',
+        center: { x: center.x, y: center.y, z: center.z },
+        uAxis: uPoint.sub(center).normalize(),
+        vAxis: vPoint.sub(center).normalize(),
+        radiusX: Number(circular ? segment.radius : segment.radiusX),
+        radiusY: Number(circular ? segment.radius : segment.radiusY),
+        startAngle,
+        endAngle,
+        clockwise,
+        closed,
+        sweep: closed
+          ? TWO_PI
+          : directedSweep(startAngle, endAngle, clockwise),
+        analyticSource: JSON.parse(JSON.stringify(source)),
+        ownerRegionId: source.regionId ?? feature.analyticRegionId ?? null,
+        sourceEdgeIndices: [],
+      });
+    }));
+  });
+  return { curves, lines };
+}
+
+function exactLoopForPlanarBoundary(
+  solid,
+  points,
+  plane,
+  tolerance,
+  id,
+  semanticCandidates = { curves: [], lines: [] },
+) {
+  if (points.length < 3) return null;
   const pointIndices = points.map((point) => nearestVertexIndex(point, solid, tolerance));
   if (pointIndices.some((index) => index < 0)) return null;
   const curves = expandedSelectionCurves(
     solid,
-    analyticEdges(solid).curves,
+    [
+      ...semanticCandidates.curves,
+      ...analyticEdges(solid).curves,
+    ],
     tolerance,
   );
   const curveEdgeKeys = curves.map((curve) => new Set(
@@ -646,7 +898,10 @@ function exactProfileForPlanarBoundary(solid, points, holes, normal, id) {
     }
     offset += runLength;
   }
-  const analyticLines = analyticEdges(solid).lines;
+  const analyticLines = [
+    ...semanticCandidates.lines,
+    ...analyticEdges(solid).lines,
+  ];
   entities.forEach((entity) => {
     if (entity.type !== 'LINE') return;
     const start = worldExactPoint(entity.start, plane);
@@ -685,6 +940,51 @@ function exactProfileForPlanarBoundary(solid, points, holes, normal, id) {
     cadProfileVertexIndices: points.flatMap((_, index) =>
       smoothIndices.has(index) ? [] : [index]),
     smoothProfileVertexIndices,
+  };
+}
+
+function exactProfileForPlanarBoundary(
+  solid,
+  points,
+  holes,
+  normal,
+  id,
+  provenance = null,
+) {
+  if (points.length < 3 || holes.some((loop) => loop.length < 3)) return null;
+  const plane = sketchPlaneFromFace({ points, normal });
+  if (!plane) return null;
+  const tolerance = booleanWeldTolerance(solid);
+  const semanticCandidates = semanticBoundaryCandidates(solid, provenance);
+  const outer = exactLoopForPlanarBoundary(
+    solid,
+    points,
+    plane,
+    tolerance,
+    id,
+    semanticCandidates,
+  );
+  if (!outer) return null;
+  const inner = holes.map((loop, index) =>
+    exactLoopForPlanarBoundary(
+      solid,
+      loop,
+      plane,
+      tolerance,
+      `${id}-hole-${index}`,
+      semanticCandidates,
+    ));
+  if (inner.some((entry) => !entry)) return null;
+  return {
+    ...outer,
+    exactProfile: {
+      ...outer.exactProfile,
+      innerLoops: inner.map((entry) => entry.exactProfile.outerLoop),
+    },
+    holeCadProfileVertexIndices: inner.map((entry) =>
+      entry.cadProfileVertexIndices),
+    holeSmoothProfileVertexIndices: inner.map((entry) =>
+      entry.smoothProfileVertexIndices),
   };
 }
 
@@ -938,7 +1238,21 @@ function semanticPlanarFaces(solid, faceIndex) {
 
 function semanticPlanarFace(solid, faceIndex) {
   const candidates = semanticPlanarFaces(solid, faceIndex);
-  return candidates.length === 1 ? candidates[0] : null;
+  if (candidates.length === 1) return candidates[0];
+  const residuals = candidates.filter((candidate) =>
+    candidate.group.kind === 'analytic-residual-cap');
+  if (residuals.length === 1) return residuals[0];
+  const exactCandidates = candidates.filter((candidate) =>
+    candidate.group.exactProfile);
+  const latestProfileIndex = Math.max(
+    ...exactCandidates.map((candidate) => Number(candidate.group.profileIndex)),
+  );
+  const latest = exactCandidates.filter((candidate) =>
+    Number(candidate.group.profileIndex) === latestProfileIndex);
+  if (latest.length === 1) return latest[0];
+  const residualParents = candidates.filter((candidate) =>
+    candidate.group.kind === 'analytic-residual-parent');
+  return residualParents.length === 1 ? residualParents[0] : null;
 }
 
 function planarEntryOnSemanticPlane(solid, faceIndex, entry) {
@@ -973,12 +1287,36 @@ function preferredPlanarFace(solid, faceIndex) {
   const semantic = semanticPlanarFace(solid, faceIndex);
   const derived = planarFaceGroup(solid, faceIndex);
   if (!semantic || !derived) return semantic ?? derived;
+  if (derived.group.indices &&
+      Array.isArray(derived.group.indices) &&
+      derived.group.indices.includes(faceIndex)) {
+    const fid = solid.metadata?.surfaceFaceIds?.[faceIndex];
+    if (fid !== null && fid !== undefined) {
+      const derivedAllMatchFid = derived.group.indices.every((idx) =>
+        solid.metadata?.surfaceFaceIds?.[idx] === fid);
+      const semanticAllMatchFid = semantic.group.indices.every((idx) =>
+        solid.metadata?.surfaceFaceIds?.[idx] === fid);
+      if (derivedAllMatchFid && semanticAllMatchFid &&
+          derived.group.indices.length > semantic.group.indices.length &&
+          semantic.group.indices.every((idx) => derived.group.indices.includes(idx))) {
+        return derived;
+      }
+    }
+  }
+  if (semantic.group.kind === 'analytic-residual-parent' ||
+      semantic.group.kind === 'analytic-residual-cap') {
+    return semantic;
+  }
   if ((derived.group.smoothProfileVertexIndices?.length ?? 0) > 0 &&
       !(semantic.group.smoothProfileVertexIndices?.length ?? 0)) {
     return derived;
   }
-  return semanticPlanarBoundarySurvives(solid, semantic) ||
-    derivedBoundaryMatchesSemanticProfile(solid, semantic, derived)
+  if (derivedBoundaryMatchesSemanticProfile(solid, semantic, derived)) {
+    return semantic;
+  }
+  return derived.group.indices?.length === 1 &&
+    semantic.group.indices?.length > 1 &&
+    semanticPlanarBoundarySurvives(solid, semantic)
     ? semantic
     : derived;
 }
@@ -1012,6 +1350,170 @@ function exactProfileTopologyKey(profile) {
     .map((loop) => canonicalSegmentTopology(loop?.segments ?? []))
     .sort();
   return JSON.stringify({ outer, inner });
+}
+
+function stableSemanticHash(value) {
+  let hash = 0xcbf29ce484222325n;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= BigInt(value.charCodeAt(index));
+    hash = BigInt.asUintN(64, hash * 0x100000001b3n);
+  }
+  return hash.toString(16).padStart(16, '0');
+}
+
+function materializeResidualSemanticFace(solid, planarEntry, exactBoundary) {
+  if (!planarEntry?.group || !exactBoundary?.exactProfile) {
+    return null;
+  }
+  if (planarEntry.semantic &&
+      planarEntry.group.kind !== 'analytic-residual-parent') {
+    return null;
+  }
+  const profile = exactProfileToSketchPlaneV1(exactBoundary.exactProfile);
+  const loops = [
+    profile.outerLoop,
+    ...(profile.innerLoops ?? []),
+  ];
+  const segments = loops.flatMap((loop) => loop?.segments ?? []);
+  const inheritedParentRegionIds = new Set(segments.flatMap((segment) => {
+    const source = segment?.source;
+    return source?.role === 'profile-boundary' &&
+      source.regionId &&
+      source.sourceBoundaryId
+      ? [source.regionId]
+      : [];
+  }));
+  const parentRegionId = planarEntry.group.parentRegionId ??
+    (inheritedParentRegionIds.size === 1
+      ? [...inheritedParentRegionIds][0]
+      : null);
+  if (!parentRegionId ||
+      (inheritedParentRegionIds.size &&
+        (inheritedParentRegionIds.size !== 1 ||
+          !inheritedParentRegionIds.has(parentRegionId)))) {
+    return null;
+  }
+  const creatorMatches = (solid?.metadata?.profileFeatures ?? [])
+    .flatMap((feature, featureIndex) =>
+      feature?.analyticRegionId === parentRegionId
+        ? [{ feature, featureIndex }]
+        : []);
+  if (creatorMatches.length !== 1) return null;
+  const inferredSubdivisionRegionIds = [...new Set(segments.flatMap((segment) =>
+    segment?.source?.role === 'divider' && segment.source.regionId
+      ? [segment.source.regionId]
+      : []))];
+  const subdivisionRegionIds = planarEntry.group.subdivisionRegionIds?.length
+    ? planarEntry.group.subdivisionRegionIds
+    : inferredSubdivisionRegionIds;
+  const subdivisionDividerSegments = (solid?.metadata?.profileFeatures ?? [])
+    .filter((feature) =>
+      subdivisionRegionIds.includes(feature?.analyticRegionId))
+    .flatMap((feature) => [
+      feature.exactProfile?.outerLoop,
+      ...(feature.exactProfile?.innerLoops ?? []),
+    ].flatMap((loop) => loop?.segments ?? []))
+    .filter((segment) =>
+      segment?.source?.role === 'divider' && segment.source.dividerId);
+  const dividerById = new Map(subdivisionDividerSegments.map((segment) => [
+    segment.source.dividerId,
+    segment,
+  ]));
+  if (dividerById.size === 1) {
+    const inheritedDivider = [...dividerById.values()][0];
+    segments.forEach((segment) => {
+      if (segment?.source?.role !== 'divider' ||
+          segment.source.dividerId ||
+          segment.type !== 'line' ||
+          inheritedDivider.type !== 'line') {
+        return;
+      }
+      const currentDirection = vectorFromPoint(
+        pointOnSketchPlane(segment.end, profile.plane),
+      ).sub(vectorFromPoint(
+        pointOnSketchPlane(segment.start, profile.plane),
+      ))
+        .normalize();
+      const inheritedFeature = (solid.metadata.profileFeatures ?? []).find((feature) =>
+        subdivisionRegionIds.includes(feature?.analyticRegionId) &&
+        [
+          feature.exactProfile?.outerLoop,
+          ...(feature.exactProfile?.innerLoops ?? []),
+        ].some((loop) => loop?.segments?.includes(inheritedDivider)));
+      const inheritedPlane = inheritedFeature?.exactProfile?.plane;
+      const inheritedDirection = inheritedPlane
+        ? worldExactPoint(inheritedDivider.end, inheritedPlane)
+          .sub(worldExactPoint(inheritedDivider.start, inheritedPlane))
+          .normalize()
+        : null;
+      if (!inheritedDirection ||
+          Math.abs(currentDirection.dot(inheritedDirection)) < 1 - 1e-4) {
+        return;
+      }
+      segment.source = {
+        ...JSON.parse(JSON.stringify(inheritedDivider.source)),
+        orientation: (inheritedDivider.source.orientation ?? 1) *
+          (currentDirection.dot(inheritedDirection) >= 0 ? 1 : -1),
+      };
+    });
+  }
+  const inheritedBoundaryIds = new Set(segments.flatMap((segment) => {
+    const source = segment?.source;
+    return source?.role === 'profile-boundary' &&
+      source.regionId === parentRegionId &&
+      source.sourceBoundaryId
+      ? [source.sourceBoundaryId]
+      : [];
+  }));
+  const dividerIds = new Set(segments.flatMap((segment) => {
+    const source = segment?.source;
+    return source?.role === 'divider' && source.dividerId
+      ? [source.dividerId]
+      : [];
+  }));
+  const unstableDivider = segments.some((segment) =>
+    segment?.source?.role === 'divider' && !segment.source.dividerId);
+  if (!inheritedBoundaryIds.size || !dividerIds.size || unstableDivider) {
+    return null;
+  }
+  const topologyKey = exactProfileTopologyKey(profile);
+  if (!topologyKey) return null;
+  const regionId = `analytic-region-residual-${stableSemanticHash(
+    `${parentRegionId}:${topologyKey}`,
+  )}`;
+  profile.analyticRegionId = regionId;
+  const group = {
+    ...planarEntry.group,
+    id: `analytic-residual-${regionId}`,
+    kind: 'analytic-residual-cap',
+    exactProfile: profile,
+    regionId,
+    normal: { ...profile.plane.normal },
+    analyticAxis: { ...profile.plane.normal },
+    parentRegionId,
+    creatorFeatureIndex: creatorMatches[0].featureIndex,
+    creatorOperationType: creatorMatches[0].feature.type ?? null,
+    subdivisionRegionIds,
+    cadProfileVertexIndices: exactBoundary.cadProfileVertexIndices ?? [],
+    smoothProfileVertexIndices: exactBoundary.smoothProfileVertexIndices ?? [],
+    holeCadProfileVertexIndices:
+      exactBoundary.holeCadProfileVertexIndices ?? [],
+    holeSmoothProfileVertexIndices:
+      exactBoundary.holeSmoothProfileVertexIndices ?? [],
+  };
+  const topology = solidAnalyticTopologyCache.get(solid);
+  if (topology) {
+    const index = topology.semanticPlanarFaces.findIndex((candidate) =>
+      candidate.id === planarEntry.group.id);
+    if (index >= 0) {
+      topology.semanticPlanarFaces[index] = group;
+    }
+    else if (!topology.semanticPlanarFaces.some((candidate) =>
+      candidate.regionId === regionId)) {
+      topology.semanticPlanarFaces.push(group);
+    }
+  }
+  return { group, index: group.id, semantic: true };
 }
 
 function semanticIdentityFromExactBoundary(solid, faceIndex, exactBoundary) {
@@ -1091,7 +1593,11 @@ function solidFaceFromMeshFace(mesh, faceIndex, requestedPlanarGroup = null) {
   const planarTolerance = planarGroup
     ? Math.max(
       derivedPlanarTolerance([points, ...holes]),
-      planarEntry?.semantic ? PLANAR_TOLERANCE : booleanWeldTolerance(solid),
+      planarEntry?.semantic &&
+        planarGroup.kind !== 'analytic-residual-cap' &&
+        planarGroup.kind !== 'analytic-residual-parent'
+        ? PLANAR_TOLERANCE
+        : booleanWeldTolerance(solid),
     )
     : PLANAR_TOLERANCE;
   if (!normal || ![points, ...holes].every((loop) => isPlanar(loop, normal, planarTolerance))) {
@@ -1100,29 +1606,50 @@ function solidFaceFromMeshFace(mesh, faceIndex, requestedPlanarGroup = null) {
   const provisionalId = `solid-face-${mesh.uuid}-${planarEntry
     ? `planar-${planarEntry.index}`
     : capGroup ? (capGroup.upper ? 'upper-cap' : 'lower-cap') : faceIndex}`;
+  const reconstructsResidual =
+    planarEntry?.group?.kind === 'analytic-residual-parent';
+  const residualProvenance = reconstructsResidual
+    ? {
+      parentRegionId: planarEntry.group.parentRegionId ?? null,
+      subdivisionRegionIds: [
+        ...(planarEntry.group.subdivisionRegionIds ?? []),
+      ],
+      capIndex: planarEntry.group.capIndex,
+    }
+    : null;
   const exactBoundary = planarGroup?.exactProfile
     ? {
       exactProfile: JSON.parse(JSON.stringify(planarGroup.exactProfile)),
       cadProfileVertexIndices: planarGroup.cadProfileVertexIndices ?? [],
       smoothProfileVertexIndices: planarGroup.smoothProfileVertexIndices ?? [],
     }
-    : planarEntry && !planarEntry.semantic
-      ? exactProfileForPlanarBoundary(solid, points, holes, normal, provisionalId)
+    : planarEntry && (!planarEntry.semantic || reconstructsResidual)
+      ? exactProfileForPlanarBoundary(
+        solid,
+        points,
+        holes,
+        normal,
+        provisionalId,
+        residualProvenance,
+      )
       : null;
   const semanticIdentity = !planarEntry?.semantic
     ? semanticIdentityFromExactBoundary(solid, faceIndex, exactBoundary)
     : null;
-  const identityEntry = semanticIdentity ?? planarEntry;
+  const residualIdentity = semanticIdentity
+    ? null
+    : materializeResidualSemanticFace(solid, planarEntry, exactBoundary);
+  const identityEntry = semanticIdentity ?? residualIdentity ?? planarEntry;
   const identityGroup = identityEntry?.group ?? planarGroup;
-  const selectedBoundary = semanticIdentity
+  const selectedBoundary = semanticIdentity || residualIdentity
     ? {
       exactProfile: JSON.parse(JSON.stringify(identityGroup.exactProfile)),
       cadProfileVertexIndices: identityGroup.cadProfileVertexIndices ?? [],
       smoothProfileVertexIndices: identityGroup.smoothProfileVertexIndices ?? [],
     }
     : exactBoundary;
-  const id = semanticIdentity
-    ? `solid-face-${mesh.uuid}-planar-${semanticIdentity.index}`
+  const id = semanticIdentity || residualIdentity
+    ? `solid-face-${mesh.uuid}-planar-${identityEntry.index}`
     : provisionalId;
   const selectedPoints = selectedBoundary
     ? pointsWithExactCadCorners(
@@ -1131,11 +1658,36 @@ function solidFaceFromMeshFace(mesh, faceIndex, requestedPlanarGroup = null) {
       booleanWeldTolerance(solid),
     )
     : points;
+  const selectsResidualProfile =
+    identityGroup?.kind === 'analytic-residual-cap' &&
+    Boolean(identityGroup.exactProfile) &&
+    Boolean(identityGroup.regionId) &&
+    Boolean(identityGroup.parentRegionId) &&
+    !Number.isInteger(identityGroup.featureIndex);
+  const selectedSolid = solidsShareIndexedTopology(
+    mesh.userData.analyticSolid,
+    solid,
+  )
+    ? mesh.userData.analyticSolid
+    : solid;
   return {
     id,
-    sourceSolid: solidsShareIndexedTopology(mesh.userData.analyticSolid, solid)
-      ? mesh.userData.analyticSolid
-      : solid,
+    sourceSolid: selectedSolid,
+    ...(selectsResidualProfile ? {
+      supportSolid: selectedSolid,
+      supportLoops: {
+        outer: selectedPoints.map((point) => ({
+          x: point.x,
+          y: point.y,
+          z: point.z,
+        })),
+        holes: holes.map((loop) => loop.map((point) => ({
+          x: point.x,
+          y: point.y,
+          z: point.z,
+        }))),
+      },
+    } : {}),
     sourceSolidDocumentId: mesh.userData.documentSolidId ?? mesh.parent?.userData?.documentSolidId ?? null,
     sourceSolidFaceIndex: faceIndex,
     sourceSolidFaceIndices: identityGroup?.indices
@@ -1156,6 +1708,9 @@ function solidFaceFromMeshFace(mesh, faceIndex, requestedPlanarGroup = null) {
     } : {}),
     ...(identityGroup?.regionId ? {
       analyticRegionId: identityGroup.regionId,
+    } : {}),
+    ...(identityGroup?.parentRegionId ? {
+      analyticParentRegionId: identityGroup.parentRegionId,
     } : {}),
     cadProfileVertexIndices: selectedBoundary?.cadProfileVertexIndices ??
       identityGroup?.cadProfileVertexIndices ?? points.map((_, index) => index),
@@ -1184,6 +1739,29 @@ export function solidFaceFromPlanarGroup(mesh, planarGroupIndex) {
     : null;
 }
 
+export function solidPlanarFacesFromMesh(mesh) {
+  const solid = mesh?.userData?.solid;
+  if (!Array.isArray(solid?.faces)) return [];
+  const candidates = [];
+  const groups = solid.metadata?.planarFaceGroups ?? [];
+  groups.forEach((_, index) => {
+    const face = solidFaceFromPlanarGroup(mesh, index);
+    if (face) candidates.push(face);
+  });
+  const groupedIndices = new Set(groups.flatMap((group) => group?.indices ?? []));
+  solid.faces.forEach((_, faceIndex) => {
+    if (groupedIndices.has(faceIndex)) return;
+    const face = solidFaceFromMeshFace(mesh, faceIndex);
+    if (face) candidates.push(face);
+  });
+  const unique = new Map();
+  candidates.forEach((face) => {
+    const key = face.id ?? `${face.sourceSolidDocumentId}:${face.sourceSolidFaceIndex}`;
+    if (!unique.has(key)) unique.set(key, face);
+  });
+  return [...unique.values()];
+}
+
 function selectionLoopsFromExactProfile(face) {
   const sampled = sampleExactProfile(face?.exactProfile, {
     segments: FACE_SELECTION_CURVE_SEGMENTS,
@@ -1202,14 +1780,8 @@ function selectionLoopsFromExactProfile(face) {
     yAxis.lengthSq() <= NORMAL_EPSILON) {
     return null;
   }
-  xAxis.normalize();
-  yAxis.normalize();
   const worldLoop = (loop) => {
-    const points = loop.map((point) => worldExactPoint(point, {
-      origin,
-      xAxis,
-      yAxis,
-    }))
+    const points = loop.map((point) => pointOnExactProfilePlane(point, plane))
       .map((point) => ({ x: point.x, y: point.y, z: point.z }));
     if (points.length > 1 &&
         vectorFromPoint(points[0]).distanceTo(vectorFromPoint(points.at(-1))) <= PLANAR_TOLERANCE) {

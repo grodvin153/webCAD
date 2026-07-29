@@ -1,0 +1,95 @@
+{
+  "base": {
+    "status": "available",
+    "representation": "exact-extrusion-v1",
+    "extrusion": {
+      "profile": {
+        "type": "exact-profile",
+        "version": 1,
+        "id": "face-composite-0",
+        "closed": true,
+        "plane": {
+          "type": "plane",
+          "origin": { "x": 0, "y": 0, "z": 0 },
+          "xAxis": { "x": 0, "y": 1, "z": 0 },
+          "yAxis": { "x": 0, "y": 0, "z": 1 },
+          "normal": { "x": 1, "y": 0, "z": 0 },
+          "coordinateSystem": "sketch-plane-v1"
+        },
+        "source": {
+          "entityId": "face-composite-0",
+          "entityType": "COMPOSITE_PROFILE"
+        },
+        "outerLoop": {
+          "type": "exact-profile-loop",
+          "role": "outer",
+          "closed": true,
+          "segments": [
+            {
+              "type": "line",
+              "start": { "x": 0, "y": -1.4210854715202004e-14, "z": 0 },
+              "end": { "x": 0, "y": 86.05920994143875, "z": 0 }
+            },
+            {
+              "type": "line",
+              "start": { "x": 0, "y": 86.05920994143875, "z": 0 },
+              "end": { "x": 145.77257125270972, "y": 0, "z": 0 }
+            },
+            {
+              "type": "line",
+              "start": {
+                "x": 145.7725712527097,
+                "y": -7.888609052210118e-30,
+                "z": 0
+              },
+              "end": { "x": 0, "y": -1.4210854715202004e-14, "z": 0 }
+            }
+          ],
+          "bounds": {
+            "minX": 0,
+            "minY": -1.4210854715202004e-14,
+            "maxX": 145.77257125270972,
+            "maxY": 86.05920994143875
+          },
+          "orientation": "cw"
+        },
+        "innerLoops": [],
+        "segments": [
+          {
+            "type": "line",
+            "start": { "x": 0, "y": -1.4210854715202004e-14, "z": 0 },
+            "end": { "x": 0, "y": 86.05920994143875, "z": 0 }
+          },
+          {
+            "type": "line",
+            "start": { "x": 0, "y": 86.05920994143875, "z": 0 },
+            "end": { "x": 145.77257125270972, "y": 0, "z": 0 }
+          },
+          {
+            "type": "line",
+            "start": {
+              "x": 145.7725712527097,
+              "y": -7.888609052210118e-30,
+              "z": 0
+            },
+            "end": { "x": 0, "y": -1.4210854715202004e-14, "z": 0 }
+          }
+        ],
+        "bounds": {
+          "minX": 0,
+          "minY": -1.4210854715202004e-14,
+          "maxX": 145.77257125270972,
+          "maxY": 86.05920994143875
+        },
+        "orientation": { "outer": "cw", "inner": [] }
+      },
+      "direction": { "x": 1, "y": 0, "z": 0 },
+      "distance": 171.08435910613116,
+      "metadata": {
+        "sourceKey": "face:face-composite-0",
+        "sketchPlane": "YZ",
+        "visualPushDistance": 171.08435910613116
+      }
+    }
+  }
+}

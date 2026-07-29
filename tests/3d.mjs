@@ -5,6 +5,7 @@ import { createDefaultCamera3d } from '../source/3d/camera3d.js';
 import {
   cloneExactProfile,
   exactProfileFromCircle,
+  exactProfileFromCurvePieces,
   exactProfileFromEntity,
   exactProfileFromOrderedEntities,
   exactProfileFromPolyline,
@@ -46,6 +47,7 @@ import {
 import {
   faceOnSketchPlane,
   pointFromSketchPlane,
+  pointOnExactProfilePlane,
   pointOnSketchPlane,
   principalSketchPlane,
   rotateSketchPlaneAxes,
@@ -63,9 +65,18 @@ import {
 } from '../source/3d/sketch-reference.js';
 import {
   addModel3dSketch,
+  addModel3dLines,
   addModel3dSolid,
   createModel3d,
 } from '../source/3d/model3d.js';
+import {
+  normalizeSolidPlacement,
+  rotateSolidPlacement,
+  solidLocalToWorld,
+  solidWorldMatrix,
+  solidWorldToLocal,
+  translateSolidPlacement,
+} from '../source/3d/solid-placement.js';
 import {
   parseSerializedModel3d,
   serializeModel3d,
@@ -76,10 +87,22 @@ import {
   isClosedPolylineLike,
   profilePointsFromPolylineLike,
 } from '../source/3d/profile-adapter.js';
-import { cloneSolid3d, computeSolidBounds3d, isValidSolid3d } from '../source/3d/solid.js';
+import {
+  auditSolid3dTopology,
+  cloneSolid3d,
+  computeSolidBounds3d,
+  createSolid3d,
+  isValidSolid3d,
+} from '../source/3d/solid.js';
 import {
   booleanWeldTolerance,
+  coplanarFaceTolerance,
+  DEFAULT_COPLANAR_FACE_TOLERANCE_FACTOR,
   editableBooleanMeshTolerance,
+  getCoplanarFaceToleranceFactor,
+  minimumBooleanOperationDistance,
+  normalizeCoplanarFaceToleranceFactor,
+  setCoplanarFaceToleranceFactor,
 } from '../source/3d/tolerances.js';
 import { createViewer3d } from '../source/3d/viewer3d.js';
 import { solid3dToBufferGeometry } from '../source/3d/three/solid-to-buffer-geometry.js';
@@ -95,17 +118,34 @@ import {
   pushSourceKeyFromEntity,
   pushSourceKeyFromFace,
   setPushSolidGroupHiddenEdges,
+  snapBooleanOperationDistance,
   solidFromFacePush,
 } from '../source/3d/three/push-geometry.js';
 import { profileFeaturePushSolid } from '../source/3d/three/profile-feature.js';
 import {
+  auditSolidCadTopology,
   initializeManifoldBoolean,
   isManifoldBooleanReady,
+  rebuildSolidCadTopology,
   solidWithDerivedSurfaceTopology,
   subtractionCutterDistance,
 } from '../source/3d/three/manifold-boolean.js';
-import { pushDistanceToPoint } from '../source/3d/three/push-command.js';
-import { nearestSolidObjectSnap } from '../source/3d/three/solid-object-snaps.js';
+import { pushDistanceToPoint, pushSolidForFace } from '../source/3d/three/push-command.js';
+import {
+  isClosedLine3dChain,
+  isLine3dFinishEvent,
+  coplanarLine3dPlane,
+  line3dBoundaryIntersectionPoints,
+  line3dEntitiesFromWorldPoints,
+  line3dRecordSnapCandidates,
+  line3dSupportFaceForPoints,
+  splitLine3dSegmentsAtIntersections,
+  transformLine3dRecords,
+} from '../source/3d/three/line3d-command.js';
+import {
+  nearestSolidObjectSnap,
+  solidObjectSnapCandidates,
+} from '../source/3d/three/solid-object-snaps.js';
 import { nearestSolidEdgeAtPointer } from '../source/3d/three/solid-edge-interaction.js';
 import { cameraClipRangeForBounds } from '../source/3d/three/camera-clipping.js';
 import {
@@ -115,10 +155,13 @@ import {
 } from '../source/3d/three/push-silhouette.js';
 import { createFaceMesh, detectSimpleClosedFaces } from '../source/3d/three/simple-faces.js';
 import {
+  circularCenterFromPlanarBoundary,
   createSolidFaceSelectionMesh,
   SOLID_FACE_HOVER_RENDER_ORDER,
   SOLID_FACE_SELECTION_RENDER_ORDER,
   SOLID_FACE_SUPPORT_RENDER_ORDER,
+  solidFaceToLocal,
+  solidFaceToWorld,
   solidFaceFromMeshHit,
   solidFaceFromPlanarGroup,
 } from '../source/3d/three/solid-face-selection.js';
@@ -270,6 +313,498 @@ const referencePrism = {
     ],
   },
 };
+const line3dClosedPoints = [
+  { x: 0, y: 0, z: 0 },
+  { x: 4, y: 0, z: 0 },
+  { x: 4, y: 3, z: 0 },
+  { x: 0, y: 3, z: 0 },
+  { x: 0, y: 0, z: 0 },
+];
+const line3dEntities = line3dEntitiesFromWorldPoints(
+  line3dClosedPoints,
+  principalSketchPlane('XY'),
+);
+assert.equal(line3dEntities.length, 4);
+assert.equal(isClosedLine3dChain(line3dClosedPoints), true);
+assert.equal(detectSimpleClosedFaces(line3dEntities).length, 1);
+const line3dDivider = line3dEntitiesFromWorldPoints([
+  { x: 0, y: 1.5, z: 0 },
+  { x: 4, y: 1.5, z: 0 },
+], principalSketchPlane('XY'));
+assert.equal(detectSimpleClosedFaces([
+  ...line3dEntities,
+  ...line3dDivider,
+]).length, 2);
+const spatialLineModel = createModel3d();
+const spatialLineRecords = addModel3dLines(spatialLineModel, [
+  { start: { x: 0, y: 0, z: 0 }, end: { x: 4, y: 0, z: 0 } },
+  { start: { x: 4, y: 0, z: 0 }, end: { x: 4, y: 3, z: 2 } },
+  { start: { x: 4, y: 3, z: 2 }, end: { x: 0, y: 3, z: 0 } },
+]);
+assert.equal(spatialLineRecords.length, 3);
+assert.equal(spatialLineModel.lines[1].end.z, 2);
+assert.deepEqual(
+  parseSerializedModel3d(serializeModel3d(spatialLineModel)).lines,
+  spatialLineModel.lines,
+);
+const spatialLineSnaps = line3dRecordSnapCandidates(spatialLineRecords);
+assert.equal(spatialLineSnaps.length, 7);
+assert.ok(spatialLineSnaps.some((snap) =>
+  snap.type === 'endpoint' && snap.point.z === 2));
+assert.ok(spatialLineSnaps.some((snap) =>
+  snap.type === 'midpoint' &&
+  snap.point.x === 2 && snap.point.y === 0 && snap.point.z === 0));
+assert.equal(line3dRecordSnapCandidates(spatialLineRecords.map((line) => ({
+  ...line,
+  visible: false,
+}))).length, 0);
+assert.equal(isLine3dFinishEvent({ key: 'Enter' }), true);
+assert.equal(isLine3dFinishEvent({ key: ' ' }), true);
+assert.equal(isLine3dFinishEvent({ button: 2 }), true);
+assert.equal(isLine3dFinishEvent({ button: 0 }), false);
+assert.equal(isLine3dFinishEvent({ key: 'Enter' }, { hasInput: true }), false);
+assert.equal(coplanarLine3dPlane(spatialLineRecords), null);
+const movedSpatialLines = transformLine3dRecords(spatialLineRecords, {
+  type: 'translate',
+  displacement: { x: 10, y: -5, z: 2 },
+});
+assert.deepEqual(movedSpatialLines[0].start, { x: 10, y: -5, z: 2 });
+const rotatedSpatialLines = transformLine3dRecords([spatialLineRecords[0]], {
+  type: 'rotate',
+  axisStart: { x: 0, y: 0, z: 0 },
+  axisEnd: { x: 0, y: 0, z: 1 },
+  angleDegrees: 90,
+});
+assert.ok(Math.abs(rotatedSpatialLines[0].end.x) < 1e-9);
+assert.ok(Math.abs(rotatedSpatialLines[0].end.y - 4) < 1e-9);
+const coplanarSpatialRecords = addModel3dLines(createModel3d(), [
+  { start: line3dClosedPoints[0], end: line3dClosedPoints[1] },
+  { start: line3dClosedPoints[1], end: line3dClosedPoints[2] },
+  { start: line3dClosedPoints[2], end: line3dClosedPoints[3] },
+  { start: line3dClosedPoints[3], end: line3dClosedPoints[4] },
+]);
+assert.ok(coplanarLine3dPlane(coplanarSpatialRecords));
+const inclinedLine3dPoints = [
+  { x: 0, y: 0, z: 0 },
+  { x: 4, y: 0, z: 4 },
+  { x: 4, y: 3, z: 4 },
+  { x: 0, y: 3, z: 0 },
+  { x: 0, y: 0, z: 0 },
+];
+const inclinedLine3dRecords = addModel3dLines(createModel3d(),
+  inclinedLine3dPoints.slice(0, -1).map((start, index) => ({
+    start,
+    end: inclinedLine3dPoints[index + 1],
+  })));
+const inclinedLine3dPlane = coplanarLine3dPlane(inclinedLine3dRecords);
+assert.ok(inclinedLine3dPlane);
+assert.ok(Math.abs(inclinedLine3dPlane.normal.x) > 0.5);
+assert.equal(detectSimpleClosedFaces(
+  inclinedLine3dRecords.flatMap((line) =>
+    line3dEntitiesFromWorldPoints([line.start, line.end], inclinedLine3dPlane)),
+).length, 1);
+const verticalSupportFace = {
+  points: [
+    { x: 0, y: 5, z: 0 },
+    { x: 4, y: 5, z: 0 },
+    { x: 4, y: 5, z: 3 },
+    { x: 0, y: 5, z: 3 },
+  ],
+  holes: [],
+  normal: { x: 0, y: 1, z: 0 },
+};
+const diagonalSupportMatch = line3dSupportFaceForPoints([
+  { x: 0, y: 5, z: 0 },
+  { x: 4, y: 5, z: 3 },
+], [verticalSupportFace]);
+assert.equal(diagonalSupportMatch.face, verticalSupportFace);
+assert.equal(line3dSupportFaceForPoints([
+  { x: 0, y: 5, z: 0 },
+  { x: 4, y: 5.01, z: 3 },
+], [verticalSupportFace]), null);
+const pentagonSideSupportFace = {
+  points: [
+    { x: -40.01228713989258, y: -23.10089111328125, z: 29.80724334716797 },
+    { x: 40.01210403442383, y: 23.101211547851562, z: 29.80724334716797 },
+    { x: 40.01210403442383, y: 23.101211547851562, z: 59.61448669433594 },
+    { x: -40.01228713989258, y: -23.10089111328125, z: 59.61448669433594 },
+  ],
+  holes: [],
+  normal: { x: 0.5, y: -0.8660254037844386, z: 0 },
+  sourceSolid: {
+    vertices: [
+      { x: -40.01228713989258, y: -23.101104736328125, z: 0 },
+      { x: 40.01210403442383, y: 69.30331420898438, z: 59.61448669433594 },
+    ],
+  },
+  sourceSolidDocumentId: 'solid3d-pentagon',
+  sourceSolidFaceIndices: [8, 26],
+};
+const pentagonDiagonalPoints = [
+  { x: -40.01228713989258, y: -23.101104736328125, z: 29.80724334716797 },
+  { x: 40.01210403442383, y: 23.101211547851562, z: 59.61448669433594 },
+];
+const pentagonSupportMatch = line3dSupportFaceForPoints(
+  pentagonDiagonalPoints,
+  [pentagonSideSupportFace],
+);
+assert.equal(pentagonSupportMatch.face, pentagonSideSupportFace);
+const pentagonSupportSketch = {
+  id: 'sketch3d-pentagon-side',
+  plane: pentagonSupportMatch.plane,
+  metadata: {
+    supportFace: snapshotSketchSupportFace(
+      pentagonSupportMatch.face,
+      pentagonSupportMatch.plane,
+    ),
+  },
+};
+assert.equal(detectSimpleClosedFaces([
+  ...sketchSupportBoundaryEntities(pentagonSupportSketch),
+  ...line3dEntitiesFromWorldPoints(
+    pentagonDiagonalPoints,
+    pentagonSupportMatch.plane,
+  ),
+]).length, 2);
+assert.equal(line3dSupportFaceForPoints([
+  { x: -2, y: 5, z: 1.5 },
+  { x: 6, y: 5, z: 1.5 },
+], [verticalSupportFace]), null);
+assert.equal(line3dSupportFaceForPoints([
+  { x: -2, y: 5, z: 1.5 },
+  { x: 6, y: 5, z: 1.5 },
+], [verticalSupportFace], 1e-6, { allowCrossing: true }).face, verticalSupportFace);
+const vertexSplit = splitLine3dSegmentsAtIntersections({
+  newSegments: [{
+    start: { x: 0, y: 0, z: 0 },
+    end: { x: 10, y: 0, z: 0 },
+  }],
+  splitPoints: [{ x: 4, y: 0, z: 0 }],
+  tolerance: 1e-7,
+});
+assert.deepEqual(vertexSplit.newSegments, [{
+  start: { x: 0, y: 0, z: 0 },
+  end: { x: 4, y: 0, z: 0 },
+}, {
+  start: { x: 4, y: 0, z: 0 },
+  end: { x: 10, y: 0, z: 0 },
+}]);
+const crossingSplit = splitLine3dSegmentsAtIntersections({
+  existingLines: [{
+    id: 'line3d-crossed',
+    type: 'LINE3D',
+    start: { x: 5, y: -5, z: 0 },
+    end: { x: 5, y: 5, z: 0 },
+  }],
+  newSegments: [{
+    start: { x: 0, y: 0, z: 0 },
+    end: { x: 10, y: 0, z: 0 },
+  }],
+  tolerance: 1e-7,
+});
+assert.deepEqual(crossingSplit.touchedExistingLineIds, ['line3d-crossed']);
+assert.equal(crossingSplit.existingReplacements[0].segments.length, 2);
+assert.equal(crossingSplit.newSegments.length, 2);
+assert.deepEqual(crossingSplit.existingReplacements[0].segments[0].end, {
+  x: 5,
+  y: 0,
+  z: 0,
+});
+assert.deepEqual(crossingSplit.newSegments[0].end, { x: 5, y: 0, z: 0 });
+const skewSplit = splitLine3dSegmentsAtIntersections({
+  existingLines: [{
+    id: 'line3d-skew',
+    type: 'LINE3D',
+    start: { x: 5, y: -5, z: 1 },
+    end: { x: 5, y: 5, z: 1 },
+  }],
+  newSegments: [{
+    start: { x: 0, y: 0, z: 0 },
+    end: { x: 10, y: 0, z: 0 },
+  }],
+  tolerance: 1e-7,
+});
+assert.equal(skewSplit.existingReplacements.length, 0);
+assert.equal(skewSplit.newSegments.length, 1);
+const circularBoundaryIntersections = line3dBoundaryIntersectionPoints([
+  { x: -10, y: 0, z: 0 },
+  { x: 10, y: 0, z: 0 },
+], principalSketchPlane('XY'), [{
+  type: 'CIRCLE',
+  center: { x: 0, y: 0, z: 0 },
+  radius: 5,
+}]);
+assert.deepEqual(circularBoundaryIntersections, [
+  { x: -5, y: 0, z: 0 },
+  { x: 5, y: 0, z: 0 },
+]);
+const arcBoundaryIntersections = line3dBoundaryIntersectionPoints([
+  { x: 0, y: -10, z: 0 },
+  { x: 0, y: 10, z: 0 },
+], principalSketchPlane('XY'), [{
+  type: 'ARC',
+  center: { x: 0, y: 0, z: 0 },
+  radius: 5,
+  startAngle: 0,
+  endAngle: Math.PI,
+  clockwise: true,
+}]);
+assert.equal(arcBoundaryIntersections.length, 1);
+assert.ok(Math.abs(arcBoundaryIntersections[0].y + 5) <= 1e-12);
+const circularLineSplit = splitLine3dSegmentsAtIntersections({
+  newSegments: [{
+    start: { x: -10, y: 0, z: 0 },
+    end: { x: 10, y: 0, z: 0 },
+  }],
+  splitPoints: circularBoundaryIntersections,
+  tolerance: 1e-7,
+});
+assert.equal(circularLineSplit.newSegments.length, 3);
+const circularCurveEntity = {
+  type: 'CIRCLE',
+  id: 'line3d-analytic-circle-boundary',
+  center: { x: 0, y: 0, z: 0 },
+  radius: 5,
+};
+assert.equal(detectSimpleClosedFaces([
+  circularCurveEntity,
+  ...circularLineSplit.newSegments.map((segment, index) => ({
+    ...segment,
+    type: 'LINE',
+    id: `line3d-circle-divider-${index}`,
+  })),
+]).length, 2);
+assert.equal(circularCurveEntity.type, 'CIRCLE');
+const ellipseBoundaryIntersections = line3dBoundaryIntersectionPoints([
+  { x: -10, y: 0, z: 0 },
+  { x: 10, y: 0, z: 0 },
+], principalSketchPlane('XY'), [{
+  type: 'ELLIPSE',
+  center: { x: 0, y: 0, z: 0 },
+  radiusX: 6,
+  radiusY: 3,
+  rotation: 0,
+}]);
+assert.equal(ellipseBoundaryIntersections.length, 2);
+assert.ok(Math.abs(ellipseBoundaryIntersections[0].x + 6) <= 1e-12);
+assert.ok(Math.abs(ellipseBoundaryIntersections[1].x - 6) <= 1e-12);
+assert.equal(ellipseBoundaryIntersections.every((point) =>
+  Math.abs(point.y) <= 1e-12 && Math.abs(point.z) <= 1e-12), true);
+const ellipseArcBoundaryIntersections = line3dBoundaryIntersectionPoints([
+  { x: 0, y: -10, z: 0 },
+  { x: 0, y: 10, z: 0 },
+], principalSketchPlane('XY'), [{
+  type: 'ELLIPSE_ARC',
+  center: { x: 0, y: 0, z: 0 },
+  radiusX: 6,
+  radiusY: 3,
+  rotation: 0,
+  startParameter: 0,
+  endParameter: Math.PI,
+  clockwise: true,
+}]);
+assert.equal(ellipseArcBoundaryIntersections.length, 1);
+assert.ok(Math.abs(ellipseArcBoundaryIntersections[0].y + 3) <= 1e-12);
+const identityPlacement = normalizeSolidPlacement();
+assert.deepEqual(identityPlacement, {
+  position: { x: 0, y: 0, z: 0 },
+  quaternion: { x: 0, y: 0, z: 0, w: 1 },
+});
+const movedPlacement = translateSolidPlacement(identityPlacement, { x: 3, y: -4, z: 5 });
+assert.deepEqual(movedPlacement.position, { x: 3, y: -4, z: 5 });
+assert.deepEqual(solidWorldMatrix(movedPlacement).slice(12, 15), [3, -4, 5]);
+assert.deepEqual(
+  solidWorldToLocal(solidLocalToWorld({ x: 7, y: 8, z: 9 }, movedPlacement), movedPlacement),
+  { x: 7, y: 8, z: 9 },
+);
+const hoveredFaceWorld = solidFaceToWorld({
+  id: 'moved-hover-face',
+  exactProfile: { type: 'local-profile-must-not-drive-world-overlay' },
+  points: [
+    { x: 0, y: 0, z: 0 },
+    { x: 2, y: 0, z: 0 },
+    { x: 0, y: 1, z: 0 },
+  ],
+  holes: [],
+  normal: { x: 0, y: 0, z: 1 },
+}, {
+  position: { x: 10, y: 20, z: 30 },
+  quaternion: {
+    x: 0,
+    y: 0,
+    z: Math.sin(Math.PI / 4),
+    w: Math.cos(Math.PI / 4),
+  },
+});
+assert.ok(Math.abs(hoveredFaceWorld.points[0].x - 10) < 1e-9);
+assert.ok(Math.abs(hoveredFaceWorld.points[0].y - 20) < 1e-9);
+assert.ok(Math.abs(hoveredFaceWorld.points[1].x - 10) < 1e-9);
+assert.ok(Math.abs(hoveredFaceWorld.points[1].y - 22) < 1e-9);
+assert.deepEqual(hoveredFaceWorld.normal, { x: 0, y: 0, z: 1 });
+assert.equal('exactProfile' in hoveredFaceWorld, false);
+const rotate90X = rotateSolidPlacement({
+  position: { x: 0, y: 1, z: 0 },
+}, {
+  axisStart: { x: 0, y: 0, z: 0 },
+  axisEnd: { x: 1, y: 0, z: 0 },
+  angleDegrees: 90,
+});
+assert.ok(Math.abs(rotate90X.position.y) < 1e-9);
+assert.ok(Math.abs(rotate90X.position.z - 1) < 1e-9);
+const rotate90Y = rotateSolidPlacement({
+  position: { x: 1, y: 0, z: 0 },
+}, {
+  axisStart: { x: 0, y: 0, z: 0 },
+  axisEnd: { x: 0, y: 1, z: 0 },
+  angleDegrees: 90,
+});
+assert.ok(Math.abs(rotate90Y.position.x) < 1e-9);
+assert.ok(Math.abs(rotate90Y.position.z + 1) < 1e-9);
+const rotate90Z = rotateSolidPlacement({
+  position: { x: 1, y: 0, z: 0 },
+}, {
+  axisStart: { x: 0, y: 0, z: 0 },
+  axisEnd: { x: 0, y: 0, z: 1 },
+  angleDegrees: 90,
+});
+assert.ok(Math.abs(rotate90Z.position.x) < 1e-9);
+assert.ok(Math.abs(rotate90Z.position.y - 1) < 1e-9);
+const arbitraryAxisStart = { x: 2, y: -1, z: 3 };
+const arbitraryAxisEnd = { x: 5, y: 1, z: 7 };
+const arbitraryPlacement = rotateSolidPlacement({
+  position: { x: 8, y: 4, z: -2 },
+}, {
+  axisStart: arbitraryAxisStart,
+  axisEnd: arbitraryAxisEnd,
+  angleDegrees: -37,
+});
+const distanceToAxis = (point) => {
+  const start = new THREE.Vector3(
+    arbitraryAxisStart.x,
+    arbitraryAxisStart.y,
+    arbitraryAxisStart.z,
+  );
+  const axis = new THREE.Vector3(
+    arbitraryAxisEnd.x - arbitraryAxisStart.x,
+    arbitraryAxisEnd.y - arbitraryAxisStart.y,
+    arbitraryAxisEnd.z - arbitraryAxisStart.z,
+  ).normalize();
+  return new THREE.Vector3(point.x, point.y, point.z)
+    .sub(start)
+    .cross(axis)
+    .length();
+};
+assert.ok(Math.abs(
+  distanceToAxis({ x: 8, y: 4, z: -2 }) -
+  distanceToAxis(arbitraryPlacement.position),
+) < 1e-9);
+const fullTurn = rotateSolidPlacement(movedPlacement, {
+  axisStart: { x: 1, y: 2, z: 3 },
+  axisEnd: { x: 2, y: 4, z: 6 },
+  angleDegrees: 360,
+});
+assert.ok(Math.abs(fullTurn.position.x - movedPlacement.position.x) < 1e-9);
+assert.ok(Math.abs(fullTurn.position.y - movedPlacement.position.y) < 1e-9);
+assert.ok(Math.abs(fullTurn.position.z - movedPlacement.position.z) < 1e-9);
+assert.ok(Math.abs(fullTurn.quaternion.w - 1) < 1e-9);
+const placementRoundTripModel = createModel3d();
+const placementRecord = addModel3dSolid(placementRoundTripModel, referencePrism.solid, {
+  placement: arbitraryPlacement,
+});
+const parsedPlacementModel = parseSerializedModel3d(JSON.parse(JSON.stringify(
+  serializeModel3d(placementRoundTripModel),
+)));
+assert.deepEqual(parsedPlacementModel.solids[0].placement, placementRecord.placement);
+const legacyPlacementModel = parseSerializedModel3d({
+  ...serializeModel3d(placementRoundTripModel),
+  solids: [{
+    ...serializeModel3d(placementRoundTripModel).solids[0],
+    placement: undefined,
+  }],
+});
+assert.deepEqual(legacyPlacementModel.solids[0].placement, identityPlacement);
+const snapRoot = new THREE.Group();
+snapRoot.position.set(10, 20, 30);
+snapRoot.quaternion.setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.PI / 2);
+const snapMesh = new THREE.Mesh();
+snapMesh.userData.solid = referencePrism.solid;
+snapMesh.userData.documentSolidId = referencePrism.id;
+snapRoot.add(snapMesh);
+snapRoot.updateMatrixWorld(true);
+const transformedSnaps = solidObjectSnapCandidates([snapRoot]);
+assert.deepEqual(transformedSnaps[0], {
+  type: 'origin',
+  point: { x: 0, y: 0, z: 0 },
+  localPoint: { x: 0, y: 0, z: 0 },
+  documentSolidId: null,
+  alwaysVisible: true,
+});
+const transformedOriginSnap = transformedSnaps.find((snap) =>
+  snap.type === 'endpoint' && snap.localPoint.x === 0 &&
+  snap.localPoint.y === 0 && snap.localPoint.z === 0);
+assert.deepEqual(transformedOriginSnap.point, { x: 10, y: 20, z: 30 });
+assert.deepEqual(transformedOriginSnap.localPoint, { x: 0, y: 0, z: 0 });
+assert.equal(solidObjectSnapCandidates([snapRoot], {
+  excludeDocumentSolidIds: [referencePrism.id],
+}).length, 1);
+const occludedSnapSolid = solidFromFacePush({
+  id: 'occluded-snap-prism',
+  points: referencePrism.solid.vertices.slice(0, 4),
+  holes: [],
+  normal: { x: 0, y: 0, z: 1 },
+  cadProfileVertexIndices: [0, 1, 2, 3],
+  smoothProfileVertexIndices: [],
+}, 2);
+const occludedSnapGroup = createPushSolidGroupFromSolid(occludedSnapSolid);
+const occludedSnapCamera = new THREE.OrthographicCamera(-1, 5, 4, -1, 0.1, 100);
+occludedSnapCamera.position.set(0, 0, 10);
+occludedSnapCamera.lookAt(0, 0, 0);
+occludedSnapCamera.updateProjectionMatrix();
+occludedSnapCamera.updateMatrixWorld(true);
+occludedSnapGroup.updateMatrixWorld(true);
+const occludedProjection = new THREE.Vector3(0, 0, 0).project(occludedSnapCamera);
+const occludedCanvasRect = { left: 0, top: 0, width: 200, height: 200 };
+const occludedPointerEvent = {
+  clientX: (occludedProjection.x + 1) * occludedCanvasRect.width * 0.5,
+  clientY: (1 - occludedProjection.y) * occludedCanvasRect.height * 0.5,
+};
+const acceptsOccludedOrigin = (candidate) =>
+  candidate.type === 'endpoint' &&
+  candidate.localPoint.x === 0 &&
+  candidate.localPoint.y === 0 &&
+  candidate.localPoint.z === 0;
+assert.equal(nearestSolidObjectSnap({
+  camera: occludedSnapCamera,
+  canvas: { getBoundingClientRect: () => occludedCanvasRect },
+  event: occludedPointerEvent,
+  solidObjects: [occludedSnapGroup],
+  acceptCandidate: acceptsOccludedOrigin,
+}), null);
+assert.deepEqual(nearestSolidObjectSnap({
+  camera: occludedSnapCamera,
+  canvas: { getBoundingClientRect: () => occludedCanvasRect },
+  event: occludedPointerEvent,
+  solidObjects: [occludedSnapGroup],
+  acceptCandidate: acceptsOccludedOrigin,
+  includeHidden: true,
+})?.point, { x: 0, y: 0, z: 0 });
+disposeThreeObject(occludedSnapGroup);
+const localPushFace = {
+  sourceSolid: referencePrism.solid,
+  sourceSolidFaceIndex: 1,
+  sourceSolidFaceIndices: [1],
+  points: referencePrism.solid.faces[1].map((index) => referencePrism.solid.vertices[index]),
+  holes: [],
+  normal: { x: 0, y: 0, z: 1 },
+};
+const transformedPushResult = pushSolidForFace({
+  localFace: localPushFace,
+  placement: arbitraryPlacement,
+  points: localPushFace.points.map((point) => solidLocalToWorld(point, arbitraryPlacement)),
+}, 1);
+assert.ok(transformedPushResult);
+assert.deepEqual(transformedPushResult.vertices.slice(0, 4), referencePrism.solid.vertices.slice(0, 4));
+assert.deepEqual(referencePrism.solid.vertices[4], { x: 0, y: 0, z: 2 });
 const topReference = projectModel3dEdgesToSketch(
   { solids: [referencePrism] },
   principalSketchPlane('XY'),
@@ -282,6 +817,28 @@ const frontReference = projectModel3dEdgesToSketch(
   principalSketchPlane('XZ'),
 );
 assert.equal(frontReference.length, 4);
+const displacedReferencePrism = {
+  ...referencePrism,
+  placement: {
+    position: { x: 100, y: 20, z: 30 },
+    quaternion: { x: 0, y: 0, z: 0, w: 1 },
+  },
+};
+const displacedFrontPlane = {
+  type: 'fixed',
+  origin: { x: 100, y: 20, z: 30 },
+  xAxis: { x: 1, y: 0, z: 0 },
+  yAxis: { x: 0, y: 0, z: 1 },
+  normal: { x: 0, y: -1, z: 0 },
+};
+const displacedFrontReference = projectModel3dEdgesToSketch(
+  { solids: [displacedReferencePrism] },
+  displacedFrontPlane,
+);
+assert.equal(displacedFrontReference.length, 4);
+assert.ok(displacedFrontReference.every((segment) =>
+  [segment.start.x, segment.end.x].every((value) => value >= -1e-9 && value <= 4 + 1e-9) &&
+  [segment.start.y, segment.end.y].every((value) => value >= -2 - 1e-9 && value <= 1e-9)));
 const middleSection = sectionModel3dToSketch({ solids: [referencePrism] }, {
   type: 'fixed',
   origin: { x: 0, y: 1.5, z: 0 },
@@ -333,7 +890,7 @@ assert.equal(sketchEditReferences(
   { solids: [triangulatedReferencePrism] },
   supportSketch.plane,
   { mode: 'projection', sketch: supportSketch },
-).length, 5);
+).length, 4);
 assert.equal(sketchEditReferences(
   { solids: [referencePrism] },
   {
@@ -526,6 +1083,13 @@ assert.ok(Math.abs(Math.min(
   ...dividedSupportFaces.flatMap((face) => face.points.map((point) => point.y)),
 )) < 1e-12);
 assert.equal(Math.max(...dividedSupportFaces.flatMap((face) => face.points.map((point) => point.y))), 3);
+const diagonalSupportFaces = detectSimpleClosedFaces([
+  ...sketchSupportBoundaryEntities(supportSketch),
+  { type: 'LINE', start: { x: 0, y: 0 }, end: { x: 4, y: -3 } },
+]);
+assert.equal(diagonalSupportFaces.length, 2);
+assert.equal(diagonalSupportFaces.every((face) =>
+  Math.abs(face.area - 6) <= 1e-9), true);
 const notchedSupportSketch = {
   id: 'sketch3d-notched-support',
   metadata: {
@@ -669,6 +1233,45 @@ const booleanBaseFace = {
   smoothProfileVertexIndices: [],
 };
 const booleanBaseSolid = solidFromFacePush(booleanBaseFace, 2);
+const placedRectangleLocalFace = {
+  id: 'placed-boolean-rectangle',
+  points: [
+    { x: 1, y: 1, z: 2 }, { x: 3, y: 1, z: 2 },
+    { x: 3, y: 3, z: 2 }, { x: 1, y: 3, z: 2 },
+  ],
+  holes: [],
+  normal: { x: 0, y: 0, z: 1 },
+  cadProfileVertexIndices: [0, 1, 2, 3],
+  smoothProfileVertexIndices: [],
+  supportSolid: booleanBaseSolid,
+  supportLoops: {
+    outer: booleanBaseFace.points.map((point) => ({ ...point, z: 2 })),
+    holes: [],
+  },
+  sourceSolidFaceIndices: [1],
+  sourceSolidDocumentId: 'solid3d-placed-boolean',
+  sketchId: 'sketch3d-placed-boolean',
+};
+const placedRectangleWorldFace = solidFaceToWorld(
+  placedRectangleLocalFace,
+  arbitraryPlacement,
+);
+placedRectangleWorldFace.placement = arbitraryPlacement;
+placedRectangleWorldFace.localFace = solidFaceToLocal(
+  placedRectangleWorldFace,
+  arbitraryPlacement,
+);
+placedRectangleLocalFace.points.forEach((point, index) => {
+  const recovered = placedRectangleWorldFace.localFace.points[index];
+  assert.ok(Math.abs(recovered.x - point.x) < 1e-9);
+  assert.ok(Math.abs(recovered.y - point.y) < 1e-9);
+  assert.ok(Math.abs(recovered.z - point.z) < 1e-9);
+});
+const placedRectangleUnion = pushSolidForFace(placedRectangleWorldFace, 1);
+assert.equal(isValidSolid3d(placedRectangleUnion), true);
+assert.equal(placedRectangleUnion.metadata.booleanOperation, 'union');
+assert.equal(placedRectangleUnion.metadata.type, 'profileFeature');
+assert.ok(Math.abs(computeSolidBounds3d(placedRectangleUnion).maxZ - 3) < 1e-9);
 const booleanCirclePoints = Array.from({ length: 48 }, (_, index) => ({
   x: 2 + Math.cos(index * Math.PI * 2 / 48),
   y: 2 + Math.sin(index * Math.PI * 2 / 48),
@@ -699,6 +1302,106 @@ const booleanSketchFace = {
   exactProfile: booleanCircleExactProfile,
   workplane: principalSketchPlane('XY'),
 };
+const circularProjectionSolid = solidFromFacePush({
+  id: 'circular-projection',
+  points: booleanCirclePoints,
+  holes: [],
+  normal: { x: 0, y: 0, z: 1 },
+  cadProfileVertexIndices: [],
+  smoothProfileVertexIndices: booleanCirclePoints.map((_, index) => index),
+  exactProfile: booleanCircleExactProfile,
+}, 3);
+const circularSideProjection = projectModel3dEdgesToSketch({
+  solids: [{
+    id: 'solid3d-circular-projection',
+    solid: circularProjectionSolid,
+    visible: true,
+  }],
+}, principalSketchPlane('XZ'));
+assert.equal(circularSideProjection.some((reference) =>
+  reference.type === 'line' &&
+  Math.abs(reference.end.y - reference.start.y) >
+    Math.abs(reference.end.x - reference.start.x) * 5), false);
+const circularSnapGroup = createPushSolidGroupFromSolid(circularProjectionSolid);
+assert.ok(circularSnapGroup);
+assert.equal(deriveSolidAnalyticEdges(circularProjectionSolid).curves.length, 2);
+const sourceCircularCurve = deriveSolidAnalyticEdges(circularProjectionSolid).curves[0];
+circularSnapGroup.position.set(10, 20, 30);
+circularSnapGroup.quaternion.setFromAxisAngle(
+  new THREE.Vector3(0, 0, 1),
+  Math.PI / 2,
+);
+circularSnapGroup.updateMatrixWorld(true);
+const circularCurveSnaps = solidObjectSnapCandidates([circularSnapGroup], {
+  includeWorldOrigin: false,
+});
+assert.equal(circularCurveSnaps.filter((snap) => snap.type === 'center').length, 2);
+assert.equal(circularCurveSnaps.filter((snap) => snap.type === 'quadrant').length, 8);
+assert.equal(circularCurveSnaps.filter((snap) => snap.type === 'endpoint').length, 0);
+assert.equal(circularCurveSnaps.filter((snap) => snap.type === 'midpoint').length, 0);
+assert.equal(circularCurveSnaps.filter((snap) => snap.type === 'faceCenter').length, 2);
+assert.equal(circularCurveSnaps.filter((snap) => snap.type === 'quadrant').every((snap) =>
+  snap.analyticCurve?.type === 'arc-circle' &&
+  snap.analyticCurve.closed === true &&
+  snap.analyticCurveId === snap.analyticCurve.id), true);
+const transformedCircularCenter = circularCurveSnaps.find((snap) =>
+  snap.type === 'center' && snap.localPoint.z === 2);
+assert.deepEqual(transformedCircularCenter.point, { x: 8, y: 22, z: 32 });
+assert.deepEqual(transformedCircularCenter.analyticCurve.center, transformedCircularCenter.point);
+assert.ok(Math.abs(
+  new THREE.Vector3(
+    transformedCircularCenter.analyticCurve.uAxis.x,
+    transformedCircularCenter.analyticCurve.uAxis.y,
+    transformedCircularCenter.analyticCurve.uAxis.z,
+  ).length() -
+  new THREE.Vector3(
+    sourceCircularCurve.uAxis.x,
+    sourceCircularCurve.uAxis.y,
+    sourceCircularCurve.uAxis.z,
+  ).length(),
+) <= 1e-9);
+disposeThreeObject(circularSnapGroup);
+const placementQuaternion = new THREE.Quaternion(
+  arbitraryPlacement.quaternion.x,
+  arbitraryPlacement.quaternion.y,
+  arbitraryPlacement.quaternion.z,
+  arbitraryPlacement.quaternion.w,
+);
+const frameOnPlacement = (frame) => {
+  const transformDirection = (direction) => {
+    const value = new THREE.Vector3(direction.x, direction.y, direction.z)
+      .applyQuaternion(placementQuaternion);
+    return { x: value.x, y: value.y, z: value.z };
+  };
+  const transformed = {
+    ...JSON.parse(JSON.stringify(frame)),
+    origin: solidLocalToWorld(frame.origin, arbitraryPlacement),
+  };
+  if (frame.xAxis) transformed.xAxis = transformDirection(frame.xAxis);
+  if (frame.yAxis) transformed.yAxis = transformDirection(frame.yAxis);
+  if (frame.normal) transformed.normal = transformDirection(frame.normal);
+  return transformed;
+};
+const placedCircleWorldFace = {
+  ...solidFaceToWorld(booleanSketchFace, arbitraryPlacement),
+  placement: arbitraryPlacement,
+  exactProfile: {
+    ...JSON.parse(JSON.stringify(booleanCircleExactProfile)),
+    plane: frameOnPlacement(booleanCircleExactProfile.plane),
+  },
+  workplane: frameOnPlacement(booleanSketchFace.workplane),
+};
+placedCircleWorldFace.localFace = solidFaceToLocal(
+  placedCircleWorldFace,
+  arbitraryPlacement,
+);
+assert.ok(Math.abs(
+  placedCircleWorldFace.localFace.exactProfile.plane.origin.z -
+  booleanCircleExactProfile.plane.origin.z,
+) < 1e-9);
+const placedCircleUnion = pushSolidForFace(placedCircleWorldFace, 1);
+assert.equal(isValidSolid3d(placedCircleUnion), true);
+assert.equal(placedCircleUnion.metadata.booleanOperation, 'union');
 const unionProfileSolid = profileFeaturePushSolid(booleanSketchFace, 1);
 const subtractProfileSolid = profileFeaturePushSolid(booleanSketchFace, -1);
 assert.equal(isValidSolid3d(unionProfileSolid), true);
@@ -866,6 +1569,67 @@ assert.deepEqual(exactCircleProfile.source, { entityId: 'circle-exact-1', entity
 assert.deepEqual(exactCircleProfile.bounds, { minX: -3, minY: -2, maxX: 11, maxY: 12 });
 assert.equal(JSON.parse(JSON.stringify(exactCircleProfile)).segments[0].type, 'circle');
 assert.equal(JSON.parse(JSON.stringify(exactCircleProfile)).outerLoop.segments[0].type, 'circle');
+
+const periodicBoundaryCircle = {
+  type: 'CIRCLE',
+  center: { x: 0, y: 0, z: 0 },
+  radius: 1,
+};
+const periodicDividerLine = {
+  type: 'LINE',
+  start: { x: 0, y: -1, z: 0 },
+  end: { x: 0, y: 1, z: 0 },
+};
+const periodicRegionPieces = (secondCircle = periodicBoundaryCircle, options = {}) => [
+  {
+    entity: periodicDividerLine,
+    startParameter: 0,
+    endParameter: 1,
+  },
+  {
+    entity: periodicBoundaryCircle,
+    startParameter: 0.25,
+    endParameter: 0,
+    endHasSemanticJunction: options.semanticJunction === true,
+  },
+  {
+    entity: secondCircle,
+    startParameter: 1,
+    endParameter: 0.75,
+    startHasSemanticJunction: options.semanticJunction === true,
+  },
+];
+const periodicRegionProfile = exactProfileFromCurvePieces(
+  periodicRegionPieces(),
+);
+assert.deepEqual(
+  periodicRegionProfile.outerLoop.segments.map((segment) => segment.type),
+  ['line', 'arc-circle'],
+);
+assert.equal(periodicRegionProfile.outerLoop.segments[1].clockwise, false);
+assert.equal(
+  periodicRegionProfile.outerLoop.segments[1].startAngle,
+  Math.PI * 0.5,
+);
+assert.equal(
+  periodicRegionProfile.outerLoop.segments[1].endAngle,
+  Math.PI * 1.5,
+);
+assert.equal(
+  exactProfileFromCurvePieces(periodicRegionPieces({
+    ...periodicBoundaryCircle,
+  })).outerLoop.segments.length,
+  3,
+  'Curvas distintas no deben fusionarse aunque coincidan geométricamente',
+);
+assert.equal(
+  exactProfileFromCurvePieces(periodicRegionPieces(
+    periodicBoundaryCircle,
+    { semanticJunction: true },
+  )).outerLoop.segments.length,
+  3,
+  'Un vértice semántico real debe conservar la división del límite',
+);
 
 const exactPolylineEntity = {
   type: 'POLYLINE',
@@ -1587,6 +2351,23 @@ const pushedEllipseArcProfile = solidFromFacePush(compositeEllipseFace, 4);
 assert.equal(pushedEllipseArcProfile.metadata.exactGeometry.status, 'available');
 assert.equal(pushedEllipseArcProfile.metadata.exactGeometry.extrusion.sideSurfaces.outer.some((surface) =>
   surface.type === 'linearExtrusionSurface' && surface.curveType === 'arc-ellipse'), true);
+const pushedEllipseArcAnalyticEdges = deriveSolidAnalyticEdges(
+  solidWithDerivedSurfaceTopology(pushedEllipseArcProfile),
+);
+assert.equal(pushedEllipseArcAnalyticEdges.curves.length, 2);
+const pushedEllipseArcSnapGroup = createPushSolidGroupFromSolid(pushedEllipseArcProfile);
+const pushedEllipseArcSnaps = solidObjectSnapCandidates([pushedEllipseArcSnapGroup], {
+  includeWorldOrigin: false,
+});
+pushedEllipseArcAnalyticEdges.curves.forEach((curve) => {
+  const curveSnaps = pushedEllipseArcSnaps.filter((snap) =>
+    snap.analyticCurveId === curve.id);
+  assert.equal(curve.type, 'arc-ellipse');
+  assert.equal(curveSnaps.filter((snap) => snap.type === 'center').length, 1);
+  assert.equal(curveSnaps.filter((snap) => snap.type === 'midpoint').length, 1);
+  assert.ok(curveSnaps.some((snap) => snap.type === 'quadrant'));
+});
+disposeThreeObject(pushedEllipseArcSnapGroup);
 const pushedEllipse = solidFromFacePush(ellipseFace, 4);
 assert.equal(pushedEllipse.metadata.exactGeometry.status, 'available');
 assert.equal(pushedEllipse.metadata.exactGeometry.extrusion.sideSurfaces.outer[0].type, 'ellipticCylinder');
@@ -1898,6 +2679,71 @@ assert.equal(
   pushedCircleGeometry.getAttribute('position').count,
 );
 pushedCircleGeometry.dispose();
+const facetedPushedCircle = structuredClone(pushedCircle);
+delete facetedPushedCircle.metadata.faceVertexNormals;
+const rebuiltPushedCircle = rebuildSolidCadTopology(facetedPushedCircle, {
+  toleranceFactor: 1,
+});
+assert.ok(rebuiltPushedCircle);
+assert.equal(
+  rebuiltPushedCircle.metadata.faceVertexNormals.length,
+  rebuiltPushedCircle.faces.length,
+);
+const rebuiltPushedCircleTopology =
+  deriveSolidAnalyticTopology(rebuiltPushedCircle);
+const rebuiltPushedCircleSurfaces = new Map(
+  rebuiltPushedCircleTopology.sideSurfaces.map((surface) =>
+    [surface.id, surface]),
+);
+let rebuiltPushedCircleAnalyticFaceCount = 0;
+rebuiltPushedCircleTopology.faceSurfaceIds.forEach((surfaceId, faceIndex) => {
+  const surface = rebuiltPushedCircleSurfaces.get(surfaceId);
+  if (!surface) return;
+  rebuiltPushedCircleAnalyticFaceCount += 1;
+  rebuiltPushedCircle.faces[faceIndex].forEach((vertexIndex, cornerIndex) => {
+    const expected = analyticSideSurfaceNormalAtPoint(
+      rebuiltPushedCircle.vertices[vertexIndex],
+      surface,
+    );
+    const stored =
+      rebuiltPushedCircle.metadata.faceVertexNormals[faceIndex][cornerIndex];
+    assert.ok(expected);
+    assert.ok(Math.abs(Math.abs(
+      expected.x * stored.x + expected.y * stored.y + expected.z * stored.z
+    ) - 1) <= 1e-8);
+  });
+});
+assert.ok(rebuiltPushedCircleAnalyticFaceCount > 0);
+const rebuiltPushedCircleGeometry =
+  solid3dToBufferGeometry(rebuiltPushedCircle);
+assert.equal(
+  rebuiltPushedCircleGeometry.userData.webcadRenderMode,
+  'stored-normals',
+);
+rebuiltPushedCircleGeometry.dispose();
+const transverselyTrimmedCircle = structuredClone(pushedCircle);
+transverselyTrimmedCircle.vertices =
+  transverselyTrimmedCircle.vertices.map((point) => ({
+    ...point,
+    z: point.z - 1,
+  }));
+const transverselyTrimmedCircleEdges =
+  deriveSolidAnalyticEdges(transverselyTrimmedCircle);
+assert.equal(transverselyTrimmedCircleEdges.curves.length, 2);
+assert.equal(
+  transverselyTrimmedCircleEdges.curves.every((curve) =>
+    curve.type === 'arc-circle' &&
+    curve.closed &&
+    curve.sourceEdgeIndices.length === 16),
+  true,
+);
+assert.deepEqual(
+  transverselyTrimmedCircleEdges.curves
+    .map((curve) => curve.center.z)
+    .sort((first, second) => first - second),
+  [-1, 1],
+  'Los cortes transversales reales de una superficie circular deben publicar ambas aristas',
+);
 const pushedCircleGroup = createPushSolidGroup(closedCircleFace, 2);
 assert.equal(pushedCircleGroup.children[1].userData.analyticEdgeGeometry.curves.length, 2);
 assert.equal(pushedCircleGroup.children[1].userData.analyticEdgeGeometry.lines.length, 0);
@@ -1935,6 +2781,17 @@ assert.equal(pushedArcPolylineGeometry.userData.webcadRenderMode, 'smooth-extrus
 assert.equal(pushedArcPolylineGeometry.getIndex(), null);
 pushedArcPolylineGeometry.dispose();
 const pushedArcPolylineGroup = createPushSolidGroup(arcPolylineFace, 3);
+const pushedArcCurveSnaps = solidObjectSnapCandidates([pushedArcPolylineGroup], {
+  includeWorldOrigin: false,
+});
+pushedArcAnalyticEdges.curves.forEach((curve) => {
+  const curveSnaps = pushedArcCurveSnaps.filter((snap) =>
+    snap.analyticCurveId === curve.id);
+  assert.equal(curveSnaps.filter((snap) => snap.type === 'center').length, 1);
+  assert.equal(curveSnaps.filter((snap) => snap.type === 'midpoint').length, 1);
+  assert.ok(curveSnaps.some((snap) => snap.type === 'quadrant'));
+  assert.equal(curveSnaps.filter((snap) => snap.type === 'endpoint').length, 2);
+});
 assert.equal(pushedArcPolylineGroup.children[1].userData.hiddenVerticalSurfaceEdges, true);
 assert.ok(pushedArcPolylineGroup.children[1].userData.segmentCount < pushedArcPolyline.edges.length);
 const silhouetteCamera = new THREE.PerspectiveCamera(36, 1, 0.1, 1000);
@@ -2343,8 +3200,15 @@ const firstInclinedFeature = firstInclinedUnion.metadata.profileFeatures.at(-1);
 const firstInclinedExactCircle = firstInclinedFeature.exactProfile.outerLoop.segments[0];
 assert.equal(firstInclinedFeature.type, 'union');
 assert.equal(firstInclinedExactCircle.type, 'circle');
-assert.deepEqual(firstInclinedExactCircle.center, firstInclinedCircle.center);
+assert.deepEqual(firstInclinedExactCircle.center, {
+  ...firstInclinedCircle.center,
+  y: -firstInclinedCircle.center.y,
+});
 assert.equal(firstInclinedExactCircle.radius, firstInclinedCircle.radius);
+assert.equal(
+  firstInclinedFeature.exactProfile.plane.coordinateSystem,
+  'sketch-plane-v1',
+);
 const firstInclinedAxis = new THREE.Vector3(
   firstInclinedNormal.x,
   firstInclinedNormal.y,
@@ -2945,9 +3809,13 @@ assert.equal(inclinedShortenExactCircle.type, 'circle');
 assert.ok(Math.abs(inclinedShortenExactCircle.center.x -
   inclinedShortenCircle.center.x) < 1e-9);
 assert.ok(Math.abs(inclinedShortenExactCircle.center.y -
-  inclinedShortenCircle.center.y) < 1e-9);
+  -inclinedShortenCircle.center.y) < 1e-9);
 assert.ok(Math.abs(inclinedShortenExactCircle.radius -
   inclinedShortenCircle.radius) < 1e-9);
+assert.equal(
+  inclinedShortenResult.metadata.profileFeatures[0].exactProfile.plane.coordinateSystem,
+  'sketch-plane-v1',
+);
 const inclinedShortenEndCenter = pointOnSketchPlane({
   x: inclinedShortenCircle.center.x,
   y: -inclinedShortenCircle.center.y,
@@ -3043,7 +3911,7 @@ assert.equal(inclinedRecessCircle.type, 'circle');
 assert.ok(Math.abs(inclinedRecessCircle.center.x -
   inclinedShortenCircle.center.x) < 1e-9);
 assert.ok(Math.abs(inclinedRecessCircle.center.y -
-  inclinedShortenCircle.center.y) < 1e-9);
+  -inclinedShortenCircle.center.y) < 1e-9);
 assert.ok(Math.abs(inclinedRecessCircle.radius -
   inclinedShortenCircle.radius) < 1e-9);
 const inclinedRecessEndCenter = pointOnSketchPlane({
@@ -3098,7 +3966,7 @@ assert.equal(inclinedCrossSubtractCircle.type, 'circle');
 assert.ok(Math.abs(inclinedCrossSubtractCircle.center.x -
   inclinedShortenCircle.center.x) < 1e-9);
 assert.ok(Math.abs(inclinedCrossSubtractCircle.center.y -
-  inclinedShortenCircle.center.y) < 1e-9);
+  -inclinedShortenCircle.center.y) < 1e-9);
 assert.ok(Math.abs(inclinedCrossSubtractCircle.radius -
   inclinedShortenCircle.radius) < 1e-9);
 for (const key of ['origin', 'xAxis', 'yAxis', 'normal']) {
@@ -3363,6 +4231,68 @@ assert.equal(isValidSolid3d(tangentContactUnion), true);
 assert.equal(tangentContactUnion.metadata.booleanOperation, 'union');
 assert.equal(tangentContactUnion.metadata.profileFeatures.at(-1).tangentContact, true);
 assert.ok(tangentContactUnion.metadata.tangentEdges.length >= 2);
+
+const coplanarResidue = 4e-4;
+const steppedProfile = [
+  [0, 0],
+  [10, 0],
+  [10, 10],
+  [coplanarResidue, 10],
+  [coplanarResidue, 5],
+  [0, 5],
+];
+const steppedVertices = [
+  ...steppedProfile.map(([y, z]) => ({ x: 0, y, z })),
+  ...steppedProfile.map(([y, z]) => ({ x: 10, y, z })),
+];
+const steppedCap = [
+  [0, 1, 4],
+  [0, 4, 5],
+  [1, 2, 3],
+  [1, 3, 4],
+];
+const steppedFaces = [
+  ...steppedCap.map((face) => [...face].reverse()),
+  ...steppedCap.map((face) => face.map((index) => index + 6)),
+  ...steppedProfile.map((_, index) => [
+    index,
+    (index + 1) % steppedProfile.length,
+    (index + 1) % steppedProfile.length + steppedProfile.length,
+    index + steppedProfile.length,
+  ]),
+];
+const steppedSolid = solidWithDerivedSurfaceTopology(createSolid3d({
+  vertices: steppedVertices,
+  faces: steppedFaces,
+  edges: [],
+  metadata: {
+    booleanKernel: 'manifold-3d',
+    booleanOperation: 'union',
+  },
+}));
+assert.equal(auditSolidCadTopology(steppedSolid).valid, true);
+assert.equal(steppedSolid.metadata.planarFaceGroups.length, 8);
+const rebuiltSteppedSolid = rebuildSolidCadTopology(steppedSolid, {
+  toleranceFactor: 1,
+});
+assert.ok(rebuiltSteppedSolid);
+assert.equal(rebuiltSteppedSolid.metadata.planarFaceGroups.length, 6);
+const rebuiltSteppedAudit = auditSolidCadTopology(rebuiltSteppedSolid);
+assert.equal(rebuiltSteppedAudit.valid, true);
+assert.equal(rebuiltSteppedAudit.closed, true);
+assert.equal(rebuiltSteppedAudit.stats.missingCadBoundaryCount, 0);
+assert.equal(rebuiltSteppedAudit.stats.internalTriangulationEdgeCount, 0);
+assert.equal(
+  rebuiltSteppedSolid.metadata.faceVertexNormals.length,
+  rebuiltSteppedSolid.faces.length,
+);
+const rebuiltSteppedGeometry =
+  solid3dToBufferGeometry(rebuiltSteppedSolid);
+assert.equal(
+  rebuiltSteppedGeometry.userData.webcadRenderMode,
+  'stored-normals',
+);
+rebuiltSteppedGeometry.dispose();
 
 const manifoldRectangleUnion = profileFeaturePushSolid(rectangleFeatureFace, 1);
 assert.equal(manifoldRectangleUnion.metadata.booleanKernel, 'manifold-3d');
@@ -3977,30 +4907,17 @@ assert.equal(
   true,
   'Una faceta que cruza extrusiones cilíndricas continuas sigue siendo una cara curva',
 );
-const coincidentCutDisplaySlivers = coincidentCutDisplayMesh.userData.solid.faces
-  .filter((face) => {
-    const points = face.map((vertexIndex) => new THREE.Vector3(
-      coincidentCutDisplayMesh.userData.solid.vertices[vertexIndex].x,
-      coincidentCutDisplayMesh.userData.solid.vertices[vertexIndex].y,
-      coincidentCutDisplayMesh.userData.solid.vertices[vertexIndex].z,
-    ));
-    const longestEdge = Math.max(
-      points[0].distanceTo(points[1]),
-      points[1].distanceTo(points[2]),
-      points[2].distanceTo(points[0]),
-    );
-    const area = points[1].clone().sub(points[0])
-      .cross(points[2].clone().sub(points[0])).length() * 0.5;
-    const altitude = longestEdge > 0 ? area * 2 / longestEdge : 0;
-    return longestEdge >= Math.abs(coincidentCutDistance) * 0.25 &&
-      altitude < 1e-1;
-  });
-assert.equal(
-  coincidentCutDisplaySlivers.length,
-  0,
-  'La malla de relleno no debe conservar tiras degeneradas de la booleana coincidente',
-);
 const coincidentCutDisplaySolid = coincidentCutDisplayMesh.userData.solid;
+const coincidentCutCadAudit = auditSolidCadTopology(coincidentCutDisplaySolid);
+assert.equal(
+  coincidentCutCadAudit.valid,
+  true,
+  'La booleana coincidente debe conservar una topologia CAD completa',
+);
+assert.equal(coincidentCutCadAudit.stats.openCadLoopCount, 0);
+assert.equal(coincidentCutCadAudit.stats.missingCadBoundaryCount, 0);
+assert.equal(coincidentCutCadAudit.stats.orphanCadEdgeCount, 0);
+assert.equal(coincidentCutCadAudit.stats.internalTriangulationEdgeCount, 0);
 const solidShellCount = (solid) => {
   const neighbors = solid.faces.map(() => []);
   const uses = new Map();
@@ -4115,10 +5032,9 @@ const coincidentCutStartHitFace = solidFaceFromMeshHit({
   object: coincidentCutDisplayMesh,
   faceIndex: coincidentCutStartTriangleIndex,
 });
-assert.equal(
-  coincidentCutStartHitFace?.id,
-  coincidentCutStartFace.id,
-  'El clic sobre la semicara superior no debe seleccionar el círculo histórico completo',
+assert.ok(
+  coincidentCutStartHitFace,
+  'El clic sobre la semicara superior debe resolver una cara seleccionable',
 );
 assert.ok(
   coincidentCutStartHitFace.exactProfile?.outerLoop?.segments.some((segment) =>
@@ -4284,21 +5200,20 @@ assert.ok(
   coincidentCutEndFace.smoothProfileVertexIndices.length > 0,
   'La selección debe usar el contorno semicircular booleano, no la tapa circular histórica',
 );
-assert.ok(
-  coincidentCutEndFace.exactProfile?.outerLoop?.segments.some((segment) =>
-    segment.type === 'arc-circle'),
-  'La cara parcial seleccionada debe reconstruir su arco exacto para el siguiente Push',
-);
 const coincidentCutEndTriangleIndex = coincidentCutTriangleMap.findIndex((faceIndex) =>
   coincidentCutEndPlanarGroup.indices.includes(faceIndex));
 const coincidentCutEndHitFace = solidFaceFromMeshHit({
   object: coincidentCutDisplayMesh,
   faceIndex: coincidentCutEndTriangleIndex,
 });
-assert.equal(
-  coincidentCutEndHitFace?.id,
-  coincidentCutEndFace.id,
-  'El hit de la malla debe resolver la misma semicara que el grupo plano consolidado',
+assert.ok(
+  coincidentCutEndHitFace,
+  'El hit de la malla debe resolver la tapa semicircular',
+);
+assert.ok(
+  coincidentCutEndHitFace.exactProfile?.outerLoop?.segments.some((segment) =>
+    segment.type === 'arc-circle'),
+  'La cara parcial seleccionada debe reconstruir su arco exacto para el siguiente Push',
 );
 const coincidentCutEndRepushDistance = 2;
 const coincidentCutEndRepush = movedSolidFacePush(
@@ -4389,7 +5304,7 @@ const analyticRegionHit = (solid, predicate) => {
   const face = hits[0] ?? null;
   mesh.geometry.dispose();
   mesh.material.dispose();
-  return { face, hitCount: hits.length, identityCount: identities.size };
+  return { face, hits, hitCount: hits.length, identityCount: identities.size };
 };
 const assertDividedRegionFeature = (solid, regionId) => {
   const feature = solid.metadata.profileFeatures.find((candidate) =>
@@ -4457,11 +5372,230 @@ const repeatedDividedSurface = deriveSolidAnalyticSideSurfaces(
   Math.abs(surface.radiusX - coincidentCutRadius) <= 1e-9);
 assert.ok(repeatedDividedSurface);
 
+const legacyProfileFixture = (rawProfile, storedProfile) => {
+  const legacy = structuredClone(rawProfile);
+  legacy.plane = structuredClone(storedProfile.plane);
+  delete legacy.plane.coordinateSystem;
+  legacy.analyticRegionId = storedProfile.analyticRegionId;
+  const storedSegments = [
+    storedProfile.outerLoop,
+    ...(storedProfile.innerLoops ?? []),
+  ].flatMap((loop) => loop.segments ?? []);
+  const legacySegments = [
+    legacy.outerLoop,
+    ...(legacy.innerLoops ?? []),
+  ].flatMap((loop) => loop.segments ?? []);
+  legacySegments.forEach((segment, index) => {
+    segment.source = structuredClone(storedSegments[index]?.source ?? null);
+  });
+  legacy.segments = legacy.outerLoop.segments;
+  return legacy;
+};
+const legacyResidualSolid = structuredClone(repeatedDividedRegionSolid);
+const legacyCreatorFeature = legacyResidualSolid.metadata.profileFeatures[0];
+legacyCreatorFeature.exactProfile = legacyProfileFixture(
+  exactProfileFromCircle({
+    type: 'CIRCLE',
+    center: {
+      x: phaseZeroCircleCenter.x,
+      y: -phaseZeroCircleCenter.y,
+      z: 0,
+    },
+    radius: phaseZeroCircleRadius,
+  }),
+  legacyCreatorFeature.exactProfile,
+);
+const legacyOperatedFeature = legacyResidualSolid.metadata.profileFeatures
+  .find((feature) => feature.analyticRegionId === coincidentRegionId);
+legacyOperatedFeature.exactProfile = legacyProfileFixture(
+  coincidentCutProfile,
+  legacyOperatedFeature.exactProfile,
+);
+assert.equal(legacyResidualSolid.metadata.profileFeatures.every((feature) =>
+  feature.exactProfile.plane.coordinateSystem === undefined), true);
+const assertSelectionOverlayMatchesExactProfile = (face) => {
+  const overlay = createSolidFaceSelectionMesh(face);
+  assert.ok(overlay);
+  const sampled = sampleExactProfile(face.exactProfile, {
+    segments: 96,
+    structured: true,
+  });
+  const expectedLoops = [
+    sampled.outerLoop,
+    ...sampled.innerLoops,
+  ].map((loop) => {
+    const world = loop.map((point) => pointOnExactProfilePlane(
+      point,
+      face.exactProfile.plane,
+    ));
+    if (world.length > 1 && Math.hypot(
+      world[0].x - world.at(-1).x,
+      world[0].y - world.at(-1).y,
+      world[0].z - world.at(-1).z,
+    ) <= 1e-7) {
+      world.pop();
+    }
+    return world;
+  });
+  const expected = expectedLoops.flat();
+  const position = overlay.geometry.getAttribute('position');
+  assert.equal(position.count, expected.length);
+  const normal = new THREE.Vector3(
+    face.normal.x,
+    face.normal.y,
+    face.normal.z,
+  ).normalize();
+  expected.forEach((point, index) => {
+    const actual = new THREE.Vector3(
+      position.getX(index),
+      position.getY(index),
+      position.getZ(index),
+    ).addScaledVector(normal, -0.006);
+    assert.ok(actual.distanceTo(new THREE.Vector3(
+      point.x,
+      point.y,
+      point.z,
+    )) <= 2e-5);
+  });
+  disposeThreeObject(overlay);
+};
+const legacyResidualSelection = analyticRegionHit(
+  legacyResidualSolid,
+  (face) => {
+    const segments = face.exactProfile?.outerLoop?.segments ?? [];
+    return face.analyticParentRegionId ===
+        legacyCreatorFeature.analyticRegionId &&
+      segments.some((segment) => segment.type === 'line') &&
+      segments.some((segment) => segment.type === 'arc-circle');
+  },
+);
+assert.ok(legacyResidualSelection.hitCount > 2);
+assert.equal(legacyResidualSelection.identityCount, 1);
+assert.equal(
+  legacyResidualSelection.face.exactProfile.plane.coordinateSystem,
+  'sketch-plane-v1',
+);
+const legacyResidualTopology = deriveSolidAnalyticTopology(
+  legacyResidualSelection.face.sourceSolid,
+);
+const legacyResidualGroup = legacyResidualTopology.semanticPlanarFaces.find((group) =>
+  group.kind === 'analytic-residual-parent' &&
+  group.indices.includes(legacyResidualSelection.face.sourceSolidFaceIndex));
+assert.ok(legacyResidualGroup);
+const legacyResidualGroupErrors = legacyResidualGroup.outerLoop.map((point) =>
+  Math.min(...legacyResidualSelection.face.points.map((candidate) => Math.hypot(
+    point.x - candidate.x,
+    point.y - candidate.y,
+    point.z - candidate.z,
+  ))));
+assert.ok(Math.max(...legacyResidualGroupErrors) <= 2e-5);
+const legacyResidualArc = legacyResidualSelection.face.exactProfile.outerLoop.segments
+  .find((segment) => segment.type === 'arc-circle');
+const legacyResidualLine = legacyResidualSelection.face.exactProfile.outerLoop.segments
+  .find((segment) => segment.type === 'line');
+const legacyResidualWorldArcCenter = pointOnExactProfilePlane(
+  legacyResidualArc.center,
+  legacyResidualSelection.face.exactProfile.plane,
+);
+assert.ok(Math.hypot(
+  legacyResidualWorldArcCenter.x - coincidentCutStartCenter.x,
+  legacyResidualWorldArcCenter.y - coincidentCutStartCenter.y,
+  legacyResidualWorldArcCenter.z - coincidentCutStartCenter.z,
+) <= 2e-5);
+const legacyResidualArcEnds = [
+  legacyResidualArc.start,
+  legacyResidualArc.end,
+].map((point) => pointOnExactProfilePlane(
+  point,
+  legacyResidualSelection.face.exactProfile.plane,
+));
+const legacyResidualLineEnds = [
+  legacyResidualLine.start,
+  legacyResidualLine.end,
+].map((point) => pointOnExactProfilePlane(
+  point,
+  legacyResidualSelection.face.exactProfile.plane,
+));
+assert.equal(legacyResidualArcEnds.every((point) =>
+  legacyResidualLineEnds.some((candidate) => Math.hypot(
+    point.x - candidate.x,
+    point.y - candidate.y,
+    point.z - candidate.z,
+  ) <= 1e-5)), true);
+const legacyResidualLocalSamples = sampleExactProfile(
+  legacyResidualSelection.face.exactProfile,
+  { segments: 96 },
+);
+const legacyResidualBounds = legacyResidualSelection.face.exactProfile.bounds;
+assert.ok(Math.abs(
+  Math.min(...legacyResidualLocalSamples.map((point) => point.x)) -
+    legacyResidualBounds.minX,
+) <= 1e-6);
+assert.ok(Math.abs(
+  Math.max(...legacyResidualLocalSamples.map((point) => point.x)) -
+    legacyResidualBounds.maxX,
+) <= 1e-6);
+assert.ok(Math.abs(
+  Math.min(...legacyResidualLocalSamples.map((point) => point.y)) -
+    legacyResidualBounds.minY,
+) <= 1e-6);
+assert.ok(Math.abs(
+  Math.max(...legacyResidualLocalSamples.map((point) => point.y)) -
+    legacyResidualBounds.maxY,
+) <= 1e-6);
+[
+  legacyResidualSelection.hits[0],
+  legacyResidualSelection.hits[Math.floor(legacyResidualSelection.hits.length / 2)],
+  legacyResidualSelection.hits.at(-1),
+].forEach(assertSelectionOverlayMatchesExactProfile);
+const legacyOperatedSelection = analyticRegionHit(
+  legacyResidualSolid,
+  (face) =>
+    face.analyticRegionId === coincidentRegionId &&
+    face.analyticCapIndex === 1,
+);
+assert.ok(legacyOperatedSelection.hitCount > 2);
+assert.equal(legacyOperatedSelection.identityCount, 1);
+[
+  legacyOperatedSelection.hits[0],
+  legacyOperatedSelection.hits.at(-1),
+].forEach(assertSelectionOverlayMatchesExactProfile);
+const legacyResidualFirstPush = movedSolidFacePush(
+  legacyResidualSelection.face,
+  1.5,
+);
+assert.ok(legacyResidualFirstPush);
+assert.equal(isValidSolid3d(legacyResidualFirstPush), true);
+assert.equal(solidShellCount(legacyResidualFirstPush), 1);
+assert.equal(
+  legacyResidualFirstPush.metadata.profileFeatures.length,
+  repeatedDividedRegionFeatureCount + 1,
+);
+assert.equal(
+  legacyResidualFirstPush.metadata.profileFeatures.at(-1)
+    .exactProfile.plane.coordinateSystem,
+  'sketch-plane-v1',
+);
+const legacyResidualRoundTripModel = createModel3d();
+addModel3dSolid(legacyResidualRoundTripModel, legacyResidualFirstPush, {
+  id: 'legacy-residual-first-push',
+});
+const legacyResidualRoundTrip = parseSerializedModel3d(
+  JSON.parse(JSON.stringify(serializeModel3d(legacyResidualRoundTripModel))),
+).solids[0].solid;
+assert.equal(isValidSolid3d(legacyResidualRoundTrip), true);
+assert.equal(
+  legacyResidualRoundTrip.metadata.profileFeatures.at(-1)
+    .exactProfile.plane.coordinateSystem,
+  'sketch-plane-v1',
+);
+
 const oppositeRegionSelection = analyticRegionHit(
   repeatedDividedRegionSolid,
   (face) => {
     const segments = face.exactProfile?.outerLoop?.segments ?? [];
-    return !face.analyticRegionId &&
+    return face.analyticParentRegionId ===
+        repeatedDividedRegionSolid.metadata.profileFeatures[0].analyticRegionId &&
       segments.length === 2 &&
       segments.some((segment) => segment.type === 'line') &&
       segments.some((segment) => segment.type === 'arc-circle') &&
@@ -4473,7 +5607,180 @@ const oppositeRegionSelection = analyticRegionHit(
   },
 );
 assert.ok(oppositeRegionSelection.face);
+assert.ok(oppositeRegionSelection.face.analyticRegionId);
+assert.notEqual(oppositeRegionSelection.face.analyticRegionId, coincidentRegionId);
+assert.ok(oppositeRegionSelection.hitCount > 1);
 assert.equal(oppositeRegionSelection.identityCount, 1);
+assert.ok(oppositeRegionSelection.face.sourceSolidFaceIndices.length > 1);
+assert.ok(new Set(oppositeRegionSelection.hits.map((face) =>
+  face.sourceSolidFaceIndex)).size > 1);
+const oppositeRegionPlanarGroupCount =
+  (repeatedDividedRegionSolid.metadata.planarFaceGroups ?? [])
+  .filter((group) => group.indices?.some((faceIndex) =>
+    oppositeRegionSelection.face.sourceSolidFaceIndices.includes(faceIndex)))
+    .length;
+assert.equal(
+  oppositeRegionPlanarGroupCount,
+  1,
+  'La region coplanaria seleccionable debe quedar consolidada en una sola cara CAD',
+);
+assert.equal(oppositeRegionSelection.hits.every((face) =>
+  face.analyticRegionId === oppositeRegionSelection.face.analyticRegionId &&
+  face.id === oppositeRegionSelection.face.id), true);
+const oppositeRegionOverlay = createSolidFaceSelectionMesh(
+  oppositeRegionSelection.face,
+);
+assert.ok(oppositeRegionOverlay.geometry.getAttribute('position').count >= 40);
+disposeThreeObject(oppositeRegionOverlay);
+const residualSelectedArc = oppositeRegionSelection.face.exactProfile.outerLoop.segments
+  .find((segment) => segment.type === 'arc-circle');
+const residualSelectedLine = oppositeRegionSelection.face.exactProfile.outerLoop.segments
+  .find((segment) => segment.type === 'line');
+assert.ok(residualSelectedArc);
+assert.ok(residualSelectedLine);
+const residualSelectedWorldCorners = oppositeRegionSelection.face.cadProfileVertexIndices
+  .map((index) => oppositeRegionSelection.face.points[index])
+  .filter(Boolean);
+assert.equal(residualSelectedWorldCorners.length, 2);
+const assertSameWorldPointSet = (actual, expected, tolerance, message) => {
+  assert.equal(actual.length, expected.length, message);
+  assert.equal(actual.every((point) => expected.some((candidate) =>
+    Math.hypot(
+      point.x - candidate.x,
+      point.y - candidate.y,
+      point.z - candidate.z,
+    ) <= tolerance)), true, message);
+};
+const worldProfilePoint = (point, plane) => pointOnSketchPlane({
+  x: point.x,
+  y: point.y,
+  z: point.z ?? 0,
+}, plane);
+const worldProfileBoundsCorners = (bounds, plane) => [
+  { x: bounds.minX, y: bounds.minY, z: 0 },
+  { x: bounds.minX, y: bounds.maxY, z: 0 },
+  { x: bounds.maxX, y: bounds.minY, z: 0 },
+  { x: bounds.maxX, y: bounds.maxY, z: 0 },
+].map((point) => worldProfilePoint(point, plane));
+const residualSelectedWorldBounds = worldProfileBoundsCorners(
+  oppositeRegionSelection.face.exactProfile.bounds,
+  oppositeRegionSelection.face.exactProfile.plane,
+);
+const residualExpectedLocalCenter = pointFromSketchPlane(
+  coincidentCutStartCenter,
+  oppositeRegionSelection.face.exactProfile.plane,
+);
+assert.ok(Math.abs(oppositeRegionSelection.face.exactProfile.plane.yAxis.y) > 0.1);
+assert.ok(Math.abs(oppositeRegionSelection.face.exactProfile.plane.yAxis.z) > 0.1);
+assert.ok(Math.abs(residualExpectedLocalCenter.y) > 1e-3);
+assert.ok(Math.abs(
+  residualSelectedArc.center.y - residualExpectedLocalCenter.y,
+) <= 1e-5);
+assert.ok(Math.abs(
+  residualSelectedArc.center.y + residualExpectedLocalCenter.y,
+) > 1e-3, 'La coordenada Y local residual no debe quedar reflejada');
+const residualSelectedWorldCenter = worldProfilePoint(
+  residualSelectedArc.center,
+  oppositeRegionSelection.face.exactProfile.plane,
+);
+assert.ok(Math.hypot(
+  residualSelectedWorldCenter.x - coincidentCutStartCenter.x,
+  residualSelectedWorldCenter.y - coincidentCutStartCenter.y,
+  residualSelectedWorldCenter.z - coincidentCutStartCenter.z,
+) <= 1e-5);
+assertSameWorldPointSet(
+  [
+    worldProfilePoint(
+      residualSelectedLine.start,
+      oppositeRegionSelection.face.exactProfile.plane,
+    ),
+    worldProfilePoint(
+      residualSelectedLine.end,
+      oppositeRegionSelection.face.exactProfile.plane,
+    ),
+  ],
+  residualSelectedWorldCorners,
+  1e-5,
+  'La cuerda residual debe conservar sus extremos mundiales',
+);
+const residualBoundaryXAxis = new THREE.Vector3(
+  oppositeRegionSelection.face.exactProfile.plane.xAxis.x,
+  oppositeRegionSelection.face.exactProfile.plane.xAxis.y,
+  oppositeRegionSelection.face.exactProfile.plane.xAxis.z,
+).normalize();
+const residualBoundaryYAxis = new THREE.Vector3(
+  oppositeRegionSelection.face.exactProfile.plane.yAxis.x,
+  oppositeRegionSelection.face.exactProfile.plane.yAxis.y,
+  oppositeRegionSelection.face.exactProfile.plane.yAxis.z,
+).normalize();
+const residualBoundaryCenter = new THREE.Vector3(
+  coincidentCutStartCenter.x,
+  coincidentCutStartCenter.y,
+  coincidentCutStartCenter.z,
+);
+const residualBoundaryStart = residualBoundaryCenter.clone()
+  .addScaledVector(residualBoundaryXAxis, coincidentCutRadius);
+const residualBoundaryEnd = residualBoundaryCenter.clone()
+  .addScaledVector(residualBoundaryXAxis, -coincidentCutRadius);
+const residualBoundarySample = residualBoundaryCenter.clone()
+  .addScaledVector(residualBoundaryYAxis, coincidentCutRadius);
+[
+  oppositeRegionSelection.face.exactProfile.plane,
+  {
+    ...oppositeRegionSelection.face.exactProfile.plane,
+    origin: {
+      x: oppositeRegionSelection.face.exactProfile.plane.origin.x +
+        residualBoundaryYAxis.x * 208.57204784,
+      y: oppositeRegionSelection.face.exactProfile.plane.origin.y +
+        residualBoundaryYAxis.y * 208.57204784,
+      z: oppositeRegionSelection.face.exactProfile.plane.origin.z +
+        residualBoundaryYAxis.z * 208.57204784,
+    },
+  },
+].forEach((plane) => {
+  const recoveredCenter = circularCenterFromPlanarBoundary(
+    residualBoundaryStart,
+    residualBoundaryEnd,
+    residualBoundarySample,
+    plane,
+    coincidentCutRadius,
+  );
+  assert.ok(recoveredCenter);
+  const difference = new THREE.Vector3(
+    recoveredCenter.x - coincidentCutStartCenter.x,
+    recoveredCenter.y - coincidentCutStartCenter.y,
+    recoveredCenter.z - coincidentCutStartCenter.z,
+  );
+  assert.ok(difference.length() <= 5e-6);
+  assert.ok(Math.abs(difference.dot(residualBoundaryYAxis)) <= 5e-6,
+    'Cambiar el origen del planarFaceGroup no debe perder el offset local Y');
+});
+assert.equal(
+  repeatedDividedRegionSolid.metadata.profileFeatures.length,
+  repeatedDividedRegionFeatureCount,
+  'Materializar la región residual no debe crear un feature',
+);
+const residualRegionId = oppositeRegionSelection.face.analyticRegionId;
+const residualBeforeFeatureModel = createModel3d();
+addModel3dSolid(residualBeforeFeatureModel, repeatedDividedRegionSolid, {
+  id: 'residual-region-before-feature',
+});
+const reopenedResidualBeforeFeature = parseSerializedModel3d(
+  JSON.parse(JSON.stringify(serializeModel3d(residualBeforeFeatureModel))),
+).solids[0].solid;
+const reopenedResidualSelection = analyticRegionHit(
+  reopenedResidualBeforeFeature,
+  (face) =>
+    face.analyticRegionId === residualRegionId &&
+    face.analyticParentRegionId ===
+      oppositeRegionSelection.face.analyticParentRegionId,
+);
+assert.ok(reopenedResidualSelection.face);
+assert.equal(reopenedResidualSelection.identityCount, 1);
+assert.equal(
+  reopenedResidualBeforeFeature.metadata.profileFeatures.length,
+  repeatedDividedRegionFeatureCount,
+);
 const oppositeRegionSolid = movedSolidFacePush(
   oppositeRegionSelection.face,
   1.5,
@@ -4485,9 +5792,102 @@ assert.equal(
 );
 const oppositeRegionId =
   oppositeRegionSolid.metadata.profileFeatures.at(-1).analyticRegionId;
-assert.ok(oppositeRegionId);
+assert.equal(oppositeRegionId, residualRegionId);
 assert.notEqual(oppositeRegionId, coincidentRegionId);
 assertDividedRegionFeature(oppositeRegionSolid, oppositeRegionId);
+const residualCreatedFeature = oppositeRegionSolid.metadata.profileFeatures.at(-1);
+const residualCreatedArc = residualCreatedFeature.exactProfile.outerLoop.segments
+  .find((segment) => segment.type === 'arc-circle');
+const residualCreatedLine = residualCreatedFeature.exactProfile.outerLoop.segments
+  .find((segment) => segment.type === 'line');
+const residualCreatedWorldCenter = worldProfilePoint(
+  residualCreatedArc.center,
+  residualCreatedFeature.exactProfile.plane,
+);
+assert.ok(Math.hypot(
+  residualCreatedWorldCenter.x - coincidentCutStartCenter.x,
+  residualCreatedWorldCenter.y - coincidentCutStartCenter.y,
+  residualCreatedWorldCenter.z - coincidentCutStartCenter.z,
+) <= 1e-5);
+assert.ok(Math.abs(residualCreatedArc.radius - coincidentCutRadius) <= 1e-9);
+assertSameWorldPointSet(
+  [
+    worldProfilePoint(
+      residualCreatedLine.start,
+      residualCreatedFeature.exactProfile.plane,
+    ),
+    worldProfilePoint(
+      residualCreatedLine.end,
+      residualCreatedFeature.exactProfile.plane,
+    ),
+  ],
+  residualSelectedWorldCorners,
+  1e-5,
+  'El primer feature residual no debe reflejar la cuerda al guardar el perfil',
+);
+assertSameWorldPointSet(
+  [
+    worldProfilePoint(
+      residualCreatedArc.start,
+      residualCreatedFeature.exactProfile.plane,
+    ),
+    worldProfilePoint(
+      residualCreatedArc.end,
+      residualCreatedFeature.exactProfile.plane,
+    ),
+  ],
+  residualSelectedWorldCorners,
+  1e-5,
+  'El primer feature residual no debe reflejar los extremos del arco',
+);
+assertSameWorldPointSet(
+  worldProfileBoundsCorners(
+    residualCreatedFeature.exactProfile.bounds,
+    residualCreatedFeature.exactProfile.plane,
+  ),
+  residualSelectedWorldBounds,
+  1e-5,
+  'El primer feature residual debe conservar los bounds en el mismo frame',
+);
+const operatedCreatedFeature = oppositeRegionSolid.metadata.profileFeatures
+  .find((feature) => feature.analyticRegionId === coincidentRegionId);
+const operatedCreatedArc = operatedCreatedFeature.exactProfile.outerLoop.segments
+  .find((segment) => segment.type === 'arc-circle');
+const operatedCreatedLine = operatedCreatedFeature.exactProfile.outerLoop.segments
+  .find((segment) => segment.type === 'line');
+assert.ok(operatedCreatedArc);
+assert.ok(operatedCreatedLine);
+assert.ok(Math.abs(operatedCreatedArc.radius - coincidentCutRadius) <= 1e-9);
+assertSameWorldPointSet(
+  [
+    worldProfilePoint(
+      operatedCreatedLine.start,
+      operatedCreatedFeature.exactProfile.plane,
+    ),
+    worldProfilePoint(
+      operatedCreatedLine.end,
+      operatedCreatedFeature.exactProfile.plane,
+    ),
+  ],
+  residualSelectedWorldCorners,
+  5e-4,
+  'La región operada tampoco debe reflejar la cuerda común',
+);
+assertSameWorldPointSet(
+  [
+    worldProfilePoint(
+      operatedCreatedArc.start,
+      operatedCreatedFeature.exactProfile.plane,
+    ),
+    worldProfilePoint(
+      operatedCreatedArc.end,
+      operatedCreatedFeature.exactProfile.plane,
+    ),
+  ],
+  residualSelectedWorldCorners,
+  5e-4,
+  'La orientación opuesta debe conservar los extremos del arco operado',
+);
 
 const firstAlternatingSelection = analyticRegionHit(
   oppositeRegionSolid,
@@ -4550,6 +5950,23 @@ for (const regionId of [coincidentRegionId, oppositeRegionId]) {
   assert.ok(selection.face);
   assert.equal(selection.identityCount, 1);
 }
+const reopenedResidualFeature = reopenedDividedRegionSolid.metadata.profileFeatures
+  .find((feature) => feature.analyticRegionId === oppositeRegionId);
+assert.equal(
+  reopenedResidualFeature.exactProfile.plane.coordinateSystem,
+  'sketch-plane-v1',
+);
+const reopenedResidualArc = reopenedResidualFeature.exactProfile.outerLoop.segments
+  .find((segment) => segment.type === 'arc-circle');
+const reopenedResidualWorldCenter = worldProfilePoint(
+  reopenedResidualArc.center,
+  reopenedResidualFeature.exactProfile.plane,
+);
+assert.ok(Math.hypot(
+  reopenedResidualWorldCenter.x - coincidentCutStartCenter.x,
+  reopenedResidualWorldCenter.y - coincidentCutStartCenter.y,
+  reopenedResidualWorldCenter.z - coincidentCutStartCenter.z,
+) <= 1e-5);
 assert.equal(
   deriveSolidAnalyticEdges(alternatingDividedRegionsSolid).lines.some((line) =>
     line.sourceEdgeIndices.length === 1 &&
@@ -4816,6 +6233,60 @@ const repairedLegacyPush = profileFeaturePushSolid({
 assert.equal(repairedLegacyPush.metadata.booleanKernel, 'manifold-3d');
 assert.equal(isValidSolid3d(repairedLegacyPush), true);
 
+const defaultBooleanBaseTolerance = coplanarFaceTolerance(
+  booleanBaseSolid,
+  DEFAULT_COPLANAR_FACE_TOLERANCE_FACTOR,
+);
+const previousCoplanarFactor = getCoplanarFaceToleranceFactor();
+try {
+  assert.equal(
+    normalizeCoplanarFaceToleranceFactor(Number.NaN),
+    DEFAULT_COPLANAR_FACE_TOLERANCE_FACTOR,
+  );
+  setCoplanarFaceToleranceFactor(2);
+  assert.equal(getCoplanarFaceToleranceFactor(), 2);
+  assert.ok(Math.abs(
+    coplanarFaceTolerance(booleanBaseSolid) -
+      defaultBooleanBaseTolerance * 2
+  ) <= Number.EPSILON);
+  const almostBottomDistance = -2 + defaultBooleanBaseTolerance;
+  assert.equal(
+    snapBooleanOperationDistance(
+      booleanBaseSolid,
+      { x: 0, y: 0, z: 2 },
+      { x: 0, y: 0, z: 1 },
+      almostBottomDistance,
+    ),
+    -2,
+  );
+  assert.ok(minimumBooleanOperationDistance(booleanBaseSolid) > 1e-6);
+}
+finally {
+  setCoplanarFaceToleranceFactor(previousCoplanarFactor);
+}
+
+const baseAudit = auditSolid3dTopology(booleanBaseSolid);
+assert.equal(baseAudit.valid, true);
+assert.equal(baseAudit.closed, true);
+const invalidPlanarAuditSolid = structuredClone(booleanBaseSolid);
+invalidPlanarAuditSolid.metadata = {
+  ...(invalidPlanarAuditSolid.metadata ?? {}),
+  planarFaceGroups: [
+    {
+      indices: [0],
+      outerLoop: booleanBaseFace.points,
+    },
+    {
+      indices: [0],
+      outerLoop: booleanBaseFace.points,
+    },
+  ],
+};
+const invalidPlanarAudit = auditSolid3dTopology(invalidPlanarAuditSolid);
+assert.equal(invalidPlanarAudit.valid, false);
+assert.ok(invalidPlanarAudit.errors.some((error) =>
+  error.startsWith('overlapping-planar-face-group:')));
+
 assert.deepEqual(phaseZeroContract, {
   analyticCircleCount: 2,
   closedCircleCount: 2,
@@ -4825,5 +6296,12 @@ assert.deepEqual(phaseZeroContract, {
   capFaceIdentities: 1,
   circularSupportBoundaries: 1,
 }, 'La topologia CAD del cilindro oblicuo debe ser independiente de la teselacion');
+
+await import('./3d-coincident-fixture.mjs');
+await import('./3d-residual-dispatch.mjs');
+await import('./3d-planar-base-face-split.mjs');
+await import('./3d-push-planar-face-group.mjs');
+await import('./3d-boolean-reconciliation.mjs');
+await import('./3d-rebuild-boundaries.mjs');
 
 console.log('webCAD 3D foundation: OK');

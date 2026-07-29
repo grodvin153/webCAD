@@ -3,6 +3,8 @@
 import { normalizePrincipalPlane, principalPlaneDefinition } from './principal-plane.js';
 
 const EPSILON = 1e-12;
+const TWO_PI = Math.PI * 2;
+export const SKETCH_PLANE_COORDINATE_SYSTEM = 'sketch-plane-v1';
 
 function point3(point = {}) {
   return {
@@ -39,6 +41,11 @@ function dot(a, b) {
   return a.x * b.x + a.y * b.y + a.z * b.z;
 }
 
+function normalizeAngle(angle) {
+  const normalized = Number(angle) % TWO_PI;
+  return normalized < 0 ? normalized + TWO_PI : normalized;
+}
+
 export function principalSketchPlane(value = 'XY') {
   const definition = principalPlaneDefinition(value);
   return {
@@ -72,6 +79,9 @@ export function normalizeSketchPlane(value = 'XY') {
     normal,
     axisRotation: Number(value.axisRotation) || 0,
     source: value.source ? JSON.parse(JSON.stringify(value.source)) : null,
+    ...(value.coordinateSystem === SKETCH_PLANE_COORDINATE_SYSTEM
+      ? { coordinateSystem: SKETCH_PLANE_COORDINATE_SYSTEM }
+      : {}),
   };
 }
 
@@ -155,9 +165,127 @@ export function pointFromSketchPlane(point, plane = 'XY') {
   };
 }
 
+export function pointOnExactProfilePlane(point, plane = 'XY') {
+  const local = point3(point);
+  return pointOnSketchPlane({
+    x: local.x,
+    y: plane?.coordinateSystem === SKETCH_PLANE_COORDINATE_SYSTEM
+      ? local.y
+      : -local.y,
+    z: local.z,
+  }, plane);
+}
+
+export function pointFromExactProfilePlane(point, plane = 'XY') {
+  const local = pointFromSketchPlane(point, plane);
+  return plane?.coordinateSystem === SKETCH_PLANE_COORDINATE_SYSTEM
+    ? local
+    : { x: local.x, y: -local.y, z: local.z };
+}
+
+function legacyProfilePointToV1(point) {
+  return point
+    ? { x: Number(point.x) || 0, y: -(Number(point.y) || 0), z: Number(point.z) || 0 }
+    : point;
+}
+
+function legacyProfileBoundsToV1(bounds) {
+  if (!bounds) return null;
+  return {
+    minX: Number(bounds.minX),
+    minY: -Number(bounds.maxY),
+    maxX: Number(bounds.maxX),
+    maxY: -Number(bounds.minY),
+  };
+}
+
+function transformedEllipseAngle(point, center, radiusX, radiusY, rotation) {
+  const deltaX = point.x - center.x;
+  const deltaY = point.y - center.y;
+  return normalizeAngle(Math.atan2(
+    (-deltaX * Math.sin(rotation) + deltaY * Math.cos(rotation)) / radiusY,
+    (deltaX * Math.cos(rotation) + deltaY * Math.sin(rotation)) / radiusX,
+  ));
+}
+
+export function exactProfileToSketchPlaneV1(exactProfile) {
+  if (!exactProfile) return exactProfile;
+  const profile = JSON.parse(JSON.stringify(exactProfile));
+  if (!profile.plane ||
+      profile.plane.coordinateSystem === SKETCH_PLANE_COORDINATE_SYSTEM) {
+    return profile;
+  }
+  const transformSegment = (segment) => {
+    const transformed = JSON.parse(JSON.stringify(segment));
+    const center = legacyProfilePointToV1(segment.center);
+    const start = legacyProfilePointToV1(segment.start);
+    const end = legacyProfilePointToV1(segment.end);
+    if (center) transformed.center = center;
+    if (start) transformed.start = start;
+    if (end) transformed.end = end;
+    if (segment.type === 'arc-circle' && center && start && end) {
+      transformed.startAngle = normalizeAngle(Math.atan2(
+        start.y - center.y,
+        start.x - center.x,
+      ));
+      transformed.endAngle = normalizeAngle(Math.atan2(
+        end.y - center.y,
+        end.x - center.x,
+      ));
+    }
+    if (segment.type === 'ellipse' || segment.type === 'arc-ellipse') {
+      transformed.rotation = -(Number(segment.rotation) || 0);
+      if (segment.type === 'arc-ellipse' && center && start && end) {
+        transformed.startAngle = transformedEllipseAngle(
+          start,
+          center,
+          segment.radiusX,
+          segment.radiusY,
+          transformed.rotation,
+        );
+        transformed.endAngle = transformedEllipseAngle(
+          end,
+          center,
+          segment.radiusX,
+          segment.radiusY,
+          transformed.rotation,
+        );
+      }
+    }
+    if (['circle', 'arc-circle', 'ellipse', 'arc-ellipse'].includes(segment.type)) {
+      transformed.clockwise = segment.clockwise === false;
+    }
+    if (transformed.source?.orientation) {
+      transformed.source.orientation *= -1;
+    }
+    return transformed;
+  };
+  const transformLoop = (loop) => ({
+    ...loop,
+    segments: (loop?.segments ?? []).map(transformSegment),
+    bounds: legacyProfileBoundsToV1(loop?.bounds),
+    orientation: loop?.orientation === 'cw'
+      ? 'ccw'
+      : loop?.orientation === 'ccw' ? 'cw' : loop?.orientation,
+  });
+  profile.outerLoop = transformLoop(profile.outerLoop);
+  profile.innerLoops = (profile.innerLoops ?? []).map(transformLoop);
+  profile.segments = profile.outerLoop.segments;
+  profile.bounds = legacyProfileBoundsToV1(profile.bounds);
+  profile.orientation = {
+    outer: profile.outerLoop.orientation,
+    inner: profile.innerLoops.map((loop) => loop.orientation),
+  };
+  profile.plane.coordinateSystem = SKETCH_PLANE_COORDINATE_SYSTEM;
+  return profile;
+}
+
 export function exactProfileOnSketchPlane(profile, plane = 'XY') {
   if (!profile) return profile;
   const clone = JSON.parse(JSON.stringify(profile));
+  if (clone.plane?.coordinateSystem === SKETCH_PLANE_COORDINATE_SYSTEM) {
+    return clone;
+  }
   const frame = normalizeSketchPlane(plane);
   clone.plane = {
     type: 'plane',
@@ -166,7 +294,7 @@ export function exactProfileOnSketchPlane(profile, plane = 'XY') {
     yAxis: frame.yAxis,
     normal: frame.normal,
   };
-  return clone;
+  return exactProfileToSketchPlaneV1(clone);
 }
 
 export function faceOnSketchPlane(face, plane = 'XY', sketchId = null) {

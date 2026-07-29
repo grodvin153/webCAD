@@ -1,13 +1,18 @@
 /* webCAD - Modelo documental CAD | SPDX-License-Identifier: GPL-3.0-or-later */
 
 import {
+  addModel3dLines,
   addModel3dSolid,
   addModel3dSketch,
   cloneModel3d,
   createModel3d,
+  removeModel3dLines,
   removeModel3dSolid,
   removeModel3dSketch,
   replaceModel3dSolid,
+  setModel3dLineGroupVisibility,
+  updateModel3dLineTopology,
+  updateModel3dSolidPlacements,
 } from '../3d/model3d.js';
 import { normalizePrincipalPlane } from '../3d/principal-plane.js';
 import { rotateSketchPlaneAxes } from '../3d/sketch-plane.js';
@@ -308,6 +313,20 @@ export function createCadDocumentClass(dependencies) {
       return removed;
     }
 
+    update3dSolidPlacements(updates, options = {}) {
+      if (!(updates instanceof Map) || ![...updates.keys()].some((id) =>
+        this.model3d?.solids?.some((record) => record?.id === id && record?.locked !== true))) {
+        return false;
+      }
+      if (options.recordHistory !== false) {
+        this.recordHistory();
+      }
+      const changed = updateModel3dSolidPlacements(this.model3d, updates);
+      if (!changed) return false;
+      this.markDirty();
+      return true;
+    }
+
     set3dSketchPlane(plane, options = {}) {
       const nextPlane = normalizePrincipalPlane(plane);
       if (this.model3d?.sketchPlane === nextPlane) return false;
@@ -324,6 +343,44 @@ export function createCadDocumentClass(dependencies) {
       const record = addModel3dSketch(this.model3d, { ...options, cloneEntity });
       this.markDirty();
       return record;
+    }
+
+    add3dLines(segments, options = {}) {
+      if (!Array.isArray(segments) || !segments.length) return [];
+      if (options.recordHistory !== false) this.recordHistory();
+      const records = addModel3dLines(this.model3d, segments, options);
+      if (records.length) this.markDirty();
+      return records;
+    }
+
+    set3dLineGroupVisibility(groupId, visible, options = {}) {
+      if (!this.model3d?.lines?.some((line) =>
+        line?.groupId === groupId && line.visible !== (visible !== false))) {
+        return false;
+      }
+      if (options.recordHistory !== false) this.recordHistory();
+      const changed = setModel3dLineGroupVisibility(this.model3d, groupId, visible);
+      if (changed) this.markDirty();
+      return changed;
+    }
+
+    remove3dLines(ids, options = {}) {
+      const selectedIds = new Set(Array.isArray(ids) ? ids : [ids]);
+      if (!this.model3d?.lines?.some((line) => selectedIds.has(line?.id))) {
+        return 0;
+      }
+      if (options.recordHistory !== false) this.recordHistory();
+      const removed = removeModel3dLines(this.model3d, [...selectedIds]);
+      if (removed) this.markDirty();
+      return removed;
+    }
+
+    update3dLineTopology(update, options = {}) {
+      if (!this.model3d?.lines?.length || !update) return false;
+      if (options.recordHistory !== false) this.recordHistory();
+      const changed = updateModel3dLineTopology(this.model3d, update);
+      if (changed) this.markDirty();
+      return changed;
     }
 
     promoteRootEntitiesTo3dSketch(options = {}) {

@@ -62,7 +62,7 @@ function rayToTarget(camera, target) {
   return { direction, origin, targetDistance };
 }
 
-function pointVisibleAtCamera(raycaster, occluders, camera, target) {
+export function pointVisibleAtCamera(raycaster, occluders, camera, target) {
   const ray = rayToTarget(camera, target);
   if (ray.targetDistance <= EDGE_EPSILON) return true;
   const tolerance = Math.max(1e-6, ray.targetDistance * 1e-5);

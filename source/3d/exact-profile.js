@@ -489,8 +489,15 @@ export function exactProfileFromOrderedEntities(orderedEntities, options = {}) {
 
 function curvePieceSegment(piece) {
   const entity = piece?.entity || piece;
-  const startParameter = Math.max(0, Math.min(1, Number(piece?.startParameter ?? 0)));
-  const endParameter = Math.max(0, Math.min(1, Number(piece?.endParameter ?? 1)));
+  const periodic = entity?.type === 'CIRCLE' || entity?.type === 'ELLIPSE';
+  const rawStartParameter = Number(piece?.startParameter ?? 0);
+  const rawEndParameter = Number(piece?.endParameter ?? 1);
+  const startParameter = periodic
+    ? rawStartParameter
+    : Math.max(0, Math.min(1, rawStartParameter));
+  const endParameter = periodic
+    ? rawEndParameter
+    : Math.max(0, Math.min(1, rawEndParameter));
   if (entity?.type === 'LINE') {
     const start = point3(entity.start);
     const end = point3(entity.end);
@@ -565,6 +572,40 @@ function curvePieceSegment(piece) {
   return null;
 }
 
+function mergedCurvePiece(first, second) {
+  if (!first || !second || first.entity !== second.entity ||
+      first.endHasSemanticJunction ||
+      second.startHasSemanticJunction) {
+    return null;
+  }
+  const firstDirection = Math.sign(
+    first.endParameter - first.startParameter,
+  );
+  const secondDirection = Math.sign(
+    second.endParameter - second.startParameter,
+  );
+  if (!firstDirection || firstDirection !== secondDirection) return null;
+  const periodic = first.entity?.type === 'CIRCLE' ||
+    first.entity?.type === 'ELLIPSE';
+  let secondStart = second.startParameter;
+  let secondEnd = second.endParameter;
+  if (periodic) {
+    const turn = Math.round(first.endParameter - secondStart);
+    secondStart += turn;
+    secondEnd += turn;
+  }
+  if (Math.abs(first.endParameter - secondStart) > 1e-10) return null;
+  if (periodic &&
+      Math.abs(secondEnd - first.startParameter) >= 1 - 1e-10) {
+    return null;
+  }
+  return {
+    ...first,
+    endParameter: secondEnd,
+    endHasSemanticJunction: second.endHasSemanticJunction,
+  };
+}
+
 function mergeConsecutiveCurvePieces(pieces) {
   const merged = [];
   pieces.forEach((piece) => {
@@ -574,18 +615,19 @@ function mergeConsecutiveCurvePieces(pieces) {
       endParameter: Number(piece?.endParameter ?? 1),
     };
     const previous = merged[merged.length - 1];
-    const previousDirection = Math.sign(previous?.endParameter - previous?.startParameter);
-    const currentDirection = Math.sign(current.endParameter - current.startParameter);
-    const closesFullCurve = (current.entity?.type === 'CIRCLE' || current.entity?.type === 'ELLIPSE') &&
-      Math.abs(current.endParameter - previous?.startParameter) >= 1 - 1e-10;
-    if (previous && previous.entity === current.entity && !closesFullCurve &&
-      previousDirection === currentDirection &&
-      Math.abs(previous.endParameter - current.startParameter) <= 1e-10) {
-      previous.endParameter = current.endParameter;
+    const combined = mergedCurvePiece(previous, current);
+    if (combined) {
+      merged[merged.length - 1] = combined;
       return;
     }
     merged.push(current);
   });
+  if (merged.length > 1) {
+    const cyclic = mergedCurvePiece(merged.at(-1), merged[0]);
+    if (cyclic) {
+      return [cyclic, ...merged.slice(1, -1)];
+    }
+  }
   return merged;
 }
 

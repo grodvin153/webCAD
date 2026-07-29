@@ -1,6 +1,16 @@
 /* webCAD - Proyeccion derivada de solidos sobre un croquis | SPDX-License-Identifier: GPL-3.0-or-later */
 
-import { normalizeSketchPlane, pointFromSketchPlane } from './sketch-plane.js';
+import {
+  normalizeSketchPlane,
+  pointFromSketchPlane,
+  pointOnExactProfilePlane,
+} from './sketch-plane.js';
+import {
+  normalizeSolidPlacement,
+  rotatePointByQuaternion,
+  solidLocalToWorld,
+} from './solid-placement.js';
+import { sampleSolidAnalyticEdges } from './analytic-edges.js';
 import { solidWithDerivedSurfaceTopology } from './three/manifold-boolean.js';
 
 const DEFAULT_TOLERANCE = 1e-7;
@@ -47,14 +57,16 @@ function scale(vector, factor) {
   return { x: vector.x * factor, y: vector.y * factor, z: vector.z * factor };
 }
 
-function worldProfilePoint(point, profilePlane, offset = { x: 0, y: 0, z: 0 }) {
-  return add(add(add(
-    profilePlane.origin,
-    scale(profilePlane.xAxis, Number(point?.x) || 0),
-  ), scale(profilePlane.yAxis, -(Number(point?.y) || 0))), add(
-    scale(profilePlane.normal, Number(point?.z) || 0),
-    offset,
-  ));
+function worldProfilePoint(
+  point,
+  profilePlane,
+  offset = { x: 0, y: 0, z: 0 },
+  placement = null,
+) {
+  return solidLocalToWorld(
+    add(pointOnExactProfilePlane(point, profilePlane), offset),
+    placement,
+  );
 }
 
 function exactExtrusionEntries(solid) {
@@ -119,16 +131,33 @@ function partialCurveDirection(curve, midpoint) {
     directedSweep(fields.start, fields.end, true) + 1e-6;
 }
 
-function exactCurveCandidate(segment, profilePlane, target, curveOffset, sourceSolidId) {
+function exactCurveCandidate(
+  segment,
+  profilePlane,
+  target,
+  curveOffset,
+  sourceSolidId,
+  placement,
+) {
   const circular = segment?.type === 'circle' || segment?.type === 'arc-circle';
   const elliptical = segment?.type === 'ellipse' || segment?.type === 'arc-ellipse';
   if (!circular && !elliptical) return null;
-  const centerWorld = worldProfilePoint(segment.center, profilePlane, curveOffset);
+  const centerWorld = worldProfilePoint(segment.center, profilePlane, curveOffset, placement);
   const center = pointForSketchEditor(pointFromSketchPlane(centerWorld, target));
   const rotation = Number(segment.rotation) || 0;
+  const profileOrigin = worldProfilePoint(
+    { x: 0, y: 0, z: 0 },
+    profilePlane,
+    { x: 0, y: 0, z: 0 },
+    placement,
+  );
   const majorAxis = add(
-    scale(profilePlane.xAxis, Math.cos(rotation)),
-    scale(profilePlane.yAxis, -Math.sin(rotation)),
+    worldProfilePoint({
+      x: Math.cos(rotation),
+      y: Math.sin(rotation),
+      z: 0,
+    }, profilePlane, { x: 0, y: 0, z: 0 }, placement),
+    scale(profileOrigin, -1),
   );
   const editorRotation = Math.atan2(-dot(majorAxis, target.yAxis), dot(majorAxis, target.xAxis));
   if (segment.type === 'circle') {
@@ -148,7 +177,7 @@ function exactCurveCandidate(segment, profilePlane, target, curveOffset, sourceS
   const direction = segment.clockwise === false ? -1 : 1;
   const midpointParameter = segment.startAngle + direction * sweep * 0.5;
   const project = (point) => pointForSketchEditor(pointFromSketchPlane(
-    worldProfilePoint(point, profilePlane, curveOffset),
+    worldProfilePoint(point, profilePlane, curveOffset, placement),
     target,
   ));
   const start = project(segment.start ?? exactSegmentPoint(segment, segment.startAngle));
@@ -198,14 +227,29 @@ function candidateKey(candidate) {
   return `${candidate.type}:${center}:${shape}:${fields.start.toFixed(6)}:${fields.end.toFixed(6)}:${candidate.clockwise}`;
 }
 
-function exactCurveCandidates(solid, targetPlane, mode, sourceSolidId) {
+function exactCurveCandidates(solid, targetPlane, mode, sourceSolidId, placement = null) {
   const target = normalizeSketchPlane(targetPlane);
+  const cleanPlacement = normalizeSolidPlacement(placement);
   const candidates = [];
   exactExtrusionEntries(solid).forEach(({ profile, offset }) => {
     const profilePlane = normalizeSketchPlane(profile?.plane);
-    if (Math.abs(dot(profilePlane.normal, target.normal)) < 1 - 1e-6) return;
-    const startDistance = pointFromSketchPlane(profilePlane.origin, target).z;
-    const endDistance = pointFromSketchPlane(add(profilePlane.origin, offset), target).z;
+    const worldProfileNormal = rotatePointByQuaternion(
+      profilePlane.normal,
+      cleanPlacement.quaternion,
+    );
+    if (Math.abs(dot(worldProfileNormal, target.normal)) < 1 - 1e-6) return;
+    const startDistance = pointFromSketchPlane(worldProfilePoint(
+      { x: 0, y: 0, z: 0 },
+      profilePlane,
+      { x: 0, y: 0, z: 0 },
+      placement,
+    ), target).z;
+    const endDistance = pointFromSketchPlane(worldProfilePoint(
+      { x: 0, y: 0, z: 0 },
+      profilePlane,
+      offset,
+      placement,
+    ), target).z;
     const offsets = mode === 'section'
       ? (startDistance * endDistance <= DEFAULT_TOLERANCE ** 2 ? [{ x: 0, y: 0, z: 0 }] : [])
       : [{ x: 0, y: 0, z: 0 }, offset];
@@ -218,6 +262,7 @@ function exactCurveCandidates(solid, targetPlane, mode, sourceSolidId) {
           target,
           curveOffset,
           sourceSolidId,
+          placement,
         );
         if (candidate) candidates.push(candidate);
       });
@@ -529,15 +574,18 @@ export function projectModel3dEdgesToSketch(model3d, plane, options = {}) {
         plane,
         'projection',
         record.id ?? null,
+        record.placement,
       ));
-      (solid.edges ?? []).forEach((edge) => {
-        const worldStart = solid.vertices?.[edge?.[0]];
-        const worldEnd = solid.vertices?.[edge?.[1]];
-        if (!worldStart || !worldEnd) return;
-        const localStart = pointFromSketchPlane(worldStart, plane);
-        const localEnd = pointFromSketchPlane(worldEnd, plane);
-        const start = pointForSketchEditor(localStart);
-        const end = pointForSketchEditor(localEnd);
+      sampleSolidAnalyticEdges(solid).entries.forEach((entry) => {
+        const localStart = entry.segment?.start;
+        const localEnd = entry.segment?.end;
+        if (!localStart || !localEnd) return;
+        const worldStart = solidLocalToWorld(localStart, record.placement);
+        const worldEnd = solidLocalToWorld(localEnd, record.placement);
+        const sketchStart = pointFromSketchPlane(worldStart, plane);
+        const sketchEnd = pointFromSketchPlane(worldEnd, plane);
+        const start = pointForSketchEditor(sketchStart);
+        const end = pointForSketchEditor(sketchEnd);
         if (Math.hypot(end.x - start.x, end.y - start.y) <= tolerance) return;
         const key = segmentKey(start, end, tolerance);
         if (!projected.has(key)) {
@@ -601,17 +649,24 @@ export function sectionModel3dToSketch(model3d, plane, options = {}) {
         plane,
         'section',
         record.id ?? null,
+        record.placement,
       ));
       const signedDistance = (point) => pointFromSketchPlane(point, plane).z;
       (solid.edges ?? []).forEach((edge) => {
-        const start = solid.vertices?.[edge?.[0]];
-        const end = solid.vertices?.[edge?.[1]];
-        if (!start || !end || Math.abs(signedDistance(start)) > tolerance ||
+        const localStart = solid.vertices?.[edge?.[0]];
+        const localEnd = solid.vertices?.[edge?.[1]];
+        if (!localStart || !localEnd) return;
+        const start = solidLocalToWorld(localStart, record.placement);
+        const end = solidLocalToWorld(localEnd, record.placement);
+        if (Math.abs(signedDistance(start)) > tolerance ||
             Math.abs(signedDistance(end)) > tolerance) return;
         addSegment(start, end, record.id ?? null);
       });
       (solid.faces ?? []).forEach((face) => {
-        const points = face.map((index) => solid.vertices?.[index]).filter(Boolean);
+        const points = face
+          .map((index) => solid.vertices?.[index])
+          .filter(Boolean)
+          .map((point) => solidLocalToWorld(point, record.placement));
         if (points.length < 3) return;
         const distances = points.map(signedDistance);
         if (distances.every((value) => Math.abs(value) <= tolerance)) return;
@@ -658,7 +713,13 @@ function derivedSupportBoundaries(support, plane, model3d = null) {
   if (!model3d || !sourceSolidId || !segments.length) return segments;
   const record = model3d.solids?.find((candidate) => candidate.id === sourceSolidId);
   if (!record?.solid) return segments;
-  const candidates = exactCurveCandidates(record.solid, plane, 'projection', sourceSolidId);
+  const candidates = exactCurveCandidates(
+    record.solid,
+    plane,
+    'projection',
+    sourceSolidId,
+    record.placement,
+  );
   return replaceAnalyticCurves(segments, candidates, 1e-6);
 }
 

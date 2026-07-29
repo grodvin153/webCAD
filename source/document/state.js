@@ -9,6 +9,9 @@ export function createDocumentState(dependencies) {
     DEFAULT_LINE_TYPE,
     DRAWING_PROFILES,
     SNAP_THRESHOLD,
+    DEFAULT_COPLANAR_FACE_TOLERANCE_FACTOR,
+    MAX_COPLANAR_FACE_TOLERANCE_FACTOR,
+    MIN_COPLANAR_FACE_TOLERANCE_FACTOR,
     loadBooleanPreference,
     loadDimensionStylePreference,
     loadIntegerPreference,
@@ -52,6 +55,12 @@ export function createDocumentState(dependencies) {
     imageDraft: null,
     imageCalibrationDraft: null,
     dimensionStyle: loadDimensionStylePreference(),
+    coplanarFaceToleranceFactor: loadNumberPreference(
+      'webcad-3d-coplanar-tolerance-factor',
+      DEFAULT_COPLANAR_FACE_TOLERANCE_FACTOR,
+      MIN_COPLANAR_FACE_TOLERANCE_FACTOR,
+      MAX_COPLANAR_FACE_TOLERANCE_FACTOR,
+    ),
     dimensionPrecision: {
       engineering: {
         linear: loadIntegerPreference('webcad-dimension-linear-precision-engineering', 2, 0, 4),

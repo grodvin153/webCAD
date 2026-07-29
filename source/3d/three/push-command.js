@@ -3,6 +3,11 @@
 import * as THREE from 'three';
 
 import { formatNumber, parseScalarExpression } from '../../input/entry.js';
+import {
+  meetsMinimum3dThickness,
+  MINIMUM_3D_THICKNESS,
+} from '../tolerances.js';
+import { normalizeSolidPlacement } from '../solid-placement.js';
 import { disposeThreeObject } from './three-scene-style.js';
 import {
   createPushSolidGroupFromSolid,
@@ -12,10 +17,30 @@ import {
   pushHeightValue,
   pushSourceKeyFromFace,
   setPushSolidGroupHiddenEdges,
+  solidFromFacePush,
 } from './push-geometry.js';
 import { profileFeaturePushSolid } from './profile-feature.js';
 
 const ALLOWED_INPUT = /^[0-9eE+\-*/().,\s]$/;
+
+export function pushStrategyForFace(face) {
+  if (face?.localFace) return pushStrategyForFace(face.localFace);
+  if (face?.supportSolid) return 'profileFeature';
+  if (face?.sourceSolid) return 'moveFace';
+  return 'profile';
+}
+
+export function pushSolidForFace(face, distance) {
+  const geometryFace = face?.localFace ?? face;
+  const strategy = pushStrategyForFace(geometryFace);
+  if (strategy === 'profileFeature') {
+    return profileFeaturePushSolid(geometryFace, distance);
+  }
+  if (strategy === 'moveFace') {
+    return movedSolidFacePush(geometryFace, distance);
+  }
+  return solidFromFacePush(geometryFace, distance);
+}
 
 function pointerHeight(event, camera, controls, viewport, startY) {
   const target = controls?.target || new THREE.Vector3();
@@ -143,6 +168,7 @@ export function createPushCommand({
   function snapLabel(snap) {
     if (!snap) return '';
     const labels = {
+      origin: 'Origen',
       endpoint: 'Punto',
       midpoint: 'Punto medio',
       center: 'Centro',
@@ -181,6 +207,24 @@ export function createPushCommand({
     preview = null;
   }
 
+  function applyFacePlacement(object, face) {
+    if (!object || !face?.placement) return object;
+    const placement = normalizeSolidPlacement(face.placement);
+    object.position.set(
+      placement.position.x,
+      placement.position.y,
+      placement.position.z,
+    );
+    object.quaternion.set(
+      placement.quaternion.x,
+      placement.quaternion.y,
+      placement.quaternion.z,
+      placement.quaternion.w,
+    );
+    object.userData.placement = placement;
+    return object;
+  }
+
   function setCommandFaceVisible(visible) {
     if (commandFace) {
       commandFace.visible = visible;
@@ -198,14 +242,14 @@ export function createPushCommand({
   }
 
   function solidFacePreview(face, height, options) {
-    const movedSolid = movedSolidFacePush(face, height);
+    const movedSolid = pushSolidForFace(face, height);
     return movedSolid
       ? createPushSolidGroupFromSolid(movedSolid, options)
       : null;
   }
 
   function profileFeaturePreview(face, height, options) {
-    const solid = profileFeaturePushSolid(face, height);
+    const solid = pushSolidForFace(face, height);
     return solid ? createPushSolidGroupFromSolid(solid, options) : null;
   }
 
@@ -222,14 +266,20 @@ export function createPushCommand({
       name: 'webcad-push-preview',
       renderOrder: 24,
     };
-    preview = face.sourceSolid
+    const strategy = pushStrategyForFace(face);
+    preview = strategy === 'moveFace'
       ? solidFacePreview(face, currentHeight, previewOptions)
-      : face.supportSolid
+      : strategy === 'profileFeature'
         ? profileFeaturePreview(face, currentHeight, previewOptions)
         : createPushSolidGroup(face, currentHeight, previewOptions);
+    applyFacePlacement(preview, face);
     if (!preview) {
       setCommandSolidSourceVisible(true);
-      status(`Push no valido · sin material suficiente (${formatNumber(currentHeight)})`);
+      status(!meetsMinimum3dThickness(currentHeight) && strategy !== 'moveFace'
+        ? `Push no valido · espesor minimo 3D: ${MINIMUM_3D_THICKNESS}`
+        : strategy === 'moveFace'
+          ? `Push no valido · sin material suficiente o espesor inferior a ${MINIMUM_3D_THICKNESS}`
+          : `Push no valido · sin material suficiente (${formatNumber(currentHeight)})`);
       render?.();
       return;
     }
@@ -282,6 +332,7 @@ export function createPushCommand({
       name: options.name ?? `webcad-push-solid-${face?.id ?? 'face'}`,
       renderOrder: 20,
     });
+    if (!finalSolid) return null;
     solidGroup.add(finalSolid);
     render?.();
     return finalSolid;
@@ -326,8 +377,9 @@ export function createPushCommand({
     const face = commandFace.userData.face;
     let finalSolid = null;
     let through = false;
-    if (face.supportSolid) {
-      const featureSolid = profileFeaturePushSolid(face, currentHeight);
+    const strategy = pushStrategyForFace(face);
+    if (strategy === 'profileFeature') {
+      const featureSolid = pushSolidForFace(face, currentHeight);
       if (!featureSolid) {
         setCommandSolidSourceVisible(true);
         status('Push no valido · no se pudo actualizar el solido soporte');
@@ -347,13 +399,16 @@ export function createPushCommand({
         name: `webcad-push-solid-${commandFace.userData.faceId}`,
         renderOrder: 20,
       });
+      applyFacePlacement(finalSolid, face);
       solidGroup.add(finalSolid);
     }
-    else if (face.sourceSolid) {
-      const movedSolid = movedSolidFacePush(face, currentHeight);
+    else if (strategy === 'moveFace') {
+      const movedSolid = pushSolidForFace(face, currentHeight);
       if (!movedSolid) {
         setCommandSolidSourceVisible(true);
-        status('Push no valido · sin material suficiente');
+        status(
+          `Push no valido · sin material suficiente o espesor inferior a ${MINIMUM_3D_THICKNESS}`,
+        );
         render?.();
         return false;
       }
@@ -370,12 +425,19 @@ export function createPushCommand({
         name: `webcad-push-solid-${commandFace.userData.faceId}`,
         renderOrder: 20,
       });
+      applyFacePlacement(finalSolid, face);
       solidGroup.add(finalSolid);
     }
     else {
       finalSolid = addSolidFromFace(face, currentHeight, {
         name: `webcad-push-solid-${commandFace.userData.faceId}`,
       });
+      if (!finalSolid) {
+        setCommandSolidSourceVisible(true);
+        status(`Push no valido · espesor minimo 3D: ${MINIMUM_3D_THICKNESS}`);
+        render?.();
+        return false;
+      }
     }
     setCommandFaceVisible(false);
     onConsumeFace?.(commandFace, finalSolid, {
@@ -528,6 +590,7 @@ export function createPushCommand({
         name: `webcad-push-document-${record.id}`,
         renderOrder: 20,
       });
+      applyFacePlacement(group, { placement: record.placement });
       tagDocumentSolidGroup(group, record);
       solidGroup.add(group);
       render?.();

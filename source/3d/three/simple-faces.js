@@ -511,7 +511,13 @@ function arrangementClosedFaces(entities, options) {
     if (points.some((point) => !point)) return;
     const id = `face-composite-${faces.length}`;
     const exactProfile = exactProfileFromCurvePieces(edges.map((item) => ({
-      entity: item.entity, startParameter: item.startParameter, endParameter: item.endParameter,
+      entity: item.entity,
+      startParameter: item.startParameter,
+      endParameter: item.endParameter,
+      startHasSemanticJunction:
+        item.from.outgoing.filter((candidate) => candidate.active).length > 2,
+      endHasSemanticJunction:
+        item.to.outgoing.filter((candidate) => candidate.active).length > 2,
     })), { id, tolerance: options.tolerance });
     // With the right-turn walk, finite faces are counter-clockwise while the
     // unbounded exterior is the opposite cycle over the same outer boundary.

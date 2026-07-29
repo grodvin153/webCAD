@@ -13,9 +13,14 @@ import {
 } from './manifold-boolean.js';
 import {
   createAnalyticRegionId,
+  snapBooleanOperationDistance,
   solidFromBooleanFeatureTool,
   solidFromFacePush,
 } from './push-geometry.js';
+import {
+  meetsMinimum3dThickness,
+  minimumBooleanOperationDistance,
+} from '../tolerances.js';
 
 const TOLERANCE = 1e-7;
 
@@ -139,23 +144,40 @@ export function profileFeaturePushSolid(face, distance) {
     xAxis: { x: 1, y: 0, z: 0 },
   });
   if (!isValidSolid3d(sourceSolid) || outer.length < 3 || supportOuter.length < 3 ||
-      !Number.isFinite(distance) || Math.abs(distance) <= 1e-9) return null;
+      !Number.isFinite(distance)) return null;
+  const requestedDistance = Number(distance);
+  const effectiveDistance = snapBooleanOperationDistance(
+    sourceSolid,
+    supportOuter[0],
+    normal,
+    requestedDistance,
+  );
+  if (Math.abs(effectiveDistance) <= minimumBooleanOperationDistance(sourceSolid)) {
+    return null;
+  }
+  if (!meetsMinimum3dThickness(effectiveDistance)) return null;
   const additiveContact = face?.supportContactOnly === true;
-  const operationType = additiveContact || distance > 0 ? 'union' : 'subtract';
+  const operationType = additiveContact || effectiveDistance > 0 ? 'union' : 'subtract';
   if (isManifoldBooleanReady()) {
     const depth = profileDepth(sourceSolid, supportOuter[0], normal);
-    const through = operationType === 'subtract' && distance <= depth + TOLERANCE;
+    const through = operationType === 'subtract' &&
+      effectiveDistance <= depth + TOLERANCE;
     const kernelDistance = operationType === 'subtract'
-      ? subtractionCutterDistance(sourceSolid, distance, supportOuter[0], normal)
-      : distance;
+      ? subtractionCutterDistance(
+        sourceSolid,
+        effectiveDistance,
+        supportOuter[0],
+        normal,
+      )
+      : effectiveDistance;
     const analyticRegionId = face.exactProfile
       ? face.analyticRegionId ?? createAnalyticRegionId()
       : null;
     const operation = {
       type: operationType,
-      distance,
-      requestedDistance: distance,
-      ...(kernelDistance !== distance ? { kernelDistance } : {}),
+      distance: effectiveDistance,
+      requestedDistance,
+      ...(kernelDistance !== effectiveDistance ? { kernelDistance } : {}),
       through,
       tangentContact: additiveContact,
       sketchId: face.sketchId ?? null,
@@ -171,7 +193,7 @@ export function profileFeaturePushSolid(face, distance) {
       } : {}),
     };
     if (operationType === 'subtract') {
-      return subtractFacePushSolid3d(sourceSolid, face, distance, {
+      return subtractFacePushSolid3d(sourceSolid, face, effectiveDistance, {
         kernelDistance,
         operation,
         metadata: {
@@ -208,8 +230,9 @@ export function profileFeaturePushSolid(face, distance) {
     ? [...new Set(supportGroups.flatMap((group) => group.indices))]
     : face.sourceSolidFaceIndices ?? [];
   const depth = profileDepth(sourceSolid, supportOuter[0], normal);
-  const throughCut = distance < 0 && distance <= depth + TOLERANCE;
-  const effectiveDistance = throughCut ? depth : distance;
+  const throughCut = effectiveDistance < 0 &&
+    effectiveDistance <= depth + TOLERANCE;
+  const fallbackDistance = throughCut ? depth : effectiveDistance;
   const oppositeFaces = throughCut
     ? oppositePlaneFaces(sourceSolid, supportOuter[0], normal, depth)
     : [];
@@ -232,14 +255,14 @@ export function profileFeaturePushSolid(face, distance) {
   ]);
   const internalSideSegments = new Set();
   const internalBoundaryEdges = new Set();
-  if (distance > 0) {
+  if (effectiveDistance > 0) {
     const sourceFacesByPoints = new Map();
     sourceSolid.faces.forEach((sourceFace, faceIndex) => {
       const key = pointSetKey(sourceFace.map((index) => sourceSolid.vertices[index]).filter(Boolean));
       if (key) sourceFacesByPoints.set(key, faceIndex);
     });
     [outer, ...holes].forEach((loop, loopIndex) => {
-      const endLoop = loop.map((point) => translated(point, normal, effectiveDistance));
+      const endLoop = loop.map((point) => translated(point, normal, fallbackDistance));
       const cadIndices = new Set(loopIndex === 0
         ? face.cadProfileVertexIndices ?? []
         : face.holeCadProfileVertexIndices?.[loopIndex - 1] ?? []);
@@ -335,13 +358,15 @@ export function profileFeaturePushSolid(face, distance) {
     addPlanarRegion(supportOuter, [...supportHoles, outer], normal, 'support-remainder');
     holes.forEach((hole) => addPlanarRegion(hole, [], normal, 'support-island'));
   }
-  const endOuter = outer.map((point) => translated(point, normal, effectiveDistance));
-  const endHoles = holes.map((loop) => loop.map((point) => translated(point, normal, effectiveDistance)));
+  const endOuter = outer.map((point) => translated(point, normal, fallbackDistance));
+  const endHoles = holes.map((loop) =>
+    loop.map((point) => translated(point, normal, fallbackDistance)));
   if (throughCut) {
     const oppositeNormal = { x: -normal.x, y: -normal.y, z: -normal.z };
-    const oppositeOuter = supportOuter.map((point) => translated(point, normal, effectiveDistance));
+    const oppositeOuter = supportOuter.map((point) =>
+      translated(point, normal, fallbackDistance));
     const oppositeHoles = supportHoles.map((loop) =>
-      loop.map((point) => translated(point, normal, effectiveDistance)));
+      loop.map((point) => translated(point, normal, fallbackDistance)));
     if (profileMatchesSupport) {
       endHoles.forEach((hole) => addPlanarRegion(hole, [], oppositeNormal, 'opposite-island'));
     }
@@ -355,7 +380,7 @@ export function profileFeaturePushSolid(face, distance) {
   }
 
   const addSideLoop = (loop, loopIndex) => {
-    const endLoop = loop.map((point) => translated(point, normal, effectiveDistance));
+    const endLoop = loop.map((point) => translated(point, normal, fallbackDistance));
     const smoothIndices = new Set(loopIndex === 0
       ? face.smoothProfileVertexIndices ?? []
       : face.holeSmoothProfileVertexIndices?.[loopIndex - 1] ?? []);
@@ -382,7 +407,7 @@ export function profileFeaturePushSolid(face, distance) {
         ? { x: nextLocal.y - firstLocal.y, y: firstLocal.x - nextLocal.x }
         : { x: firstLocal.y - nextLocal.y, y: nextLocal.x - firstLocal.x };
       if (loopIndex > 0) outward2d = { x: -outward2d.x, y: -outward2d.y };
-      if (effectiveDistance < 0) outward2d = { x: -outward2d.x, y: -outward2d.y };
+      if (fallbackDistance < 0) outward2d = { x: -outward2d.x, y: -outward2d.y };
       const desired = normalized({
         x: plane.xAxis.x * outward2d.x + plane.yAxis.x * outward2d.y,
         y: plane.xAxis.y * outward2d.x + plane.yAxis.y * outward2d.y,
@@ -406,7 +431,7 @@ export function profileFeaturePushSolid(face, distance) {
           const afterDirection = vector(after).sub(vector(current)).normalize();
           let radial = beforeDirection.cross(vector(normal)).add(afterDirection.cross(vector(normal)));
           if (loopIndex > 0) radial.multiplyScalar(-1);
-          if (effectiveDistance < 0) radial.multiplyScalar(-1);
+          if (fallbackDistance < 0) radial.multiplyScalar(-1);
           radial.normalize();
           return { x: radial.x, y: radial.y, z: radial.z };
         };
@@ -459,7 +484,7 @@ export function profileFeaturePushSolid(face, distance) {
     addEdge(start, end);
   });
   [outer, ...holes].forEach((loop, loopIndex) => {
-    const endLoop = loop.map((point) => translated(point, normal, effectiveDistance));
+    const endLoop = loop.map((point) => translated(point, normal, fallbackDistance));
     loop.forEach((point, index) => {
       const next = loop[(index + 1) % loop.length];
       const internalSide = internalSideSegments.has(`${loopIndex}:${index}`);
@@ -473,9 +498,9 @@ export function profileFeaturePushSolid(face, distance) {
   });
 
   const operation = {
-    type: distance > 0 ? 'union' : 'subtract',
-    distance: effectiveDistance,
-    requestedDistance: distance,
+    type: effectiveDistance > 0 ? 'union' : 'subtract',
+    distance: fallbackDistance,
+    requestedDistance,
     through: throughCut,
     sketchId: face.sketchId ?? null,
     exactProfile: face.exactProfile ?? null,
@@ -487,7 +512,7 @@ export function profileFeaturePushSolid(face, distance) {
     metadata: {
       ...(sourceSolid.metadata ?? {}),
       type: 'profileFeature',
-      booleanOperation: distance > 0 ? 'union' : 'subtract',
+      booleanOperation: effectiveDistance > 0 ? 'union' : 'subtract',
       capFaceGroups: null,
       faceVertexNormals,
       planarFaceGroups,

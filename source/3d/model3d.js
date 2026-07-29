@@ -2,6 +2,7 @@
 
 import { normalizePrincipalPlane } from './principal-plane.js';
 import { normalizeSketchPlane } from './sketch-plane.js';
+import { normalizeSolidPlacement } from './solid-placement.js';
 
 export const MODEL3D_VERSION = 1;
 
@@ -74,6 +75,32 @@ function nextSketchNumber(model) {
   return maxExisting + 1;
 }
 
+function nextLineNumber(model) {
+  const explicitNext = Number(model?.nextLineId);
+  const maxExisting = (Array.isArray(model?.lines) ? model.lines : [])
+    .map((line) => Number(String(line?.id ?? '').replace(/^line3d-/, '')))
+    .filter((value) => Number.isInteger(value) && value > 0)
+    .reduce((max, value) => Math.max(max, value), 0);
+  return Math.max(
+    Number.isInteger(explicitNext) && explicitNext > 0 ? explicitNext : 1,
+    maxExisting + 1,
+  );
+}
+
+function cloneLineRecord(record) {
+  return {
+    id: String(record?.id || ''),
+    type: 'LINE3D',
+    groupId: String(record?.groupId || ''),
+    start: cloneNumberPoint(record?.start),
+    end: cloneNumberPoint(record?.end),
+    visible: record?.visible !== false,
+    locked: record?.locked === true,
+    revision: Number(record?.revision) || 0,
+    metadata: cloneJsonValue(record?.metadata ?? {}),
+  };
+}
+
 function cloneSketchRecord(record, cloneEntity = null) {
   return {
     id: String(record?.id || ''),
@@ -104,7 +131,10 @@ function inferOperationFromSolid(solid) {
 
 function createRecord(solid, {
   id,
+  locked = false,
+  name = null,
   operation = null,
+  placement = null,
   previous = null,
   visible = true,
 } = {}) {
@@ -121,7 +151,10 @@ function createRecord(solid, {
   return {
     id,
     type: 'document-solid3d',
+    name: String(name ?? previous?.name ?? id),
     visible: visible !== false,
+    locked: locked === true || previous?.locked === true,
+    placement: normalizeSolidPlacement(placement ?? previous?.placement),
     revision: (Number(previous?.revision) || 0) + 1,
     solid: documentSolid,
     metadata,
@@ -137,6 +170,8 @@ export function createModel3d() {
     sketchPlane: 'XY',
     sketches: [],
     nextSketchId: 1,
+    lines: [],
+    nextLineId: 1,
     solids: [],
     nextSolidId: 1,
   };
@@ -151,8 +186,18 @@ export function cloneModel3d(model, options = {}) {
       ? model.sketches.map((record) => cloneSketchRecord(record, options.cloneEntity)).filter(Boolean)
       : [],
     nextSketchId: nextSketchNumber(model),
+    lines: Array.isArray(model.lines)
+      ? model.lines.map(cloneLineRecord).filter((record) => record.id)
+      : [],
+    nextLineId: nextLineNumber(model),
     solids: Array.isArray(model.solids)
-      ? model.solids.map((record) => cloneJsonValue(record)).filter(Boolean)
+      ? model.solids.map((record) => ({
+        ...cloneJsonValue(record),
+        name: String(record?.name ?? record?.id ?? 'Solid'),
+        visible: record?.visible !== false,
+        locked: record?.locked === true,
+        placement: normalizeSolidPlacement(record?.placement),
+      })).filter(Boolean)
       : [],
     nextSolidId: nextSolidNumber(model),
   };
@@ -163,6 +208,89 @@ export function cloneModel3d(model, options = {}) {
     clone.nextSketchId = nextSketchNumber(clone);
   }
   return clone;
+}
+
+export function addModel3dLines(model, segments, options = {}) {
+  const target = model || createModel3d();
+  if (!Array.isArray(target.lines)) target.lines = [];
+  let lineNumber = nextLineNumber(target);
+  const groupId = options.groupId ?? `line3d-group-${lineNumber}`;
+  const records = (segments ?? []).map((segment) => cloneLineRecord({
+    id: `line3d-${lineNumber++}`,
+    groupId,
+    start: segment.start,
+    end: segment.end,
+    visible: options.visible,
+    metadata: options.metadata,
+  }));
+  target.lines.push(...records);
+  target.nextLineId = lineNumber;
+  return records;
+}
+
+export function setModel3dLineGroupVisibility(model, groupId, visible) {
+  if (!model || !Array.isArray(model.lines) || !groupId) return false;
+  const nextVisible = visible !== false;
+  let changed = false;
+  model.lines.forEach((line) => {
+    if (line?.groupId !== groupId || line.visible === nextVisible) return;
+    line.visible = nextVisible;
+    line.revision = (Number(line.revision) || 0) + 1;
+    changed = true;
+  });
+  return changed;
+}
+
+export function removeModel3dLines(model, ids) {
+  if (!model || !Array.isArray(model.lines)) return 0;
+  const selectedIds = new Set(Array.isArray(ids) ? ids : [ids]);
+  if (!selectedIds.size) return 0;
+  const previousLength = model.lines.length;
+  model.lines = model.lines.filter((line) => !selectedIds.has(line?.id));
+  return previousLength - model.lines.length;
+}
+
+export function updateModel3dLineTopology(model, {
+  replacements = [],
+  mergeGroupIds = [],
+  targetGroupId = null,
+  metadata = null,
+} = {}) {
+  if (!model || !Array.isArray(model.lines)) return false;
+  const replacementById = new Map((replacements ?? [])
+    .filter((replacement) => replacement?.id && Array.isArray(replacement.segments))
+    .map((replacement) => [replacement.id, replacement.segments]));
+  const mergedGroups = new Set(mergeGroupIds ?? []);
+  let lineNumber = nextLineNumber(model);
+  let changed = false;
+  const nextLines = [];
+  model.lines.forEach((line) => {
+    const segments = replacementById.get(line?.id);
+    const pieces = segments?.length ? segments : [line];
+    pieces.forEach((piece, index) => {
+      const groupChanged = targetGroupId && mergedGroups.has(line.groupId) &&
+        line.groupId !== targetGroupId;
+      const metadataChanged = metadata && mergedGroups.has(line.groupId);
+      const geometryChanged = Boolean(segments);
+      const record = cloneLineRecord({
+        ...line,
+        id: index === 0 ? line.id : `line3d-${lineNumber++}`,
+        groupId: groupChanged ? targetGroupId : line.groupId,
+        start: piece.start,
+        end: piece.end,
+        metadata: metadataChanged ? metadata : line.metadata,
+        revision: geometryChanged || groupChanged || metadataChanged
+          ? (Number(line.revision) || 0) + 1
+          : line.revision,
+      });
+      nextLines.push(record);
+      if (index > 0 || geometryChanged || groupChanged || metadataChanged) changed = true;
+    });
+  });
+  if (!changed) return false;
+  model.lines = nextLines;
+  model.nextLineId = Math.max(nextLineNumber(model), lineNumber);
+  return true;
 }
 
 export function addModel3dSketch(model, options = {}) {
@@ -198,7 +326,10 @@ export function addModel3dSolid(model, solid, options = {}) {
   const id = options.id ?? `solid3d-${solidNumber}`;
   const record = createRecord(solid, {
     id,
+    locked: options.locked,
+    name: options.name ?? `Solid-${solidNumber}`,
     operation: options.operation,
+    placement: options.placement,
     visible: options.visible,
   });
   target.solids.push(record);
@@ -214,7 +345,10 @@ export function replaceModel3dSolid(model, id, solid, options = {}) {
   const previous = model.solids[index];
   const record = createRecord(solid, {
     id,
+    locked: options.locked,
+    name: options.name,
     operation: options.operation,
+    placement: options.placement,
     previous,
     visible: options.visible ?? previous.visible,
   });
@@ -229,4 +363,16 @@ export function removeModel3dSolid(model, id) {
   const before = model.solids.length;
   model.solids = model.solids.filter((record) => record?.id !== id);
   return model.solids.length !== before;
+}
+
+export function updateModel3dSolidPlacements(model, updates) {
+  if (!model || !Array.isArray(model.solids) || !(updates instanceof Map)) return 0;
+  let changed = 0;
+  model.solids.forEach((record) => {
+    if (!updates.has(record?.id) || record?.locked === true) return;
+    record.placement = normalizeSolidPlacement(updates.get(record.id));
+    record.revision = (Number(record.revision) || 0) + 1;
+    changed += 1;
+  });
+  return changed;
 }

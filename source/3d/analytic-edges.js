@@ -1,6 +1,14 @@
 /* webCAD - Aristas analiticas derivadas de solidos documentales | SPDX-License-Identifier: GPL-3.0-or-later */
 
-import { booleanWeldTolerance } from './tolerances.js';
+import {
+  exactProfileToSketchPlaneV1,
+  pointFromExactProfilePlane,
+  pointOnExactProfilePlane,
+} from './sketch-plane.js';
+import {
+  booleanWeldTolerance,
+  coplanarFaceTolerance,
+} from './tolerances.js';
 
 const TWO_PI = Math.PI * 2;
 const DEFAULT_MAX_SEGMENT_ANGLE = Math.PI / 48;
@@ -130,12 +138,7 @@ function planeAxes(plane) {
 }
 
 function worldPoint(local, plane, offset = { x: 0, y: 0, z: 0 }) {
-  const origin = point3(plane?.origin);
-  const { xAxis, yAxis } = planeAxes(plane);
-  return add(add(add(
-    origin,
-    scale(xAxis, number(local?.x)),
-  ), scale(yAxis, -number(local?.y))), point3(offset));
+  return add(pointOnExactProfilePlane(local, plane), point3(offset));
 }
 
 function curveCandidate(segment, plane, offset, id) {
@@ -147,14 +150,23 @@ function curveCandidate(segment, plane, offset, id) {
   if (!(radiusX > 0) || !(radiusY > 0)) return null;
   const { xAxis, yAxis } = planeAxes(plane);
   const rotation = number(segment.rotation);
-  const uAxis = normalized(add(
-    scale(xAxis, Math.cos(rotation)),
-    scale(yAxis, -Math.sin(rotation)),
+  const localOrigin = worldPoint({ x: 0, y: 0, z: 0 }, plane);
+  const uAxis = normalized(subtract(
+    worldPoint({
+      x: Math.cos(rotation),
+      y: Math.sin(rotation),
+      z: 0,
+    }, plane),
+    localOrigin,
   ), xAxis);
-  const vAxis = normalized(add(
-    scale(xAxis, -Math.sin(rotation)),
-    scale(yAxis, -Math.cos(rotation)),
-  ), scale(yAxis, -1));
+  const vAxis = normalized(subtract(
+    worldPoint({
+      x: -Math.sin(rotation),
+      y: Math.cos(rotation),
+      z: 0,
+    }, plane),
+    localOrigin,
+  ), yAxis);
   const partial = segment.type === 'arc-circle' || segment.type === 'arc-ellipse';
   const startAngle = partial ? normalizeAngle(segment.startAngle) : 0;
   const endAngle = partial ? normalizeAngle(segment.endAngle) : 0;
@@ -496,12 +508,10 @@ function sampledLoopWithVertexKinds(loop, plane, offset) {
 }
 
 function localPointOnProfilePlane(point, plane, offset) {
-  const relative = subtract(subtract(point3(point), point3(plane?.origin)), point3(offset));
-  const { xAxis, yAxis } = planeAxes(plane);
-  return {
-    x: dot(relative, xAxis),
-    y: -dot(relative, yAxis),
-  };
+  return pointFromExactProfilePlane(
+    subtract(point3(point), point3(offset)),
+    plane,
+  );
 }
 
 function pointInPolygon(point, polygon) {
@@ -611,20 +621,21 @@ function exactProfileWithSegmentSources(metadata, entry, tolerance) {
 
 export function exactProfileWithAnalyticSources(solid, profile, regionId = null) {
   if (!profile?.plane) return profile ? JSON.parse(JSON.stringify(profile)) : null;
+  const normalizedProfile = exactProfileToSketchPlaneV1(profile);
   const entries = exactExtrusionProfiles(solid?.metadata);
   return exactProfileWithSegmentSources(solid?.metadata, {
     featureIndex: Array.isArray(solid?.metadata?.profileFeatures)
       ? solid.metadata.profileFeatures.length
       : null,
     operationType: null,
-    profile: JSON.parse(JSON.stringify(profile)),
+    profile: normalizedProfile,
     profileIndex: entries.length,
     regionId,
     offset: point3(null),
   }, Math.max(booleanWeldTolerance(solid), solidScale(solid) * 5e-6));
 }
 
-function semanticCapFaces(solid, requestedNormals, tolerance) {
+function rawSemanticCapFaces(solid, requestedNormals, tolerance) {
   return exactExtrusionProfiles(solid?.metadata).flatMap((entry) => {
     const {
     featureIndex,
@@ -704,6 +715,167 @@ function semanticCapFaces(solid, requestedNormals, tolerance) {
   });
 }
 
+function connectedFaceComponents(solid, faceIndices) {
+  const selected = new Set(faceIndices);
+  const edgeFaces = new Map();
+  faceIndices.forEach((faceIndex) => {
+    const face = solid.faces[faceIndex];
+    face.forEach((start, index) => {
+      const end = face[(index + 1) % face.length];
+      const key = edgeKey(start, end);
+      if (!edgeFaces.has(key)) edgeFaces.set(key, []);
+      edgeFaces.get(key).push(faceIndex);
+    });
+  });
+  const neighbors = new Map(faceIndices.map((faceIndex) => [faceIndex, []]));
+  edgeFaces.forEach((indices) => {
+    if (indices.length !== 2) return;
+    const [first, second] = indices;
+    if (!selected.has(first) || !selected.has(second)) return;
+    neighbors.get(first).push(second);
+    neighbors.get(second).push(first);
+  });
+  const visited = new Set();
+  return faceIndices.flatMap((faceIndex) => {
+    if (visited.has(faceIndex)) return [];
+    const component = [];
+    const pending = [faceIndex];
+    visited.add(faceIndex);
+    while (pending.length) {
+      const current = pending.pop();
+      component.push(current);
+      neighbors.get(current).forEach((neighbor) => {
+        if (visited.has(neighbor)) return;
+        visited.add(neighbor);
+        pending.push(neighbor);
+      });
+    }
+    return [component];
+  });
+}
+
+function componentBoundaryLoops(solid, component) {
+  const boundary = new Map();
+  component.forEach((faceIndex) => {
+    const face = solid.faces[faceIndex];
+    face.forEach((start, index) => {
+      const end = face[(index + 1) % face.length];
+      const key = edgeKey(start, end);
+      if (!boundary.has(key)) boundary.set(key, []);
+      boundary.get(key).push([start, end]);
+    });
+  });
+  const outgoing = new Map();
+  boundary.forEach((directed) => {
+    if (directed.length !== 1) return;
+    const [start, end] = directed[0];
+    if (!outgoing.has(start)) outgoing.set(start, []);
+    outgoing.get(start).push(end);
+  });
+  const unused = new Set([...outgoing.entries()].flatMap(([start, ends]) =>
+    ends.map((end) => `${start}:${end}`)));
+  const loops = [];
+  while (unused.size) {
+    const first = unused.values().next().value;
+    const [start, next] = first.split(':').map(Number);
+    const loop = [start];
+    let current = start;
+    let following = next;
+    for (let guard = 0; guard <= solid.vertices.length + unused.size; guard += 1) {
+      if (!unused.delete(`${current}:${following}`)) break;
+      current = following;
+      if (current === start) break;
+      loop.push(current);
+      const candidates = (outgoing.get(current) ?? []).filter((candidate) =>
+        unused.has(`${current}:${candidate}`));
+      if (candidates.length !== 1) break;
+      [following] = candidates;
+    }
+    if (loop.length >= 3 && current === start) {
+      loops.push(loop.map((vertexIndex) => point3(solid.vertices[vertexIndex])));
+    }
+  }
+  return loops;
+}
+
+function semanticCapFaces(solid, requestedNormals, tolerance) {
+  const caps = rawSemanticCapFaces(solid, requestedNormals, tolerance);
+  const profileEntries = exactExtrusionProfiles(solid?.metadata);
+  return caps.flatMap((cap) => {
+    const laterCaps = caps.filter((candidate) =>
+      candidate.profileIndex > cap.profileIndex &&
+      candidate.indices.some((faceIndex) => cap.indices.includes(faceIndex)));
+    const capPlane = cap.exactProfile?.plane;
+    const capNormal = normalized(point3(capPlane?.normal), cap.analyticAxis);
+    const semanticSubdivisions = cap.regionId
+      ? profileEntries.filter((entry) => {
+        if (entry.profileIndex <= cap.profileIndex) return false;
+        const entryPlane = entry.profile?.plane;
+        const entryNormal = normalized(point3(entryPlane?.normal), capNormal);
+        if (Math.abs(dot(entryNormal, capNormal)) < 1 - 1e-4 ||
+            Math.abs(dot(
+              subtract(point3(entryPlane?.origin), point3(capPlane?.origin)),
+              capNormal,
+            )) > tolerance) {
+          return false;
+        }
+        const semanticProfile = exactProfileWithSegmentSources(
+          solid?.metadata,
+          entry,
+          tolerance,
+        );
+        return [
+          semanticProfile?.outerLoop,
+          ...(semanticProfile?.innerLoops ?? []),
+        ].some((loop) => (loop?.segments ?? []).some((segment) =>
+          segment?.source?.role === 'profile-boundary' &&
+          segment.source.regionId === cap.regionId &&
+          segment.source.sourceBoundaryId));
+      })
+      : [];
+    if (!laterCaps.length && !semanticSubdivisions.length) return [cap];
+    const consumed = new Set(laterCaps.flatMap((candidate) => candidate.indices));
+    const remaining = cap.indices.filter((faceIndex) => !consumed.has(faceIndex));
+    if (!remaining.length) return [];
+    const subdivisionRegionIds = [...laterCaps, ...semanticSubdivisions]
+      .map((candidate) => candidate.regionId)
+      .filter(Boolean);
+    return connectedFaceComponents(solid, remaining).flatMap((indices, componentIndex) => {
+      const loops = componentBoundaryLoops(solid, indices);
+      if (!loops.length) return [];
+      const ordered = loops.map((loop) => {
+        const local = loop.map((point) =>
+          localPointOnProfilePlane(point, cap.exactProfile.plane, point3(null)));
+        const area = local.reduce((sum, point, index) => {
+          const next = local[(index + 1) % local.length];
+          return sum + point.x * next.y - next.x * point.y;
+        }, 0) * 0.5;
+        return { loop, area };
+      }).sort((first, second) => Math.abs(second.area) - Math.abs(first.area));
+      return [{
+        id: `analytic-residual-parent-${cap.profileIndex}-${cap.capIndex}-${componentIndex}`,
+        indices: [...indices].sort((first, second) => first - second),
+        kind: 'analytic-residual-parent',
+        normal: cap.normal,
+        outerLoop: ordered[0].loop,
+        innerLoops: ordered.slice(1).map((entry) => entry.loop),
+        cadProfileVertexIndices: ordered[0].loop.map((_, index) => index),
+        smoothProfileVertexIndices: [],
+        holeCadProfileVertexIndices: ordered.slice(1)
+          .map((entry) => entry.loop.map((_, index) => index)),
+        holeSmoothProfileVertexIndices: ordered.slice(1).map(() => []),
+        analyticAxis: cap.analyticAxis,
+        profileIndex: cap.profileIndex,
+        parentRegionId: cap.regionId,
+        creatorFeatureIndex: cap.featureIndex,
+        creatorOperationType: cap.operationType,
+        capIndex: cap.capIndex,
+        subdivisionRegionIds,
+      }];
+    });
+  });
+}
+
 function faceNormalFromVertices(face, vertices) {
   if (!Array.isArray(face) || face.length < 3) return null;
   const origin = point3(vertices[face[0]]);
@@ -769,6 +941,11 @@ function internalCoplanarEdgeKeys(solid, tolerance) {
   }));
 }
 
+function faceTopologyEdgeKeys(solid) {
+  return new Set(solid.faces.flatMap((face) => face.map((start, index) =>
+    edgeKey(start, face[(index + 1) % face.length]))));
+}
+
 export function deriveSolidAnalyticTopology(solid, options = {}) {
   if (!Array.isArray(solid?.vertices) || !Array.isArray(solid?.faces)) {
     return {
@@ -777,6 +954,7 @@ export function deriveSolidAnalyticTopology(solid, options = {}) {
       faceSurfaceIds: [],
       semanticPlanarFaces: [],
       boundarySideEdges: [],
+      transverseSideEdges: [],
       internalSideEdges: [],
       internalSideEdgeKeys: new Set(),
     };
@@ -832,7 +1010,7 @@ export function deriveSolidAnalyticTopology(solid, options = {}) {
       : [];
   });
   const surfaceById = new Map(sideSurfaces.map((surface) => [surface.id, surface]));
-  const boundarySideEdges = [...uses.entries()].flatMap(([key, use]) => {
+  const classifiedSideBoundaryEdges = [...uses.entries()].flatMap(([key, use]) => {
     const surfaceIds = [...new Set(use.faces
       .map((faceIndex) => faceSurfaceIds[faceIndex])
       .filter(Boolean))];
@@ -848,21 +1026,31 @@ export function deriveSolidAnalyticTopology(solid, options = {}) {
       const atStart = locations.every((location) => Math.abs(location.axial) <= tolerance);
       const atEnd = locations.every((location) =>
         Math.abs(location.axial - extrusionLength) <= tolerance);
-      if (!atStart && !atEnd) return [];
+      const transverse = Math.max(...locations.map((location) => location.axial)) -
+        Math.min(...locations.map((location) => location.axial)) <= tolerance;
+      if (!atStart && !atEnd && !transverse) return [];
       return [{
+        axial: locations.reduce((sum, location) => sum + location.axial, 0) /
+          locations.length,
         edge: [...use.edge],
         key,
         surfaceId,
-        capIndex: atStart ? 0 : 1,
+        capIndex: atStart ? 0 : atEnd ? 1 : null,
+        transverse,
       }];
     });
   });
+  const boundarySideEdges = classifiedSideBoundaryEdges.filter((entry) =>
+    entry.capIndex !== null);
+  const transverseSideEdges = classifiedSideBoundaryEdges.filter((entry) =>
+    entry.transverse);
   return {
     version: 1,
     sideSurfaces,
     faceSurfaceIds,
     semanticPlanarFaces: semanticCapFaces(solid, requestedNormals, tolerance),
     boundarySideEdges,
+    transverseSideEdges,
     internalSideEdges,
     internalSideEdgeKeys: new Set(internalSideEdges.map((entry) => entry.key)),
   };
@@ -1215,6 +1403,33 @@ function solidHasCurvePoint(solid, curve, parameter, tolerance) {
   return solid.vertices.some((point) => length(subtract(point3(point), target)) <= tolerance);
 }
 
+function semanticCapBoundaryEdgeKeys(solid, topology, curve) {
+  const semanticCaps = (topology?.semanticPlanarFaces ?? []).filter((group) =>
+    group.profileIndex === curve.profileIndex &&
+    group.capIndex === curve.capIndex &&
+    (group.regionId === curve.ownerRegionId ||
+      group.kind === 'analytic-residual-parent' &&
+      group.parentRegionId === curve.ownerRegionId));
+  if (!semanticCaps.length) return null;
+  const boundaries = new Set();
+  semanticCaps.forEach((group) => {
+    const uses = new Map();
+    group.indices.forEach((faceIndex) => {
+      const face = solid.faces[faceIndex];
+      if (!face) return;
+      face.forEach((start, index) => {
+        const end = face[(index + 1) % face.length];
+        const key = edgeKey(start, end);
+        uses.set(key, (uses.get(key) ?? 0) + 1);
+      });
+    });
+    uses.forEach((count, key) => {
+      if (count === 1) boundaries.add(key);
+    });
+  });
+  return boundaries;
+}
+
 function partialCurveComponents(solid, curve, matches, gapTolerance = 1e-4, tolerance = 1e-4) {
   const parameterGap = gapTolerance / Math.max(curve.sweep, 1e-9);
   const intervals = matches.map((match) => ({
@@ -1259,6 +1474,77 @@ function partialCurveComponents(solid, curve, matches, gapTolerance = 1e-4, tole
       sweep: curve.sweep * (interval.end - interval.start),
       sourceEdgeIndices: uniqueSourceEdges(interval.matches),
     }];
+  });
+}
+
+function transverseSurfaceBoundaryCurves(
+  solid,
+  analyticTopology,
+  tolerance,
+) {
+  const surfaceById = new Map(
+    analyticTopology.sideSurfaces.map((surface) => [surface.id, surface]),
+  );
+  const bucketsBySurface = new Map();
+  analyticTopology.transverseSideEdges.forEach((entry) => {
+    if (!Number.isFinite(entry.axial)) return;
+    if (!bucketsBySurface.has(entry.surfaceId)) {
+      bucketsBySurface.set(entry.surfaceId, []);
+    }
+    const buckets = bucketsBySurface.get(entry.surfaceId);
+    let bucket = buckets.find((candidate) =>
+      Math.abs(candidate.axial - entry.axial) <= tolerance);
+    if (!bucket) {
+      bucket = { axial: entry.axial, entries: [] };
+      buckets.push(bucket);
+    }
+    bucket.entries.push(entry);
+  });
+  return [...bucketsBySurface.entries()].flatMap(([surfaceId, buckets]) => {
+    const surface = surfaceById.get(surfaceId);
+    if (!surface?.closed) return [];
+    const axis = normalized(point3(surface.offset), { x: 0, y: 0, z: 1 });
+    const surfaceTolerance = analyticSurfaceTolerance(
+      solid,
+      surface,
+      tolerance,
+    );
+    return buckets.flatMap((bucket, bucketIndex) => {
+      const curve = {
+        ...surface,
+        id: `analytic-transverse-${surfaceId}-${bucketIndex}`,
+        center: add(
+          point3(surface.center),
+          scale(axis, bucket.axial),
+        ),
+        ownerRegionId: surface.regionId ?? null,
+        sideSurfaceId: surfaceId,
+        sourceEdgeIndices: [],
+      };
+      const matches = bucket.entries
+        .map((entry) =>
+          edgeCurveMatch(solid, entry.edge, curve, surfaceTolerance))
+        .filter(Boolean);
+      const angularTolerance = Math.max(
+        1e-4,
+        surfaceTolerance / Math.max(curve.radiusX, curve.radiusY),
+      );
+      return validConnectedCurveMatches(
+        curve,
+        matches,
+        angularTolerance,
+      ).flatMap((component, componentIndex) => {
+        const reconstructionGapTolerance = Math.max(
+          angularTolerance,
+          largestMatchAngularSpan(component) * 1.05,
+        );
+        return closedCurveComponents({
+          ...curve,
+          id: `${curve.id}-${componentIndex}`,
+        }, component, reconstructionGapTolerance)
+          .filter((candidate) => candidate.closed);
+      });
+    });
   });
 }
 
@@ -1321,13 +1607,22 @@ export function deriveSolidAnalyticEdges(solid, options = {}) {
       .filter((assignment) => assignment.candidateIndex === candidateIndex)
       .map((assignment) => assignment.match);
     const matches = boundaryMatches.length ? boundaryMatches : fallbackMatches;
+    const semanticBoundaryEdges = semanticCapBoundaryEdgeKeys(
+      solid,
+      analyticTopology,
+      curve,
+    );
+    const semanticMatches = semanticBoundaryEdges
+      ? matches.filter((match) =>
+        semanticBoundaryEdges.has(edgeKey(match.edge[0], match.edge[1])))
+      : matches;
     const angularTolerance = Math.max(
       1e-4,
       boundaryTolerance / Math.max(curve.radiusX, curve.radiusY),
     );
     const validMatches = validConnectedCurveMatches(
       curve,
-      matches,
+      semanticMatches,
       angularTolerance,
     ).flat();
     const reconstructionGapTolerance = Math.max(
@@ -1348,7 +1643,11 @@ export function deriveSolidAnalyticEdges(solid, options = {}) {
       reconstructionGapTolerance,
       boundaryTolerance,
     );
-  });
+  }).concat(transverseSurfaceBoundaryCurves(
+    solid,
+    analyticTopology,
+    tolerance,
+  ));
   const resolvedCurves = reconstructedCurves.filter((curve) =>
     curve.closed ||
     curve.sweep * Math.max(curve.radiusX, curve.radiusY) > meshTolerance);
@@ -1356,7 +1655,11 @@ export function deriveSolidAnalyticEdges(solid, options = {}) {
   const consumed = new Set(curves.flatMap((curve) =>
     curve.sourceEdgeIndices.map((edge) => edgeKey(edge[0], edge[1]))));
   const rejectedCurveSeams = new Set(assigned.keys());
-  const coplanarInternalEdges = internalCoplanarEdgeKeys(solid, meshTolerance);
+  const coplanarInternalEdges = internalCoplanarEdgeKeys(
+    solid,
+    coplanarFaceTolerance(solid),
+  );
+  const topologyEdges = faceTopologyEdgeKeys(solid);
   const rawLines = solid.edges.flatMap((edge, index) => {
     const key = edgeKey(edge[0], edge[1]);
     const exactLineCandidate = exactLineCandidateForEdge(
@@ -1366,6 +1669,7 @@ export function deriveSolidAnalyticEdges(solid, options = {}) {
       meshTolerance,
     );
     if (
+      !topologyEdges.has(key) ||
       consumed.has(key) ||
       rejectedCurveSeams.has(key) ||
       coplanarInternalEdges.has(key) ||

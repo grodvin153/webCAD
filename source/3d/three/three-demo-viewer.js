@@ -13,16 +13,25 @@ import {
   pointFromSketchPlane,
   pointOnSketchPlane,
   principalSketchPlane,
+  sketchPlaneFromFace,
 } from '../sketch-plane.js';
 import {
   faceOverlapsSketchSupport,
   faceTouchesSketchSupport,
   sketchSupportBoundaryEntities,
+  snapshotSketchSupportFace,
 } from '../sketch-reference.js';
 import { entitiesToThreeEntityGroup } from './entity-line-objects.js';
 import { visibleEntitiesForThreeView } from './entity-visibility.js';
-import { pushSourceKeyFromEntity, pushSourceKeyFromFace } from './push-geometry.js';
-import { createPushCommand } from './push-command.js';
+import {
+  pushSourceKeyFromAnalyticRegion,
+  pushSourceKeyFromEntity,
+  pushSourceKeyFromFace,
+} from './push-geometry.js';
+import {
+  createPushCommand,
+  pushStrategyForFace,
+} from './push-command.js';
 import { initializeManifoldBoolean } from './manifold-boolean.js';
 import { nearestSolidEdgeAtPointer } from './solid-edge-interaction.js';
 import { nearestSolidObjectSnap } from './solid-object-snaps.js';
@@ -31,10 +40,25 @@ import {
   createSolidFaceSelectionMesh,
   SOLID_FACE_HOVER_RENDER_ORDER,
   SOLID_FACE_SUPPORT_RENDER_ORDER,
+  solidFaceToLocal,
+  solidFaceToWorld,
   solidFaceFromMeshHit,
   solidFaceFromPlanarGroup,
+  solidPlanarFacesFromMesh,
 } from './solid-face-selection.js';
 import { configureThreeNavigationControls } from './three-navigation-controls.js';
+import {
+  createLine3dCommand,
+  createLine3dTransformCommand,
+  coplanarLine3dPlane,
+  line3dBoundaryIntersectionPoints,
+  line3dEntitiesFromWorldPoints,
+  line3dRecordSnapCandidates,
+  line3dSupportFaceForPoints,
+  splitLine3dSegmentsAtIntersections,
+  transformLine3dRecords,
+} from './line3d-command.js';
+import { createSolidTransformCommands } from './solid-transform-command.js';
 import { updatePushSilhouettes } from './push-silhouette.js';
 import { cameraClipRangeForBounds } from './camera-clipping.js';
 import {
@@ -60,6 +84,76 @@ const CAMERA_EDGE_TYPES = new Set([
 
 function viewerClock() {
   return globalThis.performance?.now?.() ?? Date.now();
+}
+
+export function operationFromPushFace(
+  face,
+  session,
+  currentSketchPlane = 'XY',
+  resultSolid = null,
+) {
+  const sourceFace = face?.localFace ?? face;
+  const line3dGroupId = face?.line3dGroupId ?? sourceFace?.line3dGroupId ?? null;
+  const strategy = pushStrategyForFace(sourceFace);
+  if (strategy === 'profileFeature') {
+    const distance = session?.height ?? null;
+    const additive = face.supportContactOnly === true || distance >= 0;
+    const resultOperation =
+      resultSolid?.metadata?.exactGeometry?.operations?.at(-1) ??
+      resultSolid?.metadata?.profileFeatures?.at(-1) ??
+      null;
+    const exactOperation = resultOperation?.type ===
+        (additive ? 'union' : 'subtract') &&
+      Math.abs(Number(resultOperation.requestedDistance ??
+        resultOperation.distance) - Number(distance)) <= 1e-9
+      ? resultOperation
+      : null;
+    const analyticRegionId =
+      exactOperation?.analyticRegionId ??
+      face.analyticRegionId ??
+      null;
+    return {
+      type: additive ? 'pushUnionProfile' : 'pushSubtractProfile',
+      distance,
+      tangentContact: face.supportContactOnly === true,
+      sourceSolidDocumentId: sourceFace.sourceSolidDocumentId ?? null,
+      sourceSolidFaceIndices: sourceFace.sourceSolidFaceIndices ?? null,
+      sketchPlane: sourceFace.sketchPlane ?? currentSketchPlane,
+      sketchId: sourceFace.sketchId ?? null,
+      ...(line3dGroupId ? { line3dGroupId } : {}),
+      workplane: sourceFace.workplane ?? null,
+      exactProfile: exactOperation?.exactProfile ?? sourceFace.exactProfile ?? null,
+      analyticRegionId,
+      sourceKey: pushSourceKeyFromAnalyticRegion(analyticRegionId) ??
+        session?.sourceKey ??
+        pushSourceKeyFromFace(sourceFace),
+    };
+  }
+  if (strategy === 'moveFace') {
+    return {
+      type: 'pushMoveFace',
+      distance: session?.height ?? null,
+      sourceSolidDocumentId: sourceFace.sourceSolidDocumentId ?? null,
+      sourceSolidFaceIndex: sourceFace.sourceSolidFaceIndex ?? null,
+      sourceSolidFaceIndices: sourceFace.sourceSolidFaceIndices ?? null,
+      sketchPlane: sourceFace.sketchPlane ?? currentSketchPlane,
+      sketchId: sourceFace.sketchId ?? null,
+      ...(line3dGroupId ? { line3dGroupId } : {}),
+      workplane: sourceFace.workplane ?? null,
+      sourceKey: session?.sourceKey ?? pushSourceKeyFromFace(sourceFace),
+    };
+  }
+  return {
+    type: 'pushFromProfile',
+    distance: session?.height ?? null,
+    sourceEntityId: sourceFace?.sourceEntity?.id ?? sourceFace?.sourceEntity?.handle ?? null,
+    sourceEntityType: sourceFace?.sourceEntity?.type ?? null,
+    sketchPlane: sourceFace?.sketchPlane ?? currentSketchPlane,
+    sketchId: sourceFace?.sketchId ?? null,
+    ...(line3dGroupId ? { line3dGroupId } : {}),
+    workplane: sourceFace?.workplane ?? null,
+    sourceKey: session?.sourceKey ?? pushSourceKeyFromFace(sourceFace),
+  };
 }
 
 export async function createThreeDemoViewer(canvas, {
@@ -92,6 +186,7 @@ export async function createThreeDemoViewer(canvas, {
   controls.screenSpacePanning = true;
 
   let drawingLines = null;
+  let spatialLines = null;
   let faceGroup = null;
   let selectedFace = null;
   let hoveredSketchFace = null;
@@ -101,6 +196,10 @@ export async function createThreeDemoViewer(canvas, {
   let solidEdgeHighlight = null;
   let solidEdgeHighlightKey = null;
   let solidSnapMarker = null;
+  let solidTransformCommands = null;
+  let line3dCommand = null;
+  let line3dTransformCommand = null;
+  const selectedLine3dIds = new Set();
   const selectedDocumentSolidIds = new Set();
   let deleteSolidMode = false;
   let grid = null;
@@ -259,6 +358,7 @@ export async function createThreeDemoViewer(canvas, {
       event,
       solidObjects: pushCommand.getSolidObjects?.() ?? [],
       maxDistancePixels: 20,
+      includeHidden: hiddenEdgesVisible,
       acceptCandidate: (snap) => isUsablePushSnap(face, snap),
     }),
     onObjectSnap: setSolidSnapMarker,
@@ -269,14 +369,40 @@ export async function createThreeDemoViewer(canvas, {
       const sourceSolidDocumentId = face?.sourceSolidDocumentId ?? null;
       let documentRecord = null;
       if (doc && solid) {
-        const operation = operationFromPush(face, session);
+        const operation = operationFromPushFace(
+          face,
+          session,
+          currentSketchPlane,
+          solid,
+        );
         documentRecord = sourceSolidDocumentId
           ? doc.replace3dSolid?.(sourceSolidDocumentId, solid, { operation })
           : doc.add3dSolid?.(solid, { operation });
         if (documentRecord) {
           pushCommand.tagDocumentSolidGroup?.(finalSolidGroup, documentRecord);
           setSelectedDocumentSolid(documentRecord.id);
-          if (face?.sketchId) {
+          if (face?.line3dGroupId) {
+            doc.set3dLineGroupVisibility?.(
+              face.line3dGroupId,
+              false,
+              { recordHistory: false },
+            );
+            spatialLines?.children?.forEach((object) => {
+              if (object.userData?.lineGroupId === face.line3dGroupId) {
+                object.visible = false;
+              }
+            });
+            faceGroup?.traverse?.((object) => {
+              if (object.userData?.line3dGroupId === face.line3dGroupId ||
+                  object.userData?.face?.line3dGroupId === face.line3dGroupId) {
+                object.visible = false;
+              }
+            });
+            (doc?.model3d?.lines ?? []).filter((line) =>
+              line.groupId === face.line3dGroupId).forEach((line) =>
+              selectedLine3dIds.delete(line.id));
+          }
+          else if (face?.sketchId) {
             doc.set3dSketchVisibility?.(face.sketchId, false, { recordHistory: false });
             drawingLines?.traverse?.((object) => {
               if (object.userData?.sketchId === face.sketchId) object.visible = false;
@@ -333,48 +459,6 @@ export async function createThreeDemoViewer(canvas, {
       record?.solid?.metadata?.sourceKey ??
       record?.operation?.sourceKey ??
       null;
-  }
-
-  function operationFromPush(face, session) {
-    if (face?.supportSolid) {
-      const distance = session?.height ?? null;
-      const additive = face.supportContactOnly === true || distance >= 0;
-      return {
-        type: additive ? 'pushUnionProfile' : 'pushSubtractProfile',
-        distance,
-        tangentContact: face.supportContactOnly === true,
-        sourceSolidDocumentId: face.sourceSolidDocumentId ?? null,
-        sourceSolidFaceIndices: face.sourceSolidFaceIndices ?? null,
-        sketchPlane: face.sketchPlane ?? currentSketchPlane,
-        sketchId: face.sketchId ?? null,
-        workplane: face.workplane ?? null,
-        exactProfile: face.exactProfile ?? null,
-        sourceKey: session?.sourceKey ?? pushSourceKeyFromFace(face),
-      };
-    }
-    if (face?.sourceSolid) {
-      return {
-        type: 'pushMoveFace',
-        distance: session?.height ?? null,
-        sourceSolidDocumentId: face.sourceSolidDocumentId ?? null,
-        sourceSolidFaceIndex: face.sourceSolidFaceIndex ?? null,
-        sourceSolidFaceIndices: face.sourceSolidFaceIndices ?? null,
-        sketchPlane: face.sketchPlane ?? currentSketchPlane,
-        sketchId: face.sketchId ?? null,
-        workplane: face.workplane ?? null,
-        sourceKey: session?.sourceKey ?? pushSourceKeyFromFace(face),
-      };
-    }
-    return {
-      type: 'pushFromProfile',
-      distance: session?.height ?? null,
-      sourceEntityId: face?.sourceEntity?.id ?? face?.sourceEntity?.handle ?? null,
-      sourceEntityType: face?.sourceEntity?.type ?? null,
-      sketchPlane: face?.sketchPlane ?? currentSketchPlane,
-      sketchId: face?.sketchId ?? null,
-      workplane: face?.workplane ?? null,
-      sourceKey: session?.sourceKey ?? pushSourceKeyFromFace(face),
-    };
   }
 
   function clearSelectedFaceVisual() {
@@ -516,9 +600,11 @@ export async function createThreeDemoViewer(canvas, {
       scene.add(solidSnapMarker);
     }
     const colors = {
+      origin: 0xffffff,
       endpoint: 0x00d9ff,
       midpoint: 0x48d85b,
       center: 0xff4fd8,
+      quadrant: 0xff8c42,
       faceCenter: 0xffcf4d,
     };
     solidSnapMarker.position.set(Number(snap.point.x), Number(snap.point.y), Number(snap.point.z));
@@ -552,6 +638,36 @@ export async function createThreeDemoViewer(canvas, {
 
   function setSelectedDocumentSolid(id) {
     setSelectedDocumentSolids(id ? [id] : []);
+  }
+
+  function refreshSelectedLine3dVisuals() {
+    spatialLines?.children?.forEach((object) => {
+      const selected = selectedLine3dIds.has(object.userData?.lineId);
+      object.material?.color?.setHex(
+        selected ? 0xffd166 : THREE_VIEW_STYLE.drawingColor,
+      );
+      if (object.material) {
+        object.material.linewidth = selected
+          ? THREE_VIEW_STYLE.drawingLineWidth + 1
+          : THREE_VIEW_STYLE.drawingLineWidth;
+        object.material.needsUpdate = true;
+      }
+    });
+  }
+
+  function clearSelectedLine3d() {
+    if (!selectedLine3dIds.size) return false;
+    selectedLine3dIds.clear();
+    refreshSelectedLine3dVisuals();
+    return true;
+  }
+
+  function addSelectedLine3d(lineId, { toggle = false } = {}) {
+    if (!lineId) return false;
+    if (toggle && selectedLine3dIds.has(lineId)) selectedLine3dIds.delete(lineId);
+    else selectedLine3dIds.add(lineId);
+    refreshSelectedLine3dVisuals();
+    return true;
   }
 
   function addSelectedDocumentSolid(id) {
@@ -617,11 +733,23 @@ export async function createThreeDemoViewer(canvas, {
     );
   }
 
+  function differsFromPoint(candidate, point, tolerance = 1e-7) {
+    if (!point || !candidate?.point) return true;
+    return vectorFromPoint(candidate.point).distanceTo(vectorFromPoint(point)) > tolerance;
+  }
+
   function solidHitAtPointer() {
     const solidObjects = pushCommand.getSolidObjects?.() ?? [];
     if (!solidObjects.length) return null;
     return raycaster.intersectObjects(solidObjects, true)
       .find((candidate) => candidate?.object?.userData?.type === 'webcad-push-solid');
+  }
+
+  function worldFaceFromLocal(face) {
+    if (!face?.sourceSolidDocumentId) return face;
+    const record = doc?.model3d?.solids?.find((candidate) =>
+      candidate?.id === face.sourceSolidDocumentId);
+    return solidFaceToWorld(face, record?.placement);
   }
 
   function isVisibleInScene(object) {
@@ -641,6 +769,19 @@ export async function createThreeDemoViewer(canvas, {
           (Number(second.object.userData?.face?.area) || Infinity);
         return Math.abs(areaDifference) > 1e-9 ? areaDifference : first.distance - second.distance;
       })[0] ?? null;
+  }
+
+  function line3dSketchHitAtPointer() {
+    if (!spatialLines?.children?.length) return null;
+    const hit = raycaster.intersectObjects(spatialLines.children, true)
+      .find((candidate) => candidate?.object?.userData?.lineId);
+    return hit
+      ? {
+        hit,
+        lineId: hit.object.userData.lineId,
+        groupId: hit.object.userData.lineGroupId,
+      }
+      : null;
   }
 
   function pointSegmentDistance2d(point, start, end) {
@@ -667,13 +808,16 @@ export async function createThreeDemoViewer(canvas, {
     let best = null;
     (pushCommand.getSolidObjects?.() ?? []).forEach((group) => {
       const mesh = group.children?.find((child) => child.userData?.type === 'webcad-push-solid');
-      const solid = mesh?.userData?.solid;
+      const solid = mesh?.userData?.analyticSolid ?? mesh?.userData?.solid;
+      mesh?.updateWorldMatrix?.(true, false);
       (solid?.metadata?.tangentEdges ?? []).forEach((edge) => {
         const start = solid.vertices?.[edge.startIndex];
         const end = solid.vertices?.[edge.endIndex];
         if (!start || !end) return;
-        const projectedStart = vectorFromPoint(start).project(camera);
-        const projectedEnd = vectorFromPoint(end).project(camera);
+        const worldStart = vectorFromPoint(start).applyMatrix4(mesh.matrixWorld);
+        const worldEnd = vectorFromPoint(end).applyMatrix4(mesh.matrixWorld);
+        const projectedStart = worldStart.clone().project(camera);
+        const projectedEnd = worldEnd.clone().project(camera);
         if (projectedStart.z < -1 && projectedEnd.z < -1 ||
             projectedStart.z > 1 && projectedEnd.z > 1) return;
         const startPixels = new THREE.Vector2(
@@ -685,13 +829,15 @@ export async function createThreeDemoViewer(canvas, {
           (1 - projectedEnd.y) * currentHeight * 0.5,
         );
         const screenDistance = pointSegmentDistance2d(pointerPixels, startPixels, endPixels);
-        const midpoint = vectorFromPoint(start).add(vectorFromPoint(end)).multiplyScalar(0.5);
+        const midpoint = worldStart.clone().add(worldEnd).multiplyScalar(0.5);
         const cameraDistance = camera.position.distanceTo(midpoint);
         if (screenDistance > maxDistancePixels ||
             best && (screenDistance > best.screenDistance + 0.25 ||
               Math.abs(screenDistance - best.screenDistance) <= 0.25 &&
               cameraDistance >= best.cameraDistance)) return;
-        const face = solidFaceFromPlanarGroup(mesh, edge.planarGroupIndex);
+        const face = worldFaceFromLocal(
+          solidFaceFromPlanarGroup(mesh, edge.planarGroupIndex),
+        );
         if (face) best = { cameraDistance, face, screenDistance };
       });
     });
@@ -699,7 +845,9 @@ export async function createThreeDemoViewer(canvas, {
   }
 
   function hoverFace(event) {
-    if (pushCommand.isActive() || deleteSolidMode || event.buttons) {
+    if (pushCommand.isActive() || solidTransformCommands?.isActive() ||
+        line3dCommand?.isActive() || line3dTransformCommand?.isActive() ||
+        deleteSolidMode || event.buttons) {
       clearHoveredFaceVisual();
       clearHoveredSolidEdge();
       return;
@@ -725,7 +873,7 @@ export async function createThreeDemoViewer(canvas, {
       renderFrame();
       return;
     }
-    const solidFace = solidFaceFromMeshHit(solidHitAtPointer());
+    const solidFace = worldFaceFromLocal(solidFaceFromMeshHit(solidHitAtPointer()));
     if (solidFace) {
       setHoveredSolidFace(solidFace);
       renderFrame();
@@ -742,7 +890,7 @@ export async function createThreeDemoViewer(canvas, {
   }
 
   function pickSolidFace(event, hit = solidHitAtPointer()) {
-    const face = solidFaceFromMeshHit(hit);
+    const face = worldFaceFromLocal(solidFaceFromMeshHit(hit));
     if (!face) return false;
     const selectionMesh = createSolidFaceSelectionMesh(face);
     if (!selectionMesh) return false;
@@ -755,6 +903,20 @@ export async function createThreeDemoViewer(canvas, {
   function pickFace(event) {
     if (pushCommand.isActive()) return;
     setPointerFromEvent(event);
+    const line3dHit = line3dSketchHitAtPointer();
+    if (line3dHit) {
+      setSelectedFace(null);
+      setSelectedSolidEdge(null);
+      setSelectedDocumentSolids();
+      addSelectedLine3d(line3dHit.lineId, {
+        toggle: event.shiftKey || event.ctrlKey || event.metaKey,
+      });
+      const count = selectedLine3dIds.size;
+      onStatus?.(`${count} línea${count === 1 ? '' : 's'} 3D seleccionada${count === 1 ? '' : 's'}`);
+      renderFrame();
+      return;
+    }
+    clearSelectedLine3d();
     const solidHit = solidHitAtPointer();
     if (deleteSolidMode) {
       const id = solidHit?.object?.userData?.documentSolidId ?? null;
@@ -840,7 +1002,25 @@ export async function createThreeDemoViewer(canvas, {
     return deleteDocumentSolids([...selectedDocumentSolidIds]);
   }
 
+  function deleteSelectedLine3d() {
+    if (line3dCommand?.isActive() || line3dTransformCommand?.isActive()) return false;
+    const ids = [...selectedLine3dIds].filter((id) =>
+      doc?.model3d?.lines?.some((line) => line?.id === id && line.locked !== true));
+    if (!ids.length) return false;
+    const removed = doc.remove3dLines?.(ids) ?? 0;
+    if (!removed) return false;
+    selectedLine3dIds.clear();
+    setEntities(documentEntitiesForViewer(), { preserveView: true });
+    onStatus?.(`${removed} línea${removed === 1 ? '' : 's'} 3D borrada${removed === 1 ? '' : 's'}`);
+    return true;
+  }
+
+  function deleteSelected3d() {
+    return deleteSelectedLine3d() || deleteSelectedSolid();
+  }
+
   function startDeleteSolid() {
+    if (selectedLine3dIds.size) return deleteSelectedLine3d();
     deleteSolidMode = true;
     clearSelectedFaceVisual();
     selectedFace = null;
@@ -887,6 +1067,12 @@ export async function createThreeDemoViewer(canvas, {
       if (selectedFace) {
         setSelectedFace(null);
         onStatus?.('');
+        return;
+      }
+      if (selectedLine3dIds.size) {
+        clearSelectedLine3d();
+        onStatus?.('');
+        renderFrame();
       }
     }
   }
@@ -954,6 +1140,10 @@ export async function createThreeDemoViewer(canvas, {
         Number(vertex?.y) || 0,
         Number(vertex?.z) || 0,
       )));
+    });
+    (doc?.model3d?.lines ?? []).forEach((line) => {
+      documentBounds.expandByPoint(vectorFromPoint(line.start));
+      documentBounds.expandByPoint(vectorFromPoint(line.end));
     });
     if (documentBounds.isEmpty()) {
       documentBounds.set(
@@ -1027,20 +1217,69 @@ export async function createThreeDemoViewer(canvas, {
     const records = Array.isArray(doc?.model3d?.sketches)
       ? doc.model3d.sketches.filter((record) => record?.visible !== false)
       : [];
-    if (records.length) return records;
+    const groups = new Map();
+    (doc?.model3d?.lines ?? []).forEach((line) => {
+      if (line?.visible === false) return;
+      if (!groups.has(line.groupId)) groups.set(line.groupId, []);
+      groups.get(line.groupId).push(line);
+    });
+    let fallbackPlanarFaces = null;
+    const spatialFaceRecords = [...groups.entries()].map(([groupId, lines]) => {
+      const storedSupportFace = lines[0]?.metadata?.supportFace ?? null;
+      const storedSupportPlane = lines[0]?.metadata?.supportPlane ?? null;
+      let inferredSupport = null;
+      if (!storedSupportFace) {
+        fallbackPlanarFaces ??= documentPlanarFaces();
+        inferredSupport = line3dSupportFaceForPoints([
+          lines[0].start,
+          ...lines.map((line) => line.end),
+        ], fallbackPlanarFaces);
+      }
+      const plane = storedSupportPlane
+        ? normalizeSketchPlane(storedSupportPlane)
+        : inferredSupport?.plane ?? coplanarLine3dPlane(lines);
+      if (!plane) return null;
+      const supportFace = storedSupportFace ?? (inferredSupport
+        ? snapshotSketchSupportFace(
+          inferredSupport.face,
+          inferredSupport.plane,
+          doc?.model3d,
+        )
+        : null);
+      return {
+        id: `line3d-face-${groupId}`,
+        name: `Cara ${groupId}`,
+        plane,
+        entities: lines.flatMap((line) =>
+          line3dEntitiesFromWorldPoints([line.start, line.end], plane, {
+            idPrefix: line.id,
+          })),
+        visible: true,
+        metadata: {
+          facesOnly: true,
+          lineGroupId: groupId,
+          supportFace,
+        },
+      };
+    }).filter(Boolean);
+    if (records.length) return [...records, ...spatialFaceRecords];
     return [{
       id: null,
       name: 'Dibujo 2D pendiente',
       plane: principalSketchPlane(currentSketchPlane),
       entities: nextEntities,
       visible: true,
-    }];
+    }, ...spatialFaceRecords];
   }
 
   function setEntities(nextEntities, { preserveView = false } = {}) {
     if (drawingLines) {
       scene.remove(drawingLines);
       disposeThreeObject(drawingLines);
+    }
+    if (spatialLines) {
+      scene.remove(spatialLines);
+      disposeThreeObject(spatialLines);
     }
     if (faceGroup) {
       scene.remove(faceGroup);
@@ -1052,7 +1291,6 @@ export async function createThreeDemoViewer(canvas, {
     deleteSolidMode = false;
     pushedSourceEntities.clear();
     pushedSourceKeys.clear();
-    const sketchRecords = sketchRecordsForViewer(nextEntities);
     faceGroup = new THREE.Group();
     faceGroup.name = 'webcad-3d-simple-faces';
     pushCommand.clearSolids();
@@ -1065,11 +1303,41 @@ export async function createThreeDemoViewer(canvas, {
         pushedSourceKeys.add(sourceKey);
       }
     });
+    const sketchRecords = sketchRecordsForViewer(nextEntities);
     drawingLines = new THREE.Group();
     drawingLines.name = 'webcad-3d-sketches';
     drawingLines.userData.bounds = new THREE.Box3().makeEmpty();
     drawingLines.userData.entityCount = 0;
     drawingLines.userData.segmentCount = 0;
+    spatialLines = new THREE.Group();
+    spatialLines.name = 'webcad-3d-spatial-lines';
+    const visibleLineIds = new Set((doc?.model3d?.lines ?? [])
+      .filter((line) => line?.visible !== false)
+      .map((line) => line.id));
+    [...selectedLine3dIds].forEach((id) => {
+      if (!visibleLineIds.has(id)) selectedLine3dIds.delete(id);
+    });
+    (doc?.model3d?.lines ?? []).forEach((line) => {
+      if (line?.visible === false) return;
+      const selected = selectedLine3dIds.has(line.id);
+      const object = createWideLineSegments([{
+        start: line.start,
+        end: line.end,
+      }], {
+        color: selected ? 0xffd166 : THREE_VIEW_STYLE.drawingColor,
+        depthTest: true,
+        depthWrite: false,
+        linewidth: selected
+          ? THREE_VIEW_STYLE.drawingLineWidth + 1
+          : THREE_VIEW_STYLE.drawingLineWidth,
+        renderOrder: THREE_VIEW_STYLE.drawingRenderOrder,
+        transparent: true,
+      });
+      object.userData.lineId = line.id;
+      object.userData.lineGroupId = line.groupId;
+      object.userData.line = line;
+      spatialLines.add(object);
+    });
     const solidGroupForDocumentId = (id) => (pushCommand.getSolidObjects?.() ?? [])
       .find((group) => group.userData?.documentSolidId === id) ?? null;
     sketchRecords.forEach((sketch) => {
@@ -1081,8 +1349,13 @@ export async function createThreeDemoViewer(canvas, {
       ];
       const sketchFaceGroup = new THREE.Group();
       sketchFaceGroup.userData.sketchId = sketch.id ?? null;
+      sketchFaceGroup.userData.line3dGroupId = sketch.metadata?.lineGroupId ?? null;
       detectSimpleClosedFaces(faceDetectionEntities).forEach((face) => {
         const worldFace = faceOnSketchPlane(face, plane, sketch.id ?? null);
+        if (sketch.metadata?.lineGroupId) {
+          worldFace.line3dGroupId = sketch.metadata.lineGroupId;
+          worldFace.sketchId = null;
+        }
         const support = sketch.metadata?.supportFace;
         const supportRecord = support?.sourceSolidId
           ? doc?.model3d?.solids?.find((record) => record.id === support.sourceSolidId)
@@ -1111,6 +1384,8 @@ export async function createThreeDemoViewer(canvas, {
             outer: (support.outerLoop ?? []).map(supportPointToWorld),
             holes: (support.innerLoops ?? []).map((loop) => loop.map(supportPointToWorld)),
           };
+          worldFace.placement = supportRecord.placement;
+          worldFace.localFace = solidFaceToLocal(worldFace, supportRecord.placement);
         }
         const faceMesh = createFaceMesh(face);
         faceMesh.userData.face = worldFace;
@@ -1144,9 +1419,12 @@ export async function createThreeDemoViewer(canvas, {
       applySketchPlaneTransform(sketchFaceGroup, plane);
       faceGroup.add(sketchFaceGroup);
 
-      const sketchLines = entitiesToThreeEntityGroup(visibleEntities, {
+      const sketchLines = entitiesToThreeEntityGroup(
+        sketch.metadata?.facesOnly ? [] : visibleEntities,
+        {
         onWarning: (message) => console.warn(message),
-      });
+        },
+      );
       sketchLines.userData.sketchId = sketch.id ?? null;
       const localBounds = sketchLines.userData.bounds;
       applySketchPlaneTransform(sketchLines, plane);
@@ -1160,6 +1438,7 @@ export async function createThreeDemoViewer(canvas, {
     pushCommand.setHiddenEdges(hiddenEdgesVisible);
     scene.add(faceGroup);
     scene.add(drawingLines);
+    scene.add(spatialLines);
     applyPushedSourceVisibility();
     updateWideLineResolution(drawingLines, currentWidth, currentHeight);
     if (!preserveView) fitCameraToDrawing();
@@ -1205,6 +1484,22 @@ export async function createThreeDemoViewer(canvas, {
   function selectedPlanarFace() {
     const face = selectedFace?.userData?.face;
     return face?.sourceSolid ? face : null;
+  }
+
+  function documentPlanarFaces() {
+    const faces = [];
+    const meshes = new Set();
+    (pushCommand.getSolidObjects?.() ?? []).forEach((group) => {
+      group?.traverse?.((object) => {
+        if (object?.userData?.type !== 'webcad-push-solid' || meshes.has(object)) return;
+        meshes.add(object);
+        solidPlanarFacesFromMesh(object).forEach((face) => {
+          const worldFace = worldFaceFromLocal(face);
+          if (worldFace) faces.push(worldFace);
+        });
+      });
+    });
+    return faces;
   }
 
   function renderFrame(frameTime) {
@@ -1284,6 +1579,7 @@ export async function createThreeDemoViewer(canvas, {
     controls.dispose();
     navigation.dispose();
     disposeThreeObject(drawingLines);
+    disposeThreeObject(spatialLines);
     disposeThreeObject(faceGroup);
     scene.remove(solidSnapMarker);
     disposeThreeObject(solidSnapMarker);
@@ -1292,8 +1588,234 @@ export async function createThreeDemoViewer(canvas, {
     disposeThreeObject(axes);
     disposeThreeObject(lights);
     pushCommand.dispose();
+    solidTransformCommands?.dispose();
+    line3dCommand?.dispose();
+    line3dTransformCommand?.dispose();
     renderer.dispose();
   }
+
+  solidTransformCommands = createSolidTransformCommands({
+    camera,
+    canvas: renderer.domElement,
+    doc,
+    getSelectedSolidIds: () => {
+      const selectedIds = [...selectedDocumentSolidIds];
+      const faceSolidId = selectedFace?.userData?.face?.sourceSolidDocumentId;
+      return selectedIds.length || !faceSolidId ? selectedIds : [faceSolidId];
+    },
+    getSolidIdAtPointer: (event) => {
+      setPointerFromEvent(event);
+      return solidHitAtPointer()?.object?.userData?.documentSolidId ?? null;
+    },
+    getSolidObjects: () => pushCommand.getSolidObjects?.() ?? [],
+    getSnap: (event, context = {}) => nearestSolidObjectSnap({
+      camera,
+      canvas: renderer.domElement,
+      event,
+      solidObjects: pushCommand.getSolidObjects?.() ?? [],
+      maxDistancePixels: 20,
+      includeHidden: hiddenEdgesVisible,
+      excludeDocumentSolidIds:
+        (context.mode === 'move' || context.mode === 'copy') &&
+        context.phase === 'destination'
+          ? context.solidIds
+          : [],
+    }),
+    getWorkplane: () => ({
+      origin: { x: 0, y: 0, z: 0 },
+      normal: principalPlaneDefinition(currentSketchPlane).normal,
+    }),
+    onChanged: () => setEntities(documentEntitiesForViewer(), { preserveView: true }),
+    onSelection: (ids) => {
+      clearHoveredFaceVisual();
+      clearHoveredSolidEdge();
+      if (selectedFace) {
+        clearSelectedFaceVisual();
+        selectedFace = null;
+      }
+      setSelectedDocumentSolids(ids);
+    },
+    onSnap: setSolidSnapMarker,
+    onStatus,
+    render: renderFrame,
+    scene,
+  });
+
+  line3dCommand = createLine3dCommand({
+    camera,
+    canvas: renderer.domElement,
+    scene,
+    getContext() {
+      const face = selectedPlanarFace();
+      const plane = face
+        ? sketchPlaneFromFace(face)
+        : principalSketchPlane(currentSketchPlane);
+      return {
+        face,
+        plane,
+      };
+    },
+    getSnap(event, { points } = {}) {
+      const anchor = points?.at(-1) ?? null;
+      return nearestSolidObjectSnap({
+        camera,
+        canvas: renderer.domElement,
+        event,
+        solidObjects: pushCommand.getSolidObjects?.() ?? [],
+        extraCandidates: line3dRecordSnapCandidates(doc?.model3d?.lines),
+        maxDistancePixels: 20,
+        includeHidden: hiddenEdgesVisible,
+        acceptCandidate: (candidate) => differsFromPoint(candidate, anchor),
+      });
+    },
+    onCommit({ context, points }) {
+      if (!doc || points.length < 2) return null;
+      const candidateFaces = [
+        context.face,
+        ...documentPlanarFaces(),
+      ].filter(Boolean);
+      const supportMatch = line3dSupportFaceForPoints(points, candidateFaces) ??
+        line3dSupportFaceForPoints(points, candidateFaces, 1e-6, {
+          allowCrossing: true,
+        });
+      const supportFace = supportMatch
+        ? snapshotSketchSupportFace(
+          supportMatch.face,
+          supportMatch.plane,
+          doc.model3d,
+        )
+        : null;
+      const metadata = supportFace
+        ? { supportFace, supportPlane: supportMatch.plane }
+        : {};
+      const boundaryEntities = supportFace
+        ? sketchSupportBoundaryEntities({
+          id: 'line3d-auto-split',
+          plane: supportMatch.plane,
+          metadata: { supportFace },
+        }, doc.model3d)
+        : [];
+      const boundaryIntersections = supportFace
+        ? line3dBoundaryIntersectionPoints(
+          points,
+          supportMatch.plane,
+          boundaryEntities,
+        )
+        : [];
+      const splitPoints = supportMatch
+        ? [
+          ...(supportMatch.face.points ?? []),
+          ...(supportMatch.face.holes ?? []).flat(),
+          ...boundaryIntersections,
+        ]
+        : candidateFaces.flatMap((face) => [
+          ...(face.points ?? []),
+          ...(face.holes ?? []).flat(),
+        ]);
+      const rawSegments = points.slice(0, -1).map((start, index) => ({
+        start,
+        end: points[index + 1],
+      }));
+      const split = splitLine3dSegmentsAtIntersections({
+        existingLines: doc.model3d?.lines,
+        newSegments: rawSegments,
+        splitPoints,
+      });
+      const touchedIds = new Set(split.touchedExistingLineIds);
+      const compatibleLines = (doc.model3d?.lines ?? []).filter((line) => {
+        if (line?.visible === false || !touchedIds.has(line.id)) return false;
+        if (!supportMatch) return true;
+        return Boolean(line3dSupportFaceForPoints(
+          [line.start, line.end],
+          [supportMatch.face],
+          1e-6,
+          { allowCrossing: true },
+        ));
+      });
+      const targetGroupId = compatibleLines[0]?.groupId ?? null;
+      const mergeGroupIds = [...new Set(compatibleLines.map((line) => line.groupId))];
+      const topologyNeedsUpdate = split.existingReplacements.length > 0 ||
+        mergeGroupIds.length > 1 ||
+        Boolean(supportFace && mergeGroupIds.length);
+      const topologyChanged = topologyNeedsUpdate
+        ? doc.update3dLineTopology?.({
+          replacements: split.existingReplacements,
+          mergeGroupIds,
+          targetGroupId,
+          metadata: supportFace ? metadata : null,
+        }) === true
+        : false;
+      const records = doc.add3dLines?.(split.newSegments, {
+        ...(targetGroupId ? { groupId: targetGroupId } : {}),
+        metadata,
+        recordHistory: !topologyChanged,
+      });
+      if (!records?.length) return null;
+      selectedLine3dIds.clear();
+      records.forEach((record) => selectedLine3dIds.add(record.id));
+      setEntities(documentEntitiesForViewer(), { preserveView: true });
+      return records;
+    },
+    onSnap: setSolidSnapMarker,
+    onStatus,
+    render: renderFrame,
+  });
+
+  const selectedLineRecord = () => {
+    const lines = (doc?.model3d?.lines ?? []).filter((line) =>
+      selectedLine3dIds.has(line.id));
+    return lines.length ? { lineIds: lines.map((line) => line.id), lines } : null;
+  };
+  line3dTransformCommand = createLine3dTransformCommand({
+    camera,
+    canvas: renderer.domElement,
+    scene,
+    getSnap: (event, { anchor } = {}) => nearestSolidObjectSnap({
+      camera,
+      canvas: renderer.domElement,
+      event,
+      solidObjects: pushCommand.getSolidObjects?.() ?? [],
+      extraCandidates: line3dRecordSnapCandidates(doc?.model3d?.lines),
+      maxDistancePixels: 20,
+      includeHidden: hiddenEdgesVisible,
+      acceptCandidate: (candidate) => differsFromPoint(candidate, anchor),
+    }),
+    getWorkplane: () => ({
+      origin: { x: 0, y: 0, z: 0 },
+      normal: principalPlaneDefinition(currentSketchPlane).normal,
+    }),
+    onTransform({ mode, record, transform }) {
+      const selectedIds = new Set(record?.lineIds ?? []);
+      const source = {
+        lines: (doc?.model3d?.lines ?? []).filter((line) =>
+          selectedIds.has(line.id)),
+      };
+      if (!source || !transform) return false;
+      const transformed = transformLine3dRecords(source.lines, transform);
+      if (transformed.length !== source.lines.length) return false;
+      if (mode === 'copy') {
+        const copies = doc.add3dLines?.(transformed);
+        if (!copies.length) return false;
+        selectedLine3dIds.clear();
+        copies.forEach((copy) => selectedLine3dIds.add(copy.id));
+      }
+      else {
+        doc.recordHistory?.();
+        source.lines.forEach((line, index) => {
+          line.start = transformed[index].start;
+          line.end = transformed[index].end;
+          line.metadata = {};
+          line.revision = (Number(line.revision) || 0) + 1;
+        });
+        doc.markDirty?.();
+      }
+      setEntities(documentEntitiesForViewer(), { preserveView: true });
+      return true;
+    },
+    onSnap: setSolidSnapMarker,
+    onStatus,
+    render: renderFrame,
+  });
 
   renderer.domElement.addEventListener('click', pickFace);
   renderer.domElement.addEventListener('dblclick', pickSolid);
@@ -1325,6 +1847,8 @@ export async function createThreeDemoViewer(canvas, {
     getSelectedSolidId: () => [...selectedDocumentSolidIds][0] ?? null,
     getSelectedSolidIds: () => [...selectedDocumentSolidIds],
     getSelectedSolidEdge: () => selectedSolidEdge,
+    getSelectedLine3dGroupId: () => selectedLineRecord()?.lines?.[0]?.groupId ?? null,
+    getSelectedLine3dIds: () => [...selectedLine3dIds],
     getSelectedPlanarFace: selectedPlanarFace,
     getSketchPlane: () => currentSketchPlane,
     isDeleteSolidActive: () => deleteSolidMode,
@@ -1332,7 +1856,12 @@ export async function createThreeDemoViewer(canvas, {
     confirmDeleteSolidSelection,
     cancelDeleteSolid,
     deleteSelectedSolid,
+    deleteSelectedLine3d,
+    deleteSelected3d,
     isPushActive: () => pushCommand.isActive(),
+    isSolidTransformActive: () => solidTransformCommands?.isActive() === true,
+    isLine3dActive: () => line3dCommand?.isActive() === true ||
+      line3dTransformCommand?.isActive() === true,
     render: renderFrame,
     refreshDocument,
     renderer,
@@ -1346,7 +1875,14 @@ export async function createThreeDemoViewer(canvas, {
     setHiddenEdges,
     toggleHiddenEdges,
     setNavigationDevice: navigation.setNavigationDevice,
+    startLine3d: line3dCommand.start,
+    startCopyLine3d: () => line3dTransformCommand.startCopy(selectedLineRecord()),
+    startMoveLine3d: () => line3dTransformCommand.startMove(selectedLineRecord()),
+    startRotateLine3d: () => line3dTransformCommand.startRotate(selectedLineRecord()),
     startPush: pushCommand.start,
+    startCopySolids: solidTransformCommands.startCopy,
+    startMoveSolids: solidTransformCommands.startMove,
+    startRotateSolids: solidTransformCommands.startRotate,
     start,
     stop,
   };
