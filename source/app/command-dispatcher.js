@@ -69,6 +69,12 @@ export function createCommandDispatcher({
     if (command === 'fit') actions.fitView();
     if (command === 'navigation-mouse') actions.setNavigationDevice('mouse');
     if (command === 'navigation-trackpad') actions.setNavigationDevice('trackpad');
+    if (command === 'three-projection-perspective') {
+      globalThis.window?.webcadThreeMode?.setProjectionPreference?.('perspective');
+    }
+    if (command === 'three-projection-orthographic') {
+      globalThis.window?.webcadThreeMode?.setProjectionPreference?.('orthographic');
+    }
     if (command === 'new') actions.newDrawing();
     if (command === 'drawing-profile') actions.openDrawingProfileDialog();
     if (command === 'settings') actions.openSettingsDialog();

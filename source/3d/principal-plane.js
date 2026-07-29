@@ -10,7 +10,6 @@ const DEFINITIONS = Object.freeze({
     xAxis: Object.freeze({ x: 1, y: 0, z: 0 }),
     yAxis: Object.freeze({ x: 0, y: 1, z: 0 }),
     normal: Object.freeze({ x: 0, y: 0, z: 1 }),
-    cameraDirection: Object.freeze({ x: 1, y: -1, z: 0.72 }),
   }),
   XZ: Object.freeze({
     id: 'XZ',
@@ -19,7 +18,6 @@ const DEFINITIONS = Object.freeze({
     xAxis: Object.freeze({ x: 1, y: 0, z: 0 }),
     yAxis: Object.freeze({ x: 0, y: 0, z: 1 }),
     normal: Object.freeze({ x: 0, y: -1, z: 0 }),
-    cameraDirection: Object.freeze({ x: 1, y: -0.72, z: 1 }),
   }),
   YZ: Object.freeze({
     id: 'YZ',
@@ -28,7 +26,6 @@ const DEFINITIONS = Object.freeze({
     xAxis: Object.freeze({ x: 0, y: 1, z: 0 }),
     yAxis: Object.freeze({ x: 0, y: 0, z: 1 }),
     normal: Object.freeze({ x: 1, y: 0, z: 0 }),
-    cameraDirection: Object.freeze({ x: 0.72, y: -1, z: 1 }),
   }),
 });
 
@@ -54,7 +51,6 @@ export function principalPlaneDefinition(value) {
     xAxis: { ...definition.xAxis },
     yAxis: { ...definition.yAxis },
     normal: { ...definition.normal },
-    cameraDirection: { ...definition.cameraDirection },
   };
 }
 

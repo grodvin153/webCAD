@@ -6,6 +6,14 @@ import { solidTransformFromAlias } from '../solid-transform-aliases.js';
 
 const canvas2d = document.getElementById('cad-canvas');
 const canvas3d = document.getElementById('three-canvas');
+const viewCube = document.getElementById('three-view-cube');
+const viewCubeCanvas = document.getElementById('three-view-cube-canvas');
+const viewCubeHome = document.getElementById('three-view-cube-home');
+const viewCubeLabel = document.getElementById('three-view-cube-label');
+const projectionPerspectiveButton =
+  document.getElementById('view-projection-perspective');
+const projectionOrthographicButton =
+  document.getElementById('view-projection-orthographic');
 const canvasWrap = document.querySelector('.canvas-wrap');
 const enterButton = document.getElementById('view-mode-3d');
 const exitButton = document.getElementById('view-mode-2d');
@@ -39,6 +47,16 @@ let threeModeActive = false;
 let resizeObserver = null;
 let sketchShortcutTimer = null;
 let initialPlaneResolver = null;
+let projectionPreference = (() => {
+  try {
+    return localStorage.getItem('webcad-three-projection') === 'orthographic'
+      ? 'orthographic'
+      : 'perspective';
+  }
+  catch {
+    return 'perspective';
+  }
+})();
 let sketchReferenceMode = (() => {
   try {
     return localStorage.getItem('webcad-sketch-reference-mode') === 'section'
@@ -49,6 +67,33 @@ let sketchReferenceMode = (() => {
     return 'projection';
   }
 })();
+
+function syncProjectionMenu() {
+  [
+    [projectionPerspectiveButton, 'perspective'],
+    [projectionOrthographicButton, 'orthographic'],
+  ].forEach(([button, value]) => {
+    if (!button) return;
+    const selected = projectionPreference === value;
+    button.classList.toggle('is-active', selected);
+    button.setAttribute('aria-checked', String(selected));
+  });
+}
+
+function setProjectionPreference(value) {
+  projectionPreference = value === 'orthographic'
+    ? 'orthographic'
+    : 'perspective';
+  try {
+    localStorage.setItem('webcad-three-projection', projectionPreference);
+  }
+  catch {
+    // La preferencia sigue activa durante la sesion.
+  }
+  syncProjectionMenu();
+  viewer?.setProjectionPreference?.(projectionPreference);
+  return projectionPreference;
+}
 
 function sketchReferenceOptions(sketch = null) {
   return { mode: sketchReferenceMode, sketch };
@@ -206,6 +251,7 @@ function show2dMode({ sketchEditing = false } = {}) {
   enterButton.hidden = sketchEditing;
   exitButton.hidden = true;
   status.hidden = true;
+  if (viewCube) viewCube.hidden = true;
   if (statusLength) statusLength.textContent = 'Longitud: -';
   planeControl.hidden = true;
   sketchEditorBar.hidden = !sketchEditing;
@@ -234,6 +280,7 @@ async function show3dMode() {
   enterButton.hidden = true;
   exitButton.hidden = false;
   status.hidden = false;
+  if (viewCube) viewCube.hidden = false;
   planeControl.hidden = false;
   sketchEditorBar.hidden = true;
   if (sketchSectionButton) sketchSectionButton.hidden = false;
@@ -257,6 +304,7 @@ async function show3dMode() {
         gridVisible: settings.gridVisible,
         axesVisible: settings.axesVisible,
         navigationDevice: settings.navigationDevice,
+        projection: projectionPreference,
         sketchPlane,
         onEdgeInfo: (edge) => {
           if (!statusLength) return;
@@ -266,6 +314,12 @@ async function show3dMode() {
             : 'Longitud: -';
         },
         onStatus: (message) => { status.textContent = message; },
+        viewCube: {
+          container: viewCube,
+          canvas: viewCubeCanvas,
+          homeButton: viewCubeHome,
+          label: viewCubeLabel,
+        },
       });
       resizeObserver = new ResizeObserver(syncSize);
       resizeObserver.observe(canvasWrap);
@@ -275,6 +329,7 @@ async function show3dMode() {
       viewer.setGridVisible(settings.gridVisible);
       viewer.setAxesVisible?.(settings.axesVisible);
       viewer.setNavigationDevice?.(settings.navigationDevice);
+      viewer.setProjectionPreference?.(projectionPreference);
     }
     syncSize();
     viewer.start();
@@ -682,5 +737,8 @@ window.webcadThreeMode = {
   startCopySolids,
   startMoveSolids,
   startRotateSolids,
+  setProjectionPreference,
   syncSettings: syncViewSettings,
 };
+
+syncProjectionMenu();

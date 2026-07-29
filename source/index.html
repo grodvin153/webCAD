@@ -107,6 +107,23 @@
             <button class="submenu-item" type="button" data-command="fit">Ajustar vista</button>
             <button class="submenu-item" type="button" data-command="navigation-mouse">Navegacion con raton</button>
             <button class="submenu-item" type="button" data-command="navigation-trackpad">Navegacion con trackpad</button>
+            <div class="submenu-separator" role="separator"></div>
+            <button
+              id="view-projection-perspective"
+              class="submenu-item submenu-choice"
+              type="button"
+              data-command="three-projection-perspective"
+              role="menuitemradio"
+              aria-checked="true"
+            >Vista 3D · Perspectiva</button>
+            <button
+              id="view-projection-orthographic"
+              class="submenu-item submenu-choice"
+              type="button"
+              data-command="three-projection-orthographic"
+              role="menuitemradio"
+              aria-checked="false"
+            >Vista 3D · Isométrica (ortográfica)</button>
           </div>
         </div>
         <div class="menu-item">
@@ -863,6 +880,33 @@
         <canvas id="cad-canvas" class="cad-canvas" tabindex="0"></canvas>
         <canvas id="three-canvas" class="three-canvas" tabindex="0" hidden></canvas>
         <div id="cursor-input" class="cursor-input" aria-hidden="true"></div>
+        <div
+          id="three-view-cube"
+          class="three-view-cube"
+          role="group"
+          aria-label="Navegador de vistas 3D"
+          hidden
+        >
+          <canvas
+            id="three-view-cube-canvas"
+            class="three-view-cube-canvas"
+            width="232"
+            height="232"
+            aria-label="Cubo navegador de vistas 3D"
+          ></canvas>
+          <output id="three-view-cube-label" class="three-view-cube-label">Isométrica sureste</output>
+          <button
+            id="three-view-cube-home"
+            class="three-view-cube-home"
+            type="button"
+            title="Volver a la vista isométrica sureste"
+            aria-label="Volver a la vista isométrica sureste"
+            aria-pressed="true"
+          >
+            <span aria-hidden="true">⌂</span>
+            ISO SE
+          </button>
+        </div>
         <button
           id="view-mode-3d"
           class="view-mode-button"

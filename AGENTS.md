@@ -212,6 +212,30 @@ La integración actual usa dos puentes globales intencionados:
 No amplíes estos globals sin necesidad. Mantén la carga 3D perezosa y evita que
 un fallo WebGL/WASM rompa el editor 2D.
 
+#### Cámara 3D y orientaciones de vista
+
+`source/3d/three/camera-view-orientations.js` es la autoridad para las vistas
+predefinidas, sus nombres y sus vectores. La dirección se expresa desde el
+objetivo hacia la cámara: Planta `+Z`, Inferior `-Z`, Alzado `-Y`, Posterior
+`+Y`, Perfil derecho `+X` y Perfil izquierdo `-X`. Planta usa `+Y` como
+vertical de pantalla, de modo que muestra `+X` a la derecha y `+Y` arriba; las
+vistas verticales usan `+Z` como vertical. La isométrica sureste predeterminada
+se define únicamente en ese módulo mediante la dirección normalizada
+`(+1, -1, +1)`. No dupliques estas orientaciones en controles o visores.
+
+`source/3d/three/three-camera-projection.js` centraliza la cámara conmutable y
+la correspondencia entre orientación y proyección. Las vistas de cara son
+siempre ortográficas; las vistas isométricas, diagonales y la órbita libre
+respetan la preferencia 3D persistida por `three-mode-toggle.js`.
+`three-demo-viewer.js` compone esta infraestructura con OrbitControls y
+`three-view-cube.js`: los cambios de vista deben conservar `controls.target`,
+el encuadre aparente y la misma instancia de cámara que capturan los controles
+y los comandos 3D. El cubo obtiene su estado de la cámara en cada render y
+solicita los cambios al visor; no debe mantener una orientación paralela propia.
+Los futuros controles de cámara deben reutilizar `setCameraView`, la
+preferencia de proyección y los módulos canónicos anteriores. Los colores X/Y/Z
+del cubo deben proceder de `THREE_VIEW_STYLE`, igual que los ejes del visor.
+
 El modelo 3D documental (`source/3d/model3d.js`) no debe almacenar objetos
 Three.js. Guarda datos JSON:
 
@@ -501,6 +525,9 @@ trazado visual.
 `tests/3d.mjs` cubre:
 
 - matemáticas, cámara, planos de croquis y proyecciones;
+- orientaciones canónicas de Planta, Alzado, Perfil y vistas opuestas, vertical
+  positiva de Planta, isométrica sureste única, elección de proyección,
+  conversión de encuadre y colores X/Y/Z compartidos por cubo y visor;
 - sólidos, perfiles y extrusiones exactas;
 - conversión a Three.js, caras, aristas, siluetas y snaps;
 - modelo documental 3D y serialización;

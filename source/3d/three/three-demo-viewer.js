@@ -46,7 +46,10 @@ import {
   solidFaceFromPlanarGroup,
   solidPlanarFacesFromMesh,
 } from './solid-face-selection.js';
-import { configureThreeNavigationControls } from './three-navigation-controls.js';
+import {
+  cameraWorldHeight,
+  configureThreeNavigationControls,
+} from './three-navigation-controls.js';
 import {
   createLine3dCommand,
   createLine3dTransformCommand,
@@ -62,6 +65,24 @@ import { createSolidTransformCommands } from './solid-transform-command.js';
 import { updatePushSilhouettes } from './push-silhouette.js';
 import { cameraClipRangeForBounds } from './camera-clipping.js';
 import {
+  cameraViewDirection,
+  cameraViewOrientation,
+  cameraViewPosition,
+  cameraViewUp,
+  closestCameraView,
+  DEFAULT_CAMERA_DISTANCE_FACTOR,
+  DEFAULT_ISOMETRIC_VIEW_ID,
+} from './camera-view-orientations.js';
+import {
+  cameraProjection,
+  cameraProjectionForOrientation,
+  CAMERA_PROJECTION_ORTHOGRAPHIC,
+  createSwitchableThreeCamera,
+  normalizeCameraProjection,
+  setCameraProjection as applyCameraProjection,
+  updateCameraProjectionViewport,
+} from './three-camera-projection.js';
+import {
   createSketchAxes,
   createSketchGround,
   createSketchGrid,
@@ -71,8 +92,10 @@ import {
   THREE_VIEW_STYLE,
   updateWideLineResolution,
 } from './three-scene-style.js';
+import { createThreeViewCube } from './three-view-cube.js';
 
 const SILHOUETTE_CAMERA_SETTLE_MS = 70;
+const CAMERA_VIEW_TRANSITION_MS = 280;
 const CAMERA_EDGE_TYPES = new Set([
   'webcad-push-solid-edges',
   'webcad-push-solid-tangent-edges',
@@ -166,6 +189,8 @@ export async function createThreeDemoViewer(canvas, {
   sketchPlane = doc?.model3d?.sketchPlane ?? 'XY',
   onEdgeInfo = null,
   onStatus = null,
+  projection = 'perspective',
+  viewCube = null,
 } = {}) {
   if (!canvas) {
     throw new TypeError('La vista Three.js necesita un canvas propio');
@@ -174,7 +199,12 @@ export async function createThreeDemoViewer(canvas, {
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(THREE_VIEW_STYLE.background);
-  const camera = new THREE.PerspectiveCamera(36, 1, 0.01, 1000000);
+  const camera = createSwitchableThreeCamera({
+    aspect: 1,
+    far: 1000000,
+    fov: 36,
+    near: 0.01,
+  });
   camera.up.set(0, 0, 1);
 
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -209,6 +239,8 @@ export async function createThreeDemoViewer(canvas, {
   let disposed = false;
   let currentWidth = 1;
   let currentHeight = 1;
+  let orthographicViewHeight = 2;
+  let preferredCameraProjection = normalizeCameraProjection(projection);
   let currentGridVisible = gridVisible !== false;
   let currentAxesVisible = axesVisible !== false;
   let currentSketchPlane = normalizePrincipalPlane(sketchPlane);
@@ -217,6 +249,8 @@ export async function createThreeDemoViewer(canvas, {
   let forceSilhouetteRefresh = false;
   let silhouetteSettleTimer = null;
   let cameraEdgesSuppressed = false;
+  let cameraViewTransition = null;
+  let viewCubeControl = null;
   const cameraEdgeVisibility = new Map();
   const activeCameraPointers = new Set();
   const documentBounds = new THREE.Box3().makeEmpty();
@@ -257,7 +291,17 @@ export async function createThreeDemoViewer(canvas, {
     scheduleSettledSilhouetteRefresh();
   }
 
+  function cancelCameraViewTransition() {
+    if (!cameraViewTransition) return false;
+    controls.enabled = cameraViewTransition.controlsWereEnabled;
+    cameraViewTransition = null;
+    return true;
+  }
+
   function startPointerCameraMotion(event) {
+    cancelCameraViewTransition();
+    setActiveCameraProjection(preferredCameraProjection, { redraw: false });
+    camera.up.set(0, 0, 1);
     activeCameraPointers.add(event.pointerId);
   }
 
@@ -1163,6 +1207,171 @@ export async function createThreeDemoViewer(canvas, {
     camera.updateProjectionMatrix();
   }
 
+  function updateCameraViewport(
+    width = currentWidth,
+    height = currentHeight,
+  ) {
+    updateCameraProjectionViewport(camera, {
+      height,
+      viewHeight: orthographicViewHeight,
+      width,
+    });
+  }
+
+  function cameraDirectionVector() {
+    return camera.position.clone().sub(controls.target).normalize();
+  }
+
+  function exactPrincipalCameraView() {
+    const orientation = closestCameraView(
+      cameraViewDirection(camera.position, controls.target),
+      1 - 1e-10,
+    );
+    return orientation?.type === 'face' ? orientation : null;
+  }
+
+  function setActiveCameraProjection(value, {
+    preserveFraming = true,
+    redraw = true,
+  } = {}) {
+    const nextProjection = normalizeCameraProjection(value);
+    const currentProjection = cameraProjection(camera);
+    if (nextProjection === currentProjection) {
+      updateCameraViewport();
+      if (redraw) renderFrame();
+      return nextProjection;
+    }
+    const target = controls.target.clone();
+    const direction = cameraDirectionVector();
+    const visibleHeight = cameraWorldHeight(camera, target);
+    if (preserveFraming && nextProjection === CAMERA_PROJECTION_ORTHOGRAPHIC) {
+      orthographicViewHeight = Math.max(0.0001, visibleHeight);
+      camera.zoom = 1;
+    }
+    applyCameraProjection(camera, nextProjection);
+    if (preserveFraming && nextProjection !== CAMERA_PROJECTION_ORTHOGRAPHIC) {
+      camera.zoom = 1;
+      const halfFov = THREE.MathUtils.degToRad(camera.fov * 0.5);
+      const distance = Math.max(0.0001, visibleHeight / (2 * Math.tan(halfFov)));
+      camera.position.copy(target).addScaledVector(direction, distance);
+    }
+    updateCameraViewport();
+    camera.updateMatrixWorld();
+    updateCameraClipPlanes();
+    if (redraw) renderFrame();
+    return nextProjection;
+  }
+
+  function setProjectionPreference(value) {
+    preferredCameraProjection = normalizeCameraProjection(value);
+    const requiredProjection = cameraProjectionForOrientation(
+      exactPrincipalCameraView(),
+      preferredCameraProjection,
+    );
+    setActiveCameraProjection(requiredProjection);
+    return preferredCameraProjection;
+  }
+
+  function cameraQuaternionForView(position, target, up) {
+    const rotation = new THREE.Matrix4().lookAt(position, target, up);
+    return new THREE.Quaternion().setFromRotationMatrix(rotation);
+  }
+
+  function setCameraView(view, { animate = true } = {}) {
+    const orientation = cameraViewOrientation(view);
+    setActiveCameraProjection(
+      cameraProjectionForOrientation(orientation, preferredCameraProjection),
+      { redraw: false },
+    );
+    const target = controls.target.clone();
+    const distance = Math.max(0.0001, camera.position.distanceTo(target));
+    const end = cameraViewPosition({
+      direction: orientation.direction,
+      distance,
+      position: camera.position,
+      target,
+    });
+    const endDirection = new THREE.Vector3(
+      orientation.direction.x,
+      orientation.direction.y,
+      orientation.direction.z,
+    );
+    const endPosition = new THREE.Vector3(end.x, end.y, end.z);
+    const up = cameraViewUp(orientation);
+    const endUp = new THREE.Vector3(up.x, up.y, up.z);
+    const endQuaternion = cameraQuaternionForView(endPosition, target, endUp);
+    cancelCameraViewTransition();
+    if (!animate) {
+      camera.position.copy(endPosition);
+      camera.up.copy(endUp);
+      camera.quaternion.copy(endQuaternion);
+      camera.updateMatrixWorld();
+      controls.update();
+      updateCameraClipPlanes();
+      forceSilhouetteRefresh = true;
+      renderFrame();
+      return orientation;
+    }
+    const startDirection = camera.position.clone().sub(target).normalize();
+    const directionRotation = new THREE.Quaternion().setFromUnitVectors(
+      startDirection,
+      endDirection,
+    );
+    cameraViewTransition = {
+      controlsWereEnabled: controls.enabled,
+      directionRotation,
+      distance,
+      endDirection,
+      endQuaternion,
+      endUp,
+      orientation,
+      startQuaternion: camera.quaternion.clone(),
+      startDirection,
+      startedAt: viewerClock(),
+      target,
+    };
+    controls.enabled = false;
+    lastCameraMotionAt = viewerClock();
+    suppressCameraEdges(true);
+    renderFrame();
+    return orientation;
+  }
+
+  function updateCameraViewTransition(now) {
+    const transition = cameraViewTransition;
+    if (!transition) return false;
+    const progress = Math.min(
+      1,
+      Math.max(0, (now - transition.startedAt) / CAMERA_VIEW_TRANSITION_MS),
+    );
+    const eased = progress < 0.5
+      ? 4 * progress * progress * progress
+      : 1 - ((-2 * progress + 2) ** 3) / 2;
+    const rotation = new THREE.Quaternion().slerpQuaternions(
+      new THREE.Quaternion(),
+      transition.directionRotation,
+      eased,
+    );
+    const direction = transition.startDirection.clone().applyQuaternion(rotation).normalize();
+    if (progress >= 1) direction.copy(transition.endDirection);
+    camera.position.copy(transition.target).addScaledVector(direction, transition.distance);
+    camera.quaternion.slerpQuaternions(
+      transition.startQuaternion,
+      transition.endQuaternion,
+      eased,
+    );
+    if (progress < 1) return true;
+    cameraViewTransition = null;
+    controls.enabled = transition.controlsWereEnabled;
+    controls.target.copy(transition.target);
+    camera.up.copy(transition.endUp);
+    camera.quaternion.copy(transition.endQuaternion);
+    controls.update();
+    suppressCameraEdges(false);
+    forceSilhouetteRefresh = true;
+    return false;
+  }
+
   function fitCameraToDrawing() {
     const bounds = updateDocumentBounds();
     const center = new THREE.Vector3();
@@ -1170,13 +1379,20 @@ export async function createThreeDemoViewer(canvas, {
     bounds.getCenter(center);
     bounds.getSize(size);
     const extent = Math.max(size.x, size.y, size.z, 1);
-    const distance = extent * 1.9;
-    const cameraDirection = principalPlaneDefinition(currentSketchPlane).cameraDirection;
-    camera.position.set(
-      center.x + cameraDirection.x * distance,
-      center.y + cameraDirection.y * distance,
-      center.z + cameraDirection.z * distance,
-    );
+    const distance = extent * DEFAULT_CAMERA_DISTANCE_FACTOR;
+    const boundsSphere = bounds.getBoundingSphere(new THREE.Sphere());
+    orthographicViewHeight = Math.max(boundsSphere.radius * 2.2, 1);
+    camera.zoom = 1;
+    applyCameraProjection(camera, preferredCameraProjection);
+    updateCameraViewport();
+    const cameraDirection = cameraViewOrientation(DEFAULT_ISOMETRIC_VIEW_ID).direction;
+    const position = cameraViewPosition({
+      direction: cameraDirection,
+      distance,
+      target: center,
+    });
+    camera.position.set(position.x, position.y, position.z);
+    camera.up.set(0, 0, 1);
     camera.lookAt(center);
     camera.updateMatrixWorld();
     controls.target.copy(center);
@@ -1192,19 +1408,27 @@ export async function createThreeDemoViewer(canvas, {
       up: camera.up.toArray(),
       near: camera.near,
       far: camera.far,
+      projection: cameraProjection(camera),
       zoom: camera.zoom,
+      viewHeight: orthographicViewHeight,
     };
   }
 
   function setViewState(state) {
     if (!Array.isArray(state?.position) || state.position.length < 3 ||
         !Array.isArray(state?.target) || state.target.length < 3) return false;
+    cancelCameraViewTransition();
     camera.position.fromArray(state.position);
     controls.target.fromArray(state.target);
     if (Array.isArray(state.up) && state.up.length >= 3) camera.up.fromArray(state.up);
     if (Number.isFinite(Number(state.near))) camera.near = Math.max(0.0001, Number(state.near));
     if (Number.isFinite(Number(state.far))) camera.far = Math.max(camera.near + 1, Number(state.far));
+    if (Number.isFinite(Number(state.viewHeight))) {
+      orthographicViewHeight = Math.max(0.0001, Number(state.viewHeight));
+    }
+    applyCameraProjection(camera, state.projection ?? preferredCameraProjection);
     if (Number.isFinite(Number(state.zoom))) camera.zoom = Math.max(0.0001, Number(state.zoom));
+    updateCameraViewport();
     camera.lookAt(controls.target);
     camera.updateMatrixWorld();
     controls.update();
@@ -1504,10 +1728,10 @@ export async function createThreeDemoViewer(canvas, {
 
   function renderFrame(frameTime) {
     if (disposed) return;
-    controls.update();
+    const now = Number.isFinite(frameTime) ? frameTime : viewerClock();
+    if (!updateCameraViewTransition(now)) controls.update();
     camera.updateMatrixWorld();
     updateCameraClipPlanes();
-    const now = Number.isFinite(frameTime) ? frameTime : viewerClock();
     const forceCameraRefresh = forceSilhouetteRefresh;
     forceSilhouetteRefresh = false;
     const cameraIsMoving = now - lastCameraMotionAt < SILHOUETTE_CAMERA_SETTLE_MS;
@@ -1519,6 +1743,7 @@ export async function createThreeDemoViewer(canvas, {
     }
     updateWideLineResolution(scene, currentWidth, currentHeight);
     renderer.render(scene, camera);
+    viewCubeControl?.draw();
   }
 
   function resize(width = canvas.clientWidth || canvas.width || 640,
@@ -1529,8 +1754,7 @@ export async function createThreeDemoViewer(canvas, {
     currentWidth = safeWidth;
     currentHeight = safeHeight;
     renderer.setSize(safeWidth, safeHeight, false);
-    camera.aspect = safeWidth / safeHeight;
-    camera.updateProjectionMatrix();
+    updateCameraViewport(safeWidth, safeHeight);
     updateWideLineResolution(scene, safeWidth, safeHeight);
     renderFrame();
   }
@@ -1559,12 +1783,15 @@ export async function createThreeDemoViewer(canvas, {
     selectedFace = null;
     setSelectedDocumentSolids();
     deleteSolidMode = false;
+    cancelCameraViewTransition();
     disposed = true;
     renderer.domElement.removeEventListener('click', pickFace);
     renderer.domElement.removeEventListener('dblclick', pickSolid);
     renderer.domElement.removeEventListener('pointermove', hoverFace);
     renderer.domElement.removeEventListener('pointerleave', leaveFaceHover);
-    renderer.domElement.removeEventListener('pointerdown', startPointerCameraMotion);
+    renderer.domElement.removeEventListener('pointerdown', startPointerCameraMotion, {
+      capture: true,
+    });
     renderer.domElement.removeEventListener('pointerup', finishPointerCameraMotion);
     renderer.domElement.removeEventListener('pointercancel', finishPointerCameraMotion);
     renderer.domElement.removeEventListener('contextmenu', confirmDeleteSolidFromContextMenu);
@@ -1591,6 +1818,7 @@ export async function createThreeDemoViewer(canvas, {
     solidTransformCommands?.dispose();
     line3dCommand?.dispose();
     line3dTransformCommand?.dispose();
+    viewCubeControl?.dispose();
     renderer.dispose();
   }
 
@@ -1821,7 +2049,19 @@ export async function createThreeDemoViewer(canvas, {
   renderer.domElement.addEventListener('dblclick', pickSolid);
   renderer.domElement.addEventListener('pointermove', hoverFace);
   renderer.domElement.addEventListener('pointerleave', leaveFaceHover);
-  renderer.domElement.addEventListener('pointerdown', startPointerCameraMotion);
+  viewCubeControl = createThreeViewCube({
+    camera,
+    canvas: viewCube?.canvas,
+    container: viewCube?.container,
+    homeButton: viewCube?.homeButton,
+    label: viewCube?.label,
+    onSelect: (orientation) => setCameraView(orientation),
+    target: () => controls.target,
+  });
+
+  renderer.domElement.addEventListener('pointerdown', startPointerCameraMotion, {
+    capture: true,
+  });
   renderer.domElement.addEventListener('pointerup', finishPointerCameraMotion);
   renderer.domElement.addEventListener('pointercancel', finishPointerCameraMotion);
   renderer.domElement.addEventListener('contextmenu', confirmDeleteSolidFromContextMenu);
@@ -1843,6 +2083,7 @@ export async function createThreeDemoViewer(canvas, {
       return count;
     },
     getEntityCount: () => drawingLines?.userData.entityCount || 0,
+    getProjectionPreference: () => preferredCameraProjection,
     getViewState,
     getSelectedSolidId: () => [...selectedDocumentSolidIds][0] ?? null,
     getSelectedSolidIds: () => [...selectedDocumentSolidIds],
@@ -1868,6 +2109,8 @@ export async function createThreeDemoViewer(canvas, {
     resize,
     scene,
     setEntities,
+    setCameraView,
+    setProjectionPreference,
     setViewState,
     setGridVisible,
     setAxesVisible,

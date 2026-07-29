@@ -134,6 +134,25 @@ input {
   outline: 0;
 }
 
+.submenu-separator {
+  height: 1px;
+  margin: 4px 0;
+  background: #dbe4e9;
+}
+
+.submenu-choice {
+  position: relative;
+  padding-left: 28px;
+}
+
+.submenu-choice[aria-checked='true']::before {
+  position: absolute;
+  left: 11px;
+  content: '✓';
+  color: var(--accent);
+  font-weight: 700;
+}
+
 .menu-actions {
   display: flex;
   align-items: stretch;
@@ -1054,10 +1073,78 @@ input {
 
 .cad-canvas[hidden],
 .three-canvas[hidden],
+.three-view-cube[hidden],
 .view-mode-button[hidden],
 .three-plane-control[hidden],
 .three-mode-status[hidden] {
   display: none;
+}
+
+.three-view-cube {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 15;
+  display: grid;
+  width: 124px;
+  padding: 4px 4px 5px;
+  border: 1px solid rgba(121, 146, 157, 0.82);
+  border-radius: 8px;
+  background: rgba(247, 250, 249, 0.91);
+  box-shadow: 0 4px 14px rgba(27, 46, 55, 0.16);
+  color: #29434f;
+  justify-items: center;
+}
+
+.three-view-cube-canvas {
+  display: block;
+  width: 116px;
+  height: 116px;
+  outline: none;
+  touch-action: none;
+}
+
+.three-view-cube-canvas.is-interactive {
+  cursor: pointer;
+}
+
+.three-view-cube-label {
+  width: 116px;
+  min-height: 13px;
+  overflow: hidden;
+  color: #526970;
+  font: 700 9px "Arial Narrow", "Liberation Sans Narrow", sans-serif;
+  letter-spacing: 0.035em;
+  line-height: 13px;
+  text-align: center;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.three-view-cube-home {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 72px;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid #9aaeb7;
+  border-radius: 5px;
+  background: #f8faf8;
+  color: #29434f;
+  cursor: pointer;
+  font: 750 10px "Arial Narrow", "Liberation Sans Narrow", sans-serif;
+  letter-spacing: 0.06em;
+}
+
+.three-view-cube-home:hover,
+.three-view-cube-home:focus-visible,
+.three-view-cube-home[aria-pressed="true"] {
+  border-color: #b6572a;
+  background: #fff4ea;
+  color: #9f3f18;
 }
 
 .three-plane-control {
@@ -1077,6 +1164,11 @@ input {
   box-shadow: 0 4px 14px rgba(27, 46, 55, 0.14);
   color: #29434f;
   font: 700 11px "Arial Narrow", "Liberation Sans Narrow", sans-serif;
+}
+
+.canvas-wrap.is-three-mode .three-plane-control {
+  left: 153px;
+  max-width: calc(100% - 219px);
 }
 
 .three-plane-control label {
@@ -1193,6 +1285,30 @@ input {
 .canvas-wrap.is-three-mode .cursor-input,
 .canvas-wrap.is-three-mode .block-editor-bar {
   display: none;
+}
+
+@media (max-width: 720px), (max-height: 540px) {
+  .three-view-cube {
+    top: 50px;
+    left: 8px;
+    width: 104px;
+    padding: 3px 3px 4px;
+  }
+
+  .three-view-cube-canvas {
+    width: 98px;
+    height: 98px;
+  }
+
+  .three-view-cube-label {
+    width: 98px;
+    font-size: 8px;
+  }
+
+  .canvas-wrap.is-three-mode .three-plane-control {
+    left: 8px;
+    max-width: calc(100% - 74px);
+  }
 }
 
 .cad-canvas.is-select-tool {

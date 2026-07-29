@@ -17,11 +17,20 @@ function wheelDelta(event) {
   return { x: event.deltaX, y: event.deltaY };
 }
 
+export function cameraWorldHeight(camera, target) {
+  if (camera?.isOrthographicCamera) {
+    return Math.abs(Number(camera.top) - Number(camera.bottom)) /
+      Math.max(0.0001, Number(camera.zoom) || 1);
+  }
+  const distance = Math.max(MIN_CAMERA_DISTANCE, camera.position.distanceTo(target));
+  return 2 * distance * Math.tan(THREE.MathUtils.degToRad(camera.fov * 0.5)) /
+    Math.max(0.0001, Number(camera.zoom) || 1);
+}
+
 function panCameraByPixels(camera, controls, delta, viewport) {
   const width = Math.max(1, viewport.width || 1);
   const height = Math.max(1, viewport.height || 1);
-  const distance = Math.max(MIN_CAMERA_DISTANCE, camera.position.distanceTo(controls.target));
-  const worldHeight = 2 * distance * Math.tan(THREE.MathUtils.degToRad(camera.fov * 0.5));
+  const worldHeight = cameraWorldHeight(camera, controls.target);
   const worldPerPixel = worldHeight / height;
   const right = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 0).normalize();
   const up = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 1).normalize();
@@ -34,12 +43,20 @@ function panCameraByPixels(camera, controls, delta, viewport) {
   return width;
 }
 
-function zoomCameraByWheel(camera, controls, deltaY) {
+export function zoomCameraByWheel(camera, controls, deltaY) {
+  const factor = Math.exp(deltaY / ZOOM_SENSITIVITY);
+  if (camera?.isOrthographicCamera) {
+    const nextZoom = Math.max(0.0001, (Number(camera.zoom) || 1) / factor);
+    if (Math.abs(nextZoom - camera.zoom) <= 1e-12) return false;
+    camera.zoom = nextZoom;
+    camera.updateProjectionMatrix();
+    controls.update();
+    return true;
+  }
   const target = controls.target;
   const direction = new THREE.Vector3().subVectors(camera.position, target);
   const currentDistance = direction.length();
   if (currentDistance <= MIN_CAMERA_DISTANCE) return false;
-  const factor = Math.exp(deltaY / ZOOM_SENSITIVITY);
   const nextDistance = Math.max(MIN_CAMERA_DISTANCE, currentDistance * factor);
   direction.setLength(nextDistance);
   camera.position.copy(target).add(direction);

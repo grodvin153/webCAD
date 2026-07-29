@@ -149,6 +149,27 @@ import {
 import { nearestSolidEdgeAtPointer } from '../source/3d/three/solid-edge-interaction.js';
 import { cameraClipRangeForBounds } from '../source/3d/three/camera-clipping.js';
 import {
+  CAMERA_VIEW_ORIENTATIONS,
+  cameraViewDirection,
+  cameraViewOrientation,
+  cameraViewPosition,
+  cameraViewUp,
+  closestCameraView,
+  DEFAULT_ISOMETRIC_DIRECTION,
+  DEFAULT_ISOMETRIC_VIEW_ID,
+} from '../source/3d/three/camera-view-orientations.js';
+import {
+  cameraProjection,
+  cameraProjectionForOrientation,
+  CAMERA_PROJECTION_ORTHOGRAPHIC,
+  CAMERA_PROJECTION_PERSPECTIVE,
+  createSwitchableThreeCamera,
+  setCameraProjection,
+  updateCameraProjectionViewport,
+} from '../source/3d/three/three-camera-projection.js';
+import { cameraWorldHeight } from '../source/3d/three/three-navigation-controls.js';
+import { VIEW_CUBE_AXIS_COLORS } from '../source/3d/three/three-view-cube.js';
+import {
   buildPushSilhouetteSegments,
   buildPushGeneratrixSilhouetteSegments,
   updatePushSilhouetteGroup,
@@ -1550,6 +1571,121 @@ assert.deepEqual(pointOnPrincipalPlane({ x: 4, y: 5, z: 0 }, 'XZ'), { x: 4, y: 0
 assert.deepEqual(pointOnPrincipalPlane({ x: 4, y: 5, z: 0 }, 'YZ'), { x: 0, y: 4, z: 5 });
 assert.deepEqual(principalPlaneDefinition('XZ').normal, { x: 0, y: -1, z: 0 });
 assert.deepEqual(principalPlaneDefinition('YZ').normal, { x: 1, y: 0, z: 0 });
+assert.deepEqual(cameraViewOrientation('planta').direction, { x: 0, y: 0, z: 1 });
+assert.deepEqual(cameraViewOrientation('alzado').direction, { x: 0, y: -1, z: 0 });
+assert.deepEqual(cameraViewOrientation('perfil-derecho').direction, { x: 1, y: 0, z: 0 });
+assert.deepEqual(cameraViewOrientation('perfil-izquierdo').direction, { x: -1, y: 0, z: 0 });
+assert.deepEqual(cameraViewUp('planta'), { x: 0, y: 1, z: 0 });
+assert.deepEqual(cameraViewUp('inferior'), { x: 0, y: 1, z: 0 });
+assert.deepEqual(cameraViewUp('alzado'), { x: 0, y: 0, z: 1 });
+assert.deepEqual(VIEW_CUBE_AXIS_COLORS, {
+  x: '#d40000',
+  y: '#00a000',
+  z: '#004bd8',
+});
+assert.equal(
+  cameraProjectionForOrientation(
+    cameraViewOrientation('planta'),
+    CAMERA_PROJECTION_PERSPECTIVE,
+  ),
+  CAMERA_PROJECTION_ORTHOGRAPHIC,
+);
+assert.equal(
+  cameraProjectionForOrientation(
+    cameraViewOrientation(DEFAULT_ISOMETRIC_VIEW_ID),
+    CAMERA_PROJECTION_PERSPECTIVE,
+  ),
+  CAMERA_PROJECTION_PERSPECTIVE,
+);
+const canonicalProjectionCamera = createSwitchableThreeCamera({
+  aspect: 4 / 3,
+  far: 1000,
+  near: 0.1,
+});
+const canonicalProjectionTarget = new THREE.Vector3(0, 0, 0);
+canonicalProjectionCamera.position.set(0, -30, 20);
+canonicalProjectionCamera.lookAt(canonicalProjectionTarget);
+canonicalProjectionCamera.updateMatrixWorld(true);
+const canonicalPerspectiveHeight = cameraWorldHeight(
+  canonicalProjectionCamera,
+  canonicalProjectionTarget,
+);
+setCameraProjection(canonicalProjectionCamera, CAMERA_PROJECTION_ORTHOGRAPHIC);
+updateCameraProjectionViewport(canonicalProjectionCamera, {
+  height: 600,
+  viewHeight: canonicalPerspectiveHeight,
+  width: 800,
+});
+assert.equal(cameraProjection(canonicalProjectionCamera), CAMERA_PROJECTION_ORTHOGRAPHIC);
+assert.ok(Math.abs(
+  cameraWorldHeight(canonicalProjectionCamera, canonicalProjectionTarget) -
+  canonicalPerspectiveHeight,
+) < 1e-12);
+CAMERA_VIEW_ORIENTATIONS.filter((view) => view.type === 'face').forEach((view) => {
+  const up = cameraViewUp(view);
+  assert.ok(Math.abs(
+    view.direction.x * up.x +
+    view.direction.y * up.y +
+    view.direction.z * up.z,
+  ) < 1e-12);
+});
+assert.equal(DEFAULT_ISOMETRIC_VIEW_ID, 'iso-se');
+assert.deepEqual(
+  cameraViewOrientation(DEFAULT_ISOMETRIC_VIEW_ID).direction,
+  DEFAULT_ISOMETRIC_DIRECTION,
+);
+assert.ok(DEFAULT_ISOMETRIC_DIRECTION.x > 0);
+assert.ok(DEFAULT_ISOMETRIC_DIRECTION.y < 0);
+assert.ok(DEFAULT_ISOMETRIC_DIRECTION.z > 0);
+const displacedViewTarget = { x: 140, y: -75, z: 28 };
+const originalDisplacedCamera = { x: 180, y: -70, z: 40 };
+const displacedViewPosition = cameraViewPosition({
+  direction: cameraViewOrientation('posterior').direction,
+  distance: 42,
+  position: originalDisplacedCamera,
+  target: displacedViewTarget,
+});
+assert.deepEqual(displacedViewPosition, { x: 140, y: -33, z: 28 });
+assert.deepEqual(
+  cameraViewDirection(displacedViewPosition, displacedViewTarget),
+  cameraViewOrientation('posterior').direction,
+);
+assert.equal(closestCameraView(
+  cameraViewDirection(displacedViewPosition, displacedViewTarget),
+)?.id, 'posterior');
+const preservedDistanceViewPosition = cameraViewPosition({
+  direction: cameraViewOrientation('planta').direction,
+  position: originalDisplacedCamera,
+  target: displacedViewTarget,
+});
+assert.ok(Math.abs(
+  Math.hypot(
+    preservedDistanceViewPosition.x - displacedViewTarget.x,
+    preservedDistanceViewPosition.y - displacedViewTarget.y,
+    preservedDistanceViewPosition.z - displacedViewTarget.z,
+  ) -
+  Math.hypot(
+    originalDisplacedCamera.x - displacedViewTarget.x,
+    originalDisplacedCamera.y - displacedViewTarget.y,
+    originalDisplacedCamera.z - displacedViewTarget.z,
+  )
+) < 1e-9);
+assert.deepEqual(displacedViewTarget, { x: 140, y: -75, z: 28 });
+assert.deepEqual(originalDisplacedCamera, { x: 180, y: -70, z: 40 });
+assert.equal(new Set(CAMERA_VIEW_ORIENTATIONS.map((view) => view.id)).size, 26);
+CAMERA_VIEW_ORIENTATIONS.forEach((view) => {
+  const positioned = cameraViewPosition({
+    direction: view.direction,
+    distance: 17,
+    target: displacedViewTarget,
+  });
+  assert.ok(Math.abs(Math.hypot(
+    positioned.x - displacedViewTarget.x,
+    positioned.y - displacedViewTarget.y,
+    positioned.z - displacedViewTarget.z,
+  ) - 17) < 1e-9);
+  assert.equal(closestCameraView(view.direction, 0.999999)?.id, view.id);
+});
 
 const exactCircleEntity = {
   type: 'CIRCLE',
