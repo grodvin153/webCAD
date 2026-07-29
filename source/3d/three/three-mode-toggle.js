@@ -2,6 +2,7 @@
 
 import { principalSketchPlane, sketchPlaneFromFace } from '../sketch-plane.js';
 import { snapshotSketchSupportFace } from '../sketch-reference.js';
+import { solidTransformFromAlias } from '../solid-transform-aliases.js';
 
 const canvas2d = document.getElementById('cad-canvas');
 const canvas3d = document.getElementById('three-canvas');
@@ -9,6 +10,10 @@ const canvasWrap = document.querySelector('.canvas-wrap');
 const enterButton = document.getElementById('view-mode-3d');
 const exitButton = document.getElementById('view-mode-2d');
 const pushButton = document.getElementById('tool-push');
+const line3dButton = document.getElementById('tool-line-3d');
+const copySolidButton = document.getElementById('tool-copy-solid');
+const moveSolidButton = document.getElementById('tool-move-solid');
+const rotateSolidButton = document.getElementById('tool-rotate-solid');
 const status = document.getElementById('three-mode-status');
 const statusLength = document.getElementById('status-length');
 const planeControl = document.getElementById('three-plane-control');
@@ -422,7 +427,37 @@ function ensureInitialSketchForPush() {
 
 function startPush() {
   ensureInitialSketchForPush();
+  if (viewer?.isSolidTransformActive?.() || viewer?.isLine3dActive?.()) return false;
   return viewer?.startPush?.() || false;
+}
+
+function startMoveSolids() {
+  if (viewer?.isPushActive?.() || viewer?.isLine3dActive?.()) return false;
+  if (!viewer?.getSelectedSolidIds?.().length && viewer?.getSelectedLine3dGroupId?.()) {
+    return viewer?.startMoveLine3d?.() || false;
+  }
+  return viewer?.startMoveSolids?.() || false;
+}
+
+function startCopySolids() {
+  if (viewer?.isPushActive?.() || viewer?.isLine3dActive?.()) return false;
+  if (!viewer?.getSelectedSolidIds?.().length && viewer?.getSelectedLine3dGroupId?.()) {
+    return viewer?.startCopyLine3d?.() || false;
+  }
+  return viewer?.startCopySolids?.() || false;
+}
+
+function startRotateSolids() {
+  if (viewer?.isPushActive?.() || viewer?.isLine3dActive?.()) return false;
+  if (!viewer?.getSelectedSolidIds?.().length && viewer?.getSelectedLine3dGroupId?.()) {
+    return viewer?.startRotateLine3d?.() || false;
+  }
+  return viewer?.startRotateSolids?.() || false;
+}
+
+function startLine3d() {
+  if (viewer?.isPushActive?.() || viewer?.isSolidTransformActive?.()) return false;
+  return viewer?.startLine3d?.() || false;
 }
 
 enterButton?.addEventListener('click', show3dMode);
@@ -432,6 +467,22 @@ pushButton?.addEventListener('click', async () => {
     await show3dMode();
   }
   startPush();
+});
+line3dButton?.addEventListener('click', async () => {
+  if (!threeModeActive) await show3dMode();
+  startLine3d();
+});
+copySolidButton?.addEventListener('click', async () => {
+  if (!threeModeActive) await show3dMode();
+  startCopySolids();
+});
+moveSolidButton?.addEventListener('click', async () => {
+  if (!threeModeActive) await show3dMode();
+  startMoveSolids();
+});
+rotateSolidButton?.addEventListener('click', async () => {
+  if (!threeModeActive) await show3dMode();
+  startRotateSolids();
 });
 newSketchButton?.addEventListener('click', createNewSketch);
 editSketchButton?.addEventListener('click', editSelectedSketch);
@@ -501,6 +552,40 @@ document.addEventListener('keydown', async (event) => {
   startPush();
 }, true);
 
+document.addEventListener('keydown', async (event) => {
+  if (!threeModeActive || event.key.toLowerCase() !== 'l' ||
+      event.metaKey || event.ctrlKey || event.altKey ||
+      viewer?.isPushActive?.() || viewer?.isSolidTransformActive?.() ||
+      viewer?.isLine3dActive?.()) {
+    return;
+  }
+  if (event.target instanceof HTMLInputElement ||
+      event.target instanceof HTMLSelectElement ||
+      event.target instanceof HTMLTextAreaElement) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  startLine3d();
+}, true);
+
+document.addEventListener('keydown', (event) => {
+  if (!threeModeActive || event.metaKey || event.ctrlKey || event.altKey ||
+      viewer?.isPushActive?.() || viewer?.isSolidTransformActive?.() ||
+      viewer?.isLine3dActive?.() ||
+      viewer?.isDeleteSolidActive?.() ||
+      event.target instanceof HTMLInputElement ||
+      event.target instanceof HTMLSelectElement ||
+      event.target instanceof HTMLTextAreaElement) {
+    return;
+  }
+  const command = solidTransformFromAlias(event.key);
+  if (!command) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  if (command === 'copy') startCopySolids();
+  else if (command === 'move') startMoveSolids();
+  else startRotateSolids();
+}, true);
+
 document.addEventListener('keydown', (event) => {
   if (!threeModeActive || event.metaKey || event.ctrlKey || event.altKey ||
       event.target instanceof HTMLInputElement ||
@@ -544,6 +629,7 @@ document.addEventListener('keydown', (event) => {
   const isCancelKey = event.key === 'Escape';
   if (!threeModeActive || (!isDeleteKey && !isEraseAlias && !isConfirmKey && !isCancelKey) ||
       event.metaKey || event.ctrlKey || event.altKey || viewer?.isPushActive?.() ||
+      viewer?.isLine3dActive?.() ||
       event.target instanceof HTMLInputElement ||
       event.target instanceof HTMLSelectElement ||
       event.target instanceof HTMLTextAreaElement) {
@@ -556,7 +642,7 @@ document.addEventListener('keydown', (event) => {
   if (isConfirmKey) viewer?.confirmDeleteSolidSelection?.();
   else if (isCancelKey) viewer?.cancelDeleteSolid?.();
   else if (isEraseAlias) viewer?.startDeleteSolid?.();
-  else viewer?.deleteSelectedSolid?.();
+  else viewer?.deleteSelected3d?.();
 }, true);
 
 document.addEventListener('click', () => {
@@ -574,6 +660,11 @@ window.addEventListener('webcad:navigation-device-change', () => {
   requestAnimationFrame(syncViewSettings);
 });
 
+window.addEventListener('webcad:3d-document-changed', (event) => {
+  if (!threeModeActive) return;
+  syncSketchControls(event.detail?.sketchId ?? null);
+});
+
 window.webcadThreeMode = {
   enter: show3dMode,
   exit: show2dMode,
@@ -587,5 +678,9 @@ window.webcadThreeMode = {
   editSelectedSketch,
   finishSketchEdit,
   startPush,
+  startLine3d,
+  startCopySolids,
+  startMoveSolids,
+  startRotateSolids,
   syncSettings: syncViewSettings,
 };

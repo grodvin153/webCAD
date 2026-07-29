@@ -1,5 +1,7 @@
 /* webCAD - Exportacion STL desde modelo documental 3D | SPDX-License-Identifier: GPL-3.0-or-later */
 
+import { solidLocalToWorld } from './solid-placement.js';
+
 const EPSILON = 1e-10;
 
 function point3(point) {
@@ -142,9 +144,18 @@ export function visibleDocumentSolids(model3d) {
     .filter((record) => record?.visible !== false && record?.solid);
 }
 
-export function trianglesFromSolid(solid) {
+export function trianglesFromSolid(solid, placement = null) {
   return (Array.isArray(solid?.faces) ? solid.faces : [])
-    .flatMap((face) => triangulateSolidFace(solid, face));
+    .flatMap((face) => triangulateSolidFace(solid, face))
+    .map((triangle) => {
+      if (!placement) return triangle;
+      const vertices = triangle.vertices.map((point) => solidLocalToWorld(point, placement));
+      return {
+        normal: triangleNormal(vertices[0], vertices[1], vertices[2]),
+        vertices,
+      };
+    })
+    .filter((triangle) => triangle.normal);
 }
 
 function stlNumber(value) {
@@ -160,7 +171,8 @@ export function exportModel3dToAsciiStl(model3d, options = {}) {
   if (!visibleSolids.length) {
     throw new Error('No hay solidos 3D visibles para exportar a STL');
   }
-  const triangles = visibleSolids.flatMap((record) => trianglesFromSolid(record.solid));
+  const triangles = visibleSolids.flatMap((record) =>
+    trianglesFromSolid(record.solid, record.placement));
   if (!triangles.length) {
     throw new Error('Los solidos 3D visibles no contienen triangulos STL validos');
   }

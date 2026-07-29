@@ -1345,6 +1345,33 @@ input {
   outline: 2px solid rgba(15, 93, 140, 0.14);
 }
 
+.cad-dialog-input-action {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.cad-dialog-input-action button {
+  min-height: 38px;
+  padding: 0 12px;
+  border: 1px solid #c8d5dc;
+  border-radius: 6px;
+  background: #eef5f9;
+  color: #31515f;
+  font: 700 12px "Arial Narrow", "Liberation Sans Narrow", sans-serif;
+  cursor: pointer;
+}
+
+.cad-dialog-input-action button:hover,
+.cad-dialog-input-action button:focus-visible {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.cad-dialog-field small {
+  line-height: 1.35;
+}
+
 .cad-dialog-choice {
   display: grid;
   grid-template-columns: 1fr 1fr;

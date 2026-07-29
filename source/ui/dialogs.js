@@ -27,7 +27,9 @@ function bindModal(dialog, { confirm, close, closeOnEnter = true }) {
 export function bindDialogEvents({ elements, actions }) {
   const {
     drawingProfile,
+    saveFile,
     settings,
+    rebuildModel,
     text,
     polylineWidth,
     blockCreate,
@@ -44,10 +46,42 @@ export function bindDialogEvents({ elements, actions }) {
     close: actions.closeDrawingProfile,
   });
 
+  saveFile.confirmButton.addEventListener('click', actions.confirmSaveFile);
+  saveFile.cancelButton.addEventListener('click', () => actions.closeSaveFile(null));
+  saveFile.closeButton.addEventListener('click', () => actions.closeSaveFile(null));
+  saveFile.dialog.addEventListener('pointerdown', (event) => {
+    if (event.target === saveFile.dialog) actions.closeSaveFile(null);
+  });
+  saveFile.nameInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      actions.confirmSaveFile();
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      actions.closeSaveFile(null);
+    }
+  });
+
   settings.confirmButton.addEventListener('click', actions.confirmSettings);
   settings.cancelButton.addEventListener('click', actions.closeSettings);
   settings.closeButton.addEventListener('click', actions.closeSettings);
+  settings.resetCoplanarToleranceButton.addEventListener(
+    'click',
+    actions.resetSettingsCoplanarTolerance,
+  );
   bindModal(settings.dialog, { confirm: actions.confirmSettings, close: actions.closeSettings });
+
+  rebuildModel.confirmButton.addEventListener(
+    'click',
+    actions.confirmRebuildModel,
+  );
+  rebuildModel.cancelButton.addEventListener('click', actions.closeRebuildModel);
+  rebuildModel.closeButton.addEventListener('click', actions.closeRebuildModel);
+  bindModal(rebuildModel.dialog, {
+    confirm: actions.confirmRebuildModel,
+    close: actions.closeRebuildModel,
+  });
 
   text.confirmButton.addEventListener('click', actions.confirmText);
   text.cancelButton.addEventListener('click', () => actions.closeText(true));

@@ -18,6 +18,8 @@ export function createRuntimeDialogs({
   distance,
   formatNumber,
   getUnitsLabel,
+  coplanarTolerance,
+  rebuildModel3d,
   storePreference,
 }) {
   const {
@@ -27,10 +29,21 @@ export function createRuntimeDialogs({
     imageCalibrationError,
     drawingProfileDialog,
     drawingProfileInputs,
+    saveFileDialog,
+    saveFileDialogTitle,
+    saveFileDialogNote,
+    saveFileNameInput,
+    saveFileDialogError,
     settingsDialog,
     settingsDimensionStyleInput,
     settingsLinearPrecisionInput,
     settingsAngularPrecisionInput,
+    settingsCoplanarToleranceInput,
+    settingsCoplanarToleranceError,
+    rebuildModelDialog,
+    rebuildModelDialogConfirmButton,
+    rebuildModelToleranceInput,
+    rebuildModelDialogError,
     dimensionStyleSelect,
     textDialog,
     textDialogTitle,
@@ -46,6 +59,7 @@ export function createRuntimeDialogs({
   } = elements;
 
   let textDialogEntity = null;
+  let saveFileResolver = null;
   const focusCanvas = () => requestAnimationFrame(() => canvas.focus({ preventScroll: true }));
   const refresh = () => {
     controller.updateUiStatus();
@@ -123,11 +137,57 @@ export function createRuntimeDialogs({
     return true;
   }
 
+  function closeSaveFileDialog(value = null) {
+    saveFileDialog.hidden = true;
+    saveFileDialogError.textContent = '';
+    const resolve = saveFileResolver;
+    saveFileResolver = null;
+    resolve?.(value);
+    focusCanvas();
+  }
+
+  function confirmSaveFileDialog() {
+    const fileName = saveFileNameInput.value.trim();
+    if (!fileName) {
+      saveFileDialogError.textContent = 'Escriba un nombre de archivo.';
+      saveFileNameInput.focus();
+      return false;
+    }
+    closeSaveFileDialog(fileName);
+    return true;
+  }
+
+  function requestSaveFileName({
+    directorySelected = false,
+    format,
+    proposedName,
+  } = {}) {
+    if (saveFileResolver) closeSaveFileDialog(null);
+    saveFileDialogTitle.textContent = `Guardar ${format?.label || 'archivo'}`;
+    saveFileDialogNote.textContent = directorySelected
+      ? 'El archivo se guardará en la carpeta seleccionada.'
+      : 'Este navegador no permite a webCAD elegir una carpeta. Se descargará una copia; use Chrome o Edge para seleccionar la ubicación.';
+    saveFileNameInput.value = String(proposedName || 'dibujo');
+    saveFileDialogError.textContent = '';
+    saveFileDialog.hidden = false;
+    closePickers();
+    requestAnimationFrame(() => {
+      saveFileNameInput.focus();
+      saveFileNameInput.select();
+    });
+    return new Promise((resolve) => {
+      saveFileResolver = resolve;
+    });
+  }
+
   function openSettingsDialog() {
     const precision = state.dimensionPrecision[state.drawingProfile];
     settingsDimensionStyleInput.value = state.dimensionStyle;
     settingsLinearPrecisionInput.value = String(precision.linear);
     settingsAngularPrecisionInput.value = String(precision.angular);
+    settingsCoplanarToleranceInput.value =
+      String(state.coplanarFaceToleranceFactor);
+    settingsCoplanarToleranceError.textContent = '';
     settingsDialog.hidden = false;
     closePickers();
     requestAnimationFrame(() => settingsDimensionStyleInput.focus());
@@ -135,7 +195,15 @@ export function createRuntimeDialogs({
 
   function closeSettingsDialog() {
     settingsDialog.hidden = true;
+    settingsCoplanarToleranceError.textContent = '';
     focusCanvas();
+  }
+
+  function resetSettingsCoplanarTolerance() {
+    settingsCoplanarToleranceInput.value =
+      String(coplanarTolerance.defaultFactor);
+    settingsCoplanarToleranceError.textContent = '';
+    settingsCoplanarToleranceInput.focus();
   }
 
   function confirmSettingsDialog() {
@@ -145,16 +213,90 @@ export function createRuntimeDialogs({
     const linear = clamp(Number(settingsLinearPrecisionInput.value), 0, 4);
     const angular = clamp(Number(settingsAngularPrecisionInput.value), 0, 4);
     if (!Number.isInteger(linear) || !Number.isInteger(angular)) return false;
+    const rawCoplanarFactor = Number(
+      String(settingsCoplanarToleranceInput.value).replace(',', '.'),
+    );
+    if (!Number.isFinite(rawCoplanarFactor) ||
+        rawCoplanarFactor < coplanarTolerance.minFactor ||
+        rawCoplanarFactor > coplanarTolerance.maxFactor) {
+      settingsCoplanarToleranceError.textContent =
+        `Use un factor entre ${coplanarTolerance.minFactor} y ` +
+        `${coplanarTolerance.maxFactor}.`;
+      settingsCoplanarToleranceInput.focus();
+      return false;
+    }
+    const coplanarFactor =
+      coplanarTolerance.normalizeFactor(rawCoplanarFactor);
     state.dimensionStyle = styleId;
     state.dimensionPrecision[state.drawingProfile] = { linear, angular };
+    state.coplanarFaceToleranceFactor = coplanarFactor;
+    coplanarTolerance.setFactor(coplanarFactor);
     dimensionStyleSelect.value = styleId;
     storePreference('webcad-dimension-style', styleId);
     storePreference(`webcad-dimension-linear-precision-${state.drawingProfile}`, linear);
     storePreference(`webcad-dimension-angular-precision-${state.drawingProfile}`, angular);
+    storePreference('webcad-3d-coplanar-tolerance-factor', coplanarFactor);
     settingsDialog.hidden = true;
-    state.statusText = `Cotas: ${dimensionStyles[styleId].label} · precision ${linear} / ${angular}`;
+    settingsCoplanarToleranceError.textContent = '';
+    globalThis.window?.webcadThreeMode?.refreshDocument?.();
+    state.statusText =
+      `Cotas: ${dimensionStyles[styleId].label} · precision ${linear} / ${angular}` +
+      ` · reconciliacion 3D ×${coplanarFactor}`;
     refresh();
     focusCanvas();
+    return true;
+  }
+
+  function openRebuildModelDialog() {
+    if (!doc.model3d?.solids?.length) {
+      state.statusText = 'No hay solidos 3D que reconstruir';
+      refresh();
+      return false;
+    }
+    rebuildModelToleranceInput.value = String(Math.max(
+      1,
+      Number(state.coplanarFaceToleranceFactor) || 1,
+    ));
+    rebuildModelDialogError.textContent = '';
+    rebuildModelDialog.hidden = false;
+    closePickers();
+    requestAnimationFrame(() => {
+      rebuildModelToleranceInput.focus();
+      rebuildModelToleranceInput.select();
+    });
+    return true;
+  }
+
+  function closeRebuildModelDialog() {
+    rebuildModelDialog.hidden = true;
+    rebuildModelDialogError.textContent = '';
+    rebuildModelDialogConfirmButton.disabled = false;
+    focusCanvas();
+  }
+
+  async function confirmRebuildModelDialog() {
+    const toleranceFactor = Number(
+      String(rebuildModelToleranceInput.value).replace(',', '.'),
+    );
+    if (!Number.isFinite(toleranceFactor) ||
+        toleranceFactor < 1 ||
+        toleranceFactor > coplanarTolerance.maxFactor) {
+      rebuildModelDialogError.textContent =
+        `Use un factor entre 1 y ${coplanarTolerance.maxFactor}.`;
+      rebuildModelToleranceInput.focus();
+      return false;
+    }
+    rebuildModelDialogConfirmButton.disabled = true;
+    rebuildModelDialogError.textContent = '';
+    const rebuilt = await rebuildModel3d({ toleranceFactor });
+    rebuildModelDialogConfirmButton.disabled = false;
+    if (!rebuilt) {
+      rebuildModelDialogError.textContent =
+        'No se pudo obtener una envolvente cerrada. Pruebe otro factor.';
+      rebuildModelToleranceInput.focus();
+      return false;
+    }
+    closeRebuildModelDialog();
     return true;
   }
 
@@ -292,17 +434,24 @@ export function createRuntimeDialogs({
     closeDrawingProfileDialog,
     closeImageCalibrationDialog,
     closePolylineWidthDialog,
+    closeRebuildModelDialog,
+    closeSaveFileDialog,
     closeSettingsDialog,
     closeTextDialog,
     confirmDrawingProfileDialog,
     confirmImageCalibrationDialog,
     confirmPolylineWidthDialog,
+    confirmRebuildModelDialog,
+    confirmSaveFileDialog,
     confirmSettingsDialog,
     confirmTextDialog,
     openDrawingProfileDialog,
     openImageCalibrationDialog,
     openPolylineWidthDialog,
+    openRebuildModelDialog,
     openSettingsDialog,
+    resetSettingsCoplanarTolerance,
+    requestSaveFileName,
     openTextDialog,
     showAbout,
   };

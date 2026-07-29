@@ -72,6 +72,7 @@ export function createCommandDispatcher({
     if (command === 'new') actions.newDrawing();
     if (command === 'drawing-profile') actions.openDrawingProfileDialog();
     if (command === 'settings') actions.openSettingsDialog();
+    if (command === 'rebuild-model3d') actions.openRebuildModelDialog();
     if (command === 'export-dxf') actions.exportDxf();
     if (command === 'export-stl') actions.exportStl();
     if (command === 'import-dxf') actions.importDxf();

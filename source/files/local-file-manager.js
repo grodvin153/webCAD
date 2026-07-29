@@ -1,25 +1,6 @@
 /* webCAD - Guardado local mediante File System Access API | SPDX-License-Identifier: GPL-3.0-or-later */
 
-function downloadFallback(content, format, fileName) {
-  const blob = content instanceof Blob
-    ? content
-    : new Blob([content], { type: format.mimeType });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = fileName;
-  link.click();
-  URL.revokeObjectURL(url);
-}
-
-function fallbackPromptMessage(format) {
-  return [
-    `Nombre del archivo ${format?.label || ''}:`,
-    '',
-    'Safari y Firefox descargaran una copia con este nombre.',
-    'La carpeta de destino depende de las preferencias de descargas del navegador.',
-  ].join('\n');
-}
+import { createSaveLocationPicker } from './save-location-picker.js';
 
 export function createLocalFileManager({
   registry,
@@ -28,7 +9,14 @@ export function createLocalFileManager({
   onStatus,
   onError,
   onUnsupported,
+  requestFileName = null,
+  saveLocationPicker = null,
 }) {
+  const locationPicker = saveLocationPicker ?? createSaveLocationPicker({
+    registry,
+    requestFileName,
+    onUnsupported,
+  });
   let currentHandle = null;
   let currentFormatId = defaultFormatId;
   let suggestedName = registry.ensureExtension('dibujo', defaultFormatId);
@@ -36,7 +24,7 @@ export function createLocalFileManager({
   let activeSave = null;
 
   function nativeSaveSupported() {
-    return typeof window.showSaveFilePicker === 'function';
+    return locationPicker.supportsLocationSelection();
   }
 
   function clearCurrentFile() {
@@ -64,24 +52,6 @@ export function createLocalFileManager({
     return registry.ensureExtension(name, formatId);
   }
 
-  function chooseFallbackFileName(formatId) {
-    const format = registry.get(formatId);
-    const proposedName = suggestedNameForFormat(formatId);
-    const requestedName = window.prompt(fallbackPromptMessage(format), proposedName);
-    if (requestedName === null) return null;
-    const cleanName = String(requestedName).trim() || proposedName;
-    return registry.ensureExtension(cleanName, formatId);
-  }
-
-  async function chooseHandle(formatId) {
-    const format = registry.get(formatId);
-    return window.showSaveFilePicker({
-      suggestedName: suggestedNameForFormat(formatId),
-      types: registry.pickerTypes(formatId),
-      excludeAcceptAllOption: false,
-    }).then((handle) => ({ handle, format }));
-  }
-
   async function performSave(options = {}) {
     const formatId = options.formatId || currentFormatId || defaultFormatId;
     const format = registry.get(formatId);
@@ -92,34 +62,45 @@ export function createLocalFileManager({
 
     try {
       if (options.automatic && !currentHandle) return false;
-
-      if (!nativeSaveSupported()) {
-        const fileName = chooseFallbackFileName(formatId);
-        if (!fileName) {
-          onStatus?.('Guardado cancelado');
-          return false;
-        }
-        onUnsupported?.();
-        const content = await format.serialize();
-        downloadFallback(content, format, fileName);
-        suggestedName = fileName;
-        currentFormatId = formatId;
-        onStatus?.(`${fileName} exportado; este navegador no permite escritura directa`);
-        return true;
+      if (!options.automatic &&
+          (!currentHandle || options.saveAs || formatId !== currentFormatId)) {
+        onStatus?.(`Seleccione nombre y carpeta para ${format.label} · ` +
+          `${options.download === true || !nativeSaveSupported()
+            ? 'descarga del navegador'
+            : 'selector del sistema'}`);
       }
 
       if (!currentHandle || options.saveAs || formatId !== currentFormatId) {
-        const selection = await chooseHandle(formatId);
-        currentHandle = selection.handle;
+        const destination = await locationPicker.select({
+          forceDownload: options.download === true,
+          formatId,
+          suggestedName: suggestedNameForFormat(formatId),
+        });
+        if (!destination) {
+          onStatus?.('Guardado cancelado');
+          return false;
+        }
+        if (destination.kind === 'download') {
+          const content = await format.serialize();
+          await locationPicker.write(destination, content, format);
+          suggestedName = destination.name;
+          currentFormatId = formatId;
+          onStatus?.(options.download === true
+            ? `${destination.name} guardado como descarga`
+            : `${destination.name} exportado; este navegador no permite elegir carpeta`);
+          return true;
+        }
+        currentHandle = destination.handle;
+        suggestedName = destination.name || suggestedName;
         currentFormatId = formatId;
       }
       if (!options.automatic) onStatus?.(`Guardando ${currentHandle.name || suggestedName}...`);
       const content = await format.serialize();
-      const writable = await currentHandle.createWritable();
-      await writable.write(content instanceof Blob
-        ? content
-        : new Blob([content], { type: format.mimeType }));
-      await writable.close();
+      await locationPicker.write({
+        handle: currentHandle,
+        kind: 'file-system',
+        name: currentHandle.name || suggestedName,
+      }, content, format);
       suggestedName = currentHandle.name || suggestedName;
       savedRevision = getRevision();
       onStatus?.(`${options.automatic ? 'Autoguardado' : 'Guardado'}: ${suggestedName}`);
@@ -152,7 +133,8 @@ export function createLocalFileManager({
     needsSave: () => getRevision() !== savedRevision,
     save: () => save(),
     saveAutomatic: () => save({ automatic: true }),
-    saveAs: (formatId = currentFormatId) => save({ saveAs: true, formatId }),
+    saveAs: (formatId = currentFormatId, options = {}) =>
+      save({ ...options, saveAs: true, formatId }),
     setSuggestedName,
   };
 }

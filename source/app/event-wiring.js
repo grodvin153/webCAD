@@ -261,11 +261,26 @@ export function bindApplicationEvents({
         cancelButton: elements.drawingProfileCancelButton,
         closeButton: elements.drawingProfileCloseButton,
       },
+      saveFile: {
+        dialog: elements.saveFileDialog,
+        confirmButton: elements.saveFileDialogConfirmButton,
+        cancelButton: elements.saveFileDialogCancelButton,
+        closeButton: elements.saveFileDialogCloseButton,
+        nameInput: elements.saveFileNameInput,
+      },
       settings: {
         dialog: elements.settingsDialog,
         confirmButton: elements.settingsDialogConfirmButton,
         cancelButton: elements.settingsDialogCancelButton,
         closeButton: elements.settingsDialogCloseButton,
+        resetCoplanarToleranceButton:
+          elements.settingsCoplanarToleranceResetButton,
+      },
+      rebuildModel: {
+        dialog: elements.rebuildModelDialog,
+        confirmButton: elements.rebuildModelDialogConfirmButton,
+        cancelButton: elements.rebuildModelDialogCancelButton,
+        closeButton: elements.rebuildModelDialogCloseButton,
       },
       text: {
         dialog: elements.textDialog,
@@ -310,8 +325,14 @@ export function bindApplicationEvents({
     actions: {
       confirmDrawingProfile: dialogs.confirmDrawingProfileDialog,
       closeDrawingProfile: dialogs.closeDrawingProfileDialog,
+      confirmSaveFile: dialogs.confirmSaveFileDialog,
+      closeSaveFile: dialogs.closeSaveFileDialog,
       confirmSettings: dialogs.confirmSettingsDialog,
       closeSettings: dialogs.closeSettingsDialog,
+      resetSettingsCoplanarTolerance:
+        dialogs.resetSettingsCoplanarTolerance,
+      confirmRebuildModel: dialogs.confirmRebuildModelDialog,
+      closeRebuildModel: dialogs.closeRebuildModelDialog,
       confirmText: dialogs.confirmTextDialog,
       closeText: dialogs.closeTextDialog,
       confirmPolylineWidth: dialogs.confirmPolylineWidthDialog,

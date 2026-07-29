@@ -251,6 +251,13 @@ import { createLocalFileManager } from './files/local-file-manager.js';
 import { createAutosaveController } from './files/autosave.js';
 import { createUnsupportedLocalSaveNotifier } from './files/browser-support.js';
 import { sketchEditReferences } from './3d/sketch-reference.js';
+import {
+  DEFAULT_COPLANAR_FACE_TOLERANCE_FACTOR,
+  MAX_COPLANAR_FACE_TOLERANCE_FACTOR,
+  MIN_COPLANAR_FACE_TOLERANCE_FACTOR,
+  normalizeCoplanarFaceToleranceFactor,
+  setCoplanarFaceToleranceFactor,
+} from './3d/tolerances.js';
 import { createBlockRuntime } from './blocks/runtime.js';
 import { createBlockCommand } from './blocks/command.js';
 import { createBlockDialogs } from './blocks/dialogs.js';
@@ -301,6 +308,10 @@ const {
   drawingProfileConfirmButton, drawingProfileInputs, settingsDialog,
   settingsDialogCloseButton, settingsDialogCancelButton, settingsDialogConfirmButton,
   settingsDimensionStyleInput, settingsLinearPrecisionInput, settingsAngularPrecisionInput,
+  settingsCoplanarToleranceInput, settingsCoplanarToleranceResetButton,
+  rebuildModelDialog, rebuildModelDialogCloseButton,
+  rebuildModelDialogCancelButton, rebuildModelDialogConfirmButton,
+  rebuildModelToleranceInput, rebuildModelDialogError,
   textDialog, textDialogTitle, textDialogCloseButton, textDialogCancelButton,
   textDialogConfirmButton, textContentInput, textHeightInput, textDialogError,
   hatchDialog, hatchDialogTitle, hatchDialogCloseButton, hatchDialogCancelButton,
@@ -1223,12 +1234,16 @@ const state = createDocumentState({
   DEFAULT_LINE_TYPE,
   DRAWING_PROFILES,
   SNAP_THRESHOLD,
+  DEFAULT_COPLANAR_FACE_TOLERANCE_FACTOR,
+  MAX_COPLANAR_FACE_TOLERANCE_FACTOR,
+  MIN_COPLANAR_FACE_TOLERANCE_FACTOR,
   loadBooleanPreference,
   loadDimensionStylePreference,
   loadIntegerPreference,
   loadNavigationDevice,
   loadNumberPreference,
 });
+setCoplanarFaceToleranceFactor(state.coplanarFaceToleranceFactor);
 
 const renderer = new CadRenderer(canvas, doc, state);
 const controller = new CadController(canvas, doc, renderer, state);
@@ -1676,7 +1691,21 @@ cadFormatRegistry.register({
   label: 'Malla STL',
   extension: '.stl',
   mimeType: 'model/stl',
-  serialize: () => exportModel3dToAsciiStl(doc.model3d, { name: 'webcad' }).text,
+  serialize: async () => {
+    const {
+      initializeManifoldBoolean,
+      solidWithSimplifiedBooleanMesh,
+    } = await import('./3d/three/manifold-boolean.js');
+    await initializeManifoldBoolean();
+    const cleanModel3d = {
+      ...doc.model3d,
+      solids: doc.model3d.solids.map((record) => ({
+        ...record,
+        solid: solidWithSimplifiedBooleanMesh(record.solid),
+      })),
+    };
+    return exportModel3dToAsciiStl(cleanModel3d, { name: 'webcad' }).text;
+  },
 });
 const notifyUnsupportedLocalSave = createUnsupportedLocalSaveNotifier({
   onStatus: (message) => {
@@ -1700,6 +1729,7 @@ localFileManager = createLocalFileManager({
     renderer.draw();
   },
   onUnsupported: notifyUnsupportedLocalSave,
+  requestFileName: (options) => runtimeDialogs.requestSaveFileName(options),
 });
 autosaveController = createAutosaveController({
   fileManager: localFileManager,
@@ -1731,7 +1761,6 @@ const documentActions = createDocumentActions({
   activeDrawingProfile,
   getUnitsLabel: () => UNITS_LABEL,
   orthogonalInference,
-  serializeDocumentToDxf,
   syncProperties: () => {
     syncLayerPicker();
     syncLineStylePicker();
@@ -1745,6 +1774,7 @@ const {
   importDxf,
   newDrawing,
   openWebcadProject,
+  rebuildModel3d,
   redoDrawing,
   saveWebcadProject,
   undoDrawing,
@@ -1798,6 +1828,14 @@ const runtimeDialogs = createRuntimeDialogs({
   distance,
   formatNumber,
   getUnitsLabel: () => UNITS_LABEL,
+  coplanarTolerance: {
+    defaultFactor: DEFAULT_COPLANAR_FACE_TOLERANCE_FACTOR,
+    maxFactor: MAX_COPLANAR_FACE_TOLERANCE_FACTOR,
+    minFactor: MIN_COPLANAR_FACE_TOLERANCE_FACTOR,
+    normalizeFactor: normalizeCoplanarFaceToleranceFactor,
+    setFactor: setCoplanarFaceToleranceFactor,
+  },
+  rebuildModel3d,
   storePreference,
 });
 const {
@@ -1815,6 +1853,7 @@ const {
   openDrawingProfileDialog,
   openImageCalibrationDialog,
   openPolylineWidthDialog,
+  openRebuildModelDialog,
   openSettingsDialog,
   openTextDialog,
   showAbout,
@@ -1896,6 +1935,7 @@ Object.assign(
     localFileManager,
     orthogonalInference,
     polylineWidthDialog,
+    rebuildModelDialog,
     redoDrawing,
     runCommand,
     settingsDialog,
@@ -2317,6 +2357,7 @@ commandDispatcher = createCommandDispatcher({
     newDrawing,
     openDrawingProfileDialog,
     openSettingsDialog,
+    openRebuildModelDialog,
     exportDxf,
     exportStl,
     importDxf,

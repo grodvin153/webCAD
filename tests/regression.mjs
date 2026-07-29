@@ -1,7 +1,22 @@
 import assert from 'node:assert/strict';
 
 import { createCommandDispatcher } from '../source/app/command-dispatcher.js';
+import { createDocumentActions } from '../source/app/document-actions.js';
 import { exportModel3dToAsciiStl, trianglesFromSolid } from '../source/3d/stl-exporter.js';
+import {
+  normalizeSolidPlacement,
+  solidLocalToWorld,
+} from '../source/3d/solid-placement.js';
+import { solidTransformFromAlias } from '../source/3d/solid-transform-aliases.js';
+import { copySolids, moveSolids, rotateSolids } from '../source/3d/solid-transformations.js';
+import {
+  inferProjectedAxis,
+  isSolidTransformConfirmEvent,
+  pointOnAxisFromSnap,
+  pointFromReference,
+  resolvePoint3dFromInput,
+  solidTransformDisplacementStatus,
+} from '../source/3d/three/solid-transform-command.js';
 import { createControllerTransformMethods } from '../source/controller/commands/transforms.js';
 import { createControllerDimensionMethods } from '../source/controller/commands/dimensions.js';
 import { createControllerInputMethods } from '../source/controller/keyboard/input.js';
@@ -19,6 +34,8 @@ import { createTextEntityClass } from '../source/entities/text.js';
 import { createXLineEntityClass } from '../source/entities/xline.js';
 import { createDxfExporter } from '../source/files/formats/dxf/exporter.js';
 import { createDxfImporter } from '../source/files/formats/dxf/importer.js';
+import { createCadFormatRegistry } from '../source/files/formats/registry.js';
+import { createSaveLocationPicker } from '../source/files/save-location-picker.js';
 import { createHatchBoundaryGeometry } from '../source/hatches/boundary.js';
 import { createHatchFaces } from '../source/hatches/faces.js';
 import { createHatchFlood } from '../source/hatches/flood.js';
@@ -524,9 +541,68 @@ function testDocumentHistory() {
     sketchPlane: 'XY',
     sketches: [],
     nextSketchId: 1,
+    lines: [],
+    nextLineId: 1,
     solids: [],
     nextSolidId: 1,
   });
+  const lineDoc = new CadDocument();
+  const line3dRecords = lineDoc.add3dLines([
+    {
+      start: { x: 1, y: 2, z: 3 },
+      end: { x: 4, y: 5, z: 6 },
+    },
+  ]);
+  assert.equal(line3dRecords.length, 1);
+  assert.equal(lineDoc.model3d.lines[0].type, 'LINE3D');
+  assert.equal(lineDoc.undo(), true);
+  assert.equal(lineDoc.model3d.lines.length, 0);
+  assert.equal(lineDoc.redo(), true);
+  assert.deepEqual(lineDoc.model3d.lines[0].end, { x: 4, y: 5, z: 6 });
+  assert.equal(lineDoc.set3dLineGroupVisibility(line3dRecords[0].groupId, false), true);
+  assert.equal(lineDoc.model3d.lines[0].visible, false);
+  assert.equal(lineDoc.undo(), true);
+  assert.equal(lineDoc.model3d.lines[0].visible, true);
+  assert.equal(lineDoc.redo(), true);
+  assert.equal(lineDoc.model3d.lines[0].visible, false);
+  const lineTopologyDoc = new CadDocument();
+  const firstTopologyLine = lineTopologyDoc.add3dLines([{
+    start: { x: 0, y: 0, z: 0 },
+    end: { x: 10, y: 0, z: 0 },
+  }], { recordHistory: false })[0];
+  const secondTopologyLine = lineTopologyDoc.add3dLines([{
+    start: { x: 5, y: -5, z: 0 },
+    end: { x: 5, y: 5, z: 0 },
+  }], { recordHistory: false })[0];
+  assert.equal(lineTopologyDoc.update3dLineTopology({
+    replacements: [{
+      id: firstTopologyLine.id,
+      segments: [{
+        start: { x: 0, y: 0, z: 0 },
+        end: { x: 5, y: 0, z: 0 },
+      }, {
+        start: { x: 5, y: 0, z: 0 },
+        end: { x: 10, y: 0, z: 0 },
+      }],
+    }],
+    mergeGroupIds: [firstTopologyLine.groupId, secondTopologyLine.groupId],
+    targetGroupId: firstTopologyLine.groupId,
+    metadata: { divided: true },
+  }), true);
+  assert.equal(lineTopologyDoc.model3d.lines.length, 3);
+  assert.equal(new Set(lineTopologyDoc.model3d.lines.map((line) => line.groupId)).size, 1);
+  assert.equal(lineTopologyDoc.model3d.lines.every((line) =>
+    line.metadata.divided === true), true);
+  assert.equal(lineTopologyDoc.undo(), true);
+  assert.equal(lineTopologyDoc.model3d.lines.length, 2);
+  assert.equal(lineTopologyDoc.redo(), true);
+  assert.equal(lineTopologyDoc.model3d.lines.length, 3);
+  const topologySelection = lineTopologyDoc.model3d.lines.slice(0, 2)
+    .map((line) => line.id);
+  assert.equal(lineTopologyDoc.remove3dLines(topologySelection), 2);
+  assert.equal(lineTopologyDoc.model3d.lines.length, 1);
+  assert.equal(lineTopologyDoc.undo(), true);
+  assert.equal(lineTopologyDoc.model3d.lines.length, 3);
   assert.deepEqual(emptyDoc.topLevelEntities(), []);
 
   const planeDoc = new CadDocument();
@@ -602,6 +678,147 @@ function testDocumentHistory() {
   assert.equal('sourceEntity' in solidRecord.metadata, false);
   assert.equal('sourceEntity' in solidRecord.solid.metadata, false);
   assert.equal(JSON.parse(JSON.stringify(emptyDoc.model3d)).solids[0].id, 'solid3d-1');
+
+  const placementDoc = new CadDocument();
+  const placedFirst = placementDoc.add3dSolid(visualSolid, { recordHistory: false });
+  const placedSecond = placementDoc.add3dSolid(visualSolid, { recordHistory: false });
+  const stationary = placementDoc.add3dSolid(visualSolid, { recordHistory: false });
+  const originalGeometry = structuredClone(placedFirst.solid);
+  assert.deepEqual(placedFirst.placement, normalizeSolidPlacement());
+  assert.equal(moveSolids({
+    doc: placementDoc,
+    solidIds: [placedFirst.id, placedSecond.id],
+    from: { x: 1, y: 1, z: 1 },
+    to: { x: 7, y: -2, z: 5 },
+  }), true);
+  assert.deepEqual(placedFirst.placement.position, { x: 6, y: -3, z: 4 });
+  assert.deepEqual(placedSecond.placement.position, { x: 6, y: -3, z: 4 });
+  assert.deepEqual(stationary.placement.position, { x: 0, y: 0, z: 0 });
+  assert.deepEqual(placedFirst.solid, originalGeometry);
+  assert.equal(placementDoc.undoStack.length, 1);
+  assert.equal(placementDoc.undo(), true);
+  assert.deepEqual(placementDoc.model3d.solids[0].placement.position, { x: 0, y: 0, z: 0 });
+  assert.equal(placementDoc.redo(), true);
+  assert.deepEqual(placementDoc.model3d.solids[0].placement.position, { x: 6, y: -3, z: 4 });
+  assert.equal(rotateSolids({
+    doc: placementDoc,
+    solidIds: [placedFirst.id, placedSecond.id],
+    axisStart: { x: 0, y: 0, z: 0 },
+    axisEnd: { x: 0, y: 0, z: 1 },
+    angleDegrees: 90,
+  }), true);
+  assert.ok(Math.abs(placementDoc.model3d.solids[0].placement.position.x - 3) < 1e-9);
+  assert.ok(Math.abs(placementDoc.model3d.solids[0].placement.position.y - 6) < 1e-9);
+  assert.equal(placementDoc.undo(), true);
+  assert.deepEqual(placementDoc.model3d.solids[0].placement.position, { x: 6, y: -3, z: 4 });
+  assert.equal(placementDoc.redo(), true);
+  const repeatedLocalPoint = solidLocalToWorld(
+    { x: 1, y: 2, z: 3 },
+    placementDoc.model3d.solids[0],
+  );
+  assert.ok(Object.values(repeatedLocalPoint).every(Number.isFinite));
+  assert.deepEqual(placementDoc.model3d.solids[0].solid, originalGeometry);
+  placementDoc.model3d.solids[1].locked = true;
+  assert.equal(moveSolids({
+    doc: placementDoc,
+    solidIds: [placedSecond.id],
+    from: { x: 0, y: 0, z: 0 },
+    to: { x: 5, y: 0, z: 0 },
+  }), false);
+  assert.deepEqual(resolvePoint3dFromInput('2,3,4'), { x: 2, y: 3, z: 4 });
+  assert.deepEqual(resolvePoint3dFromInput('2,3,4', {
+    anchor: { x: 10, y: 20, z: 30 },
+  }), { x: 12, y: 23, z: 34 });
+  assert.deepEqual(resolvePoint3dFromInput('5', {
+    anchor: { x: 1, y: 2, z: 3 },
+    axis: 'z',
+  }), { x: 1, y: 2, z: 8 });
+  assert.deepEqual(pointFromReference(
+    { x: 10, y: 20, z: 30 },
+    { x: -2, y: 3, z: 4 },
+  ), { x: 8, y: 23, z: 34 });
+  const directedDistancePoint = resolvePoint3dFromInput('10', {
+    anchor: { x: 1, y: 2, z: 3 },
+    direction: { x: 3, y: 4, z: 0 },
+  });
+  assert.ok(Math.abs(directedDistancePoint.x - 7) < 1e-12);
+  assert.ok(Math.abs(directedDistancePoint.y - 10) < 1e-12);
+  assert.equal(directedDistancePoint.z, 3);
+  assert.equal(isSolidTransformConfirmEvent({ key: 'Enter' }), true);
+  assert.equal(isSolidTransformConfirmEvent({ key: ' ' }), true);
+  assert.equal(isSolidTransformConfirmEvent({ button: 2 }), true);
+  assert.equal(isSolidTransformConfirmEvent({ button: 0 }), false);
+  assert.deepEqual(pointOnAxisFromSnap(
+    { x: 1, y: 2, z: 3 },
+    { x: 8, y: 11, z: -4 },
+    'x',
+  ), { x: 8, y: 2, z: 3 });
+  assert.deepEqual(pointOnAxisFromSnap(
+    { x: 1, y: 2, z: 3 },
+    { x: 8, y: 11, z: -4 },
+    'z',
+  ), { x: 1, y: 2, z: -4 });
+  assert.equal(
+    solidTransformDisplacementStatus({ x: 3, y: 4, z: 12 }),
+    'Precise punto de destino · Distancia 13 · ΔX 3 · ΔY 4 · ΔZ 12',
+  );
+  const projectedAxes = {
+    x: { x: 100, y: 0 },
+    y: { x: 0, y: 100 },
+    z: { x: 70, y: -70 },
+  };
+  assert.equal(inferProjectedAxis({
+    anchor: { x: 0, y: 0 },
+    axes: projectedAxes,
+    pointer: { x: 100, y: 5 },
+  }), 'x');
+  assert.equal(inferProjectedAxis({
+    anchor: { x: 0, y: 0 },
+    axes: projectedAxes,
+    pointer: { x: 4, y: 100 },
+  }), 'y');
+  assert.equal(inferProjectedAxis({
+    anchor: { x: 0, y: 0 },
+    axes: projectedAxes,
+    pointer: { x: 72, y: -68 },
+  }), 'z');
+  assert.equal(inferProjectedAxis({
+    anchor: { x: 0, y: 0 },
+    axes: projectedAxes,
+    pointer: { x: 100, y: 40 },
+  }), null);
+  assert.equal(solidTransformFromAlias('C'), 'copy');
+  assert.equal(solidTransformFromAlias('d'), 'move');
+  assert.equal(solidTransformFromAlias('G'), 'rotate');
+  assert.equal(solidTransformFromAlias('m'), null);
+
+  const copyDoc = new CadDocument();
+  const copySource = copyDoc.add3dSolid(visualSolid, {
+    name: 'Original',
+    placement: {
+      position: { x: 2, y: 3, z: 4 },
+      quaternion: { x: 0, y: 0, z: 0, w: 1 },
+    },
+    recordHistory: false,
+  });
+  const copies = copySolids({
+    doc: copyDoc,
+    solidIds: [copySource.id],
+    from: { x: 1, y: 1, z: 1 },
+    to: { x: 6, y: -1, z: 8 },
+  });
+  assert.equal(copies.length, 1);
+  assert.equal(copyDoc.model3d.solids.length, 2);
+  assert.deepEqual(copySource.placement.position, { x: 2, y: 3, z: 4 });
+  assert.deepEqual(copies[0].placement.position, { x: 7, y: 1, z: 11 });
+  assert.deepEqual(copies[0].solid, copySource.solid);
+  assert.notEqual(copies[0].solid, copySource.solid);
+  assert.equal(copies[0].operation.type, 'copySolid');
+  assert.equal(copyDoc.undoStack.length, 1);
+  assert.equal(copyDoc.undo(), true);
+  assert.equal(copyDoc.model3d.solids.length, 1);
+  assert.equal(copyDoc.redo(), true);
+  assert.equal(copyDoc.model3d.solids.length, 2);
 
   const movedSolid = {
     ...visualSolid,
@@ -749,7 +966,15 @@ function testStlExport() {
     solids: [
       { id: 'solid3d-1', visible: true, solid: prism },
       { id: 'solid3d-2', visible: false, solid: testRectangularPrismSolid(2) },
-      { id: 'solid3d-3', visible: true, solid: testRectangularPrismSolid(4) },
+      {
+        id: 'solid3d-3',
+        visible: true,
+        placement: {
+          position: { x: 10, y: 20, z: 30 },
+          quaternion: { x: 0, y: 0, z: 0, w: 1 },
+        },
+        solid: testRectangularPrismSolid(4),
+      },
     ],
   };
   const stl = exportModel3dToAsciiStl(model3d, { name: 'webcad-test' });
@@ -758,7 +983,8 @@ function testStlExport() {
   assert.match(stl.text, /^solid webcad-test\n/);
   assert.match(stl.text, /endsolid webcad-test\n$/);
   assert.equal((stl.text.match(/facet normal/g) || []).length, 24);
-  assert.equal(stl.text.includes('vertex 4.00000000000 0.00000000000 0.00000000000'), true);
+  assert.equal(stl.text.includes('vertex 14.0000000000 20.0000000000 30.0000000000'), true);
+  assert.equal(stl.text.includes('vertex 4.00000000000 0.00000000000 0.00000000000'), false);
   assert.equal(stl.text.includes('vertex 2.00000000000 0.00000000000 0.00000000000'), false);
   assert.throws(() => exportModel3dToAsciiStl({ version: 1, solids: [] }), /No hay solidos 3D visibles/);
 }
@@ -1283,6 +1509,10 @@ function testWebcadProjectFormat() {
   };
   const record = doc3d.add3dSolid(visualSolid, {
     operation: { type: 'pushFromProfile', distance: 3, sourceKey: 'POLYLINE:profile-webcad' },
+    placement: {
+      position: { x: 10, y: -20, z: 30 },
+      quaternion: { x: 0, y: 0, z: Math.SQRT1_2, w: Math.SQRT1_2 },
+    },
   });
   const project3d = parseWebcadProject(serializeWebcadProject({ appVersion: 'test-version', doc: doc3d, state }));
   assert.equal(project3d.model3d.solids.length, 1);
@@ -1303,6 +1533,7 @@ function testWebcadProjectFormat() {
   assert.equal(project3d.model3d.solids[0].visible, true);
   assert.equal(project3d.model3d.solids[0].exactGeometry.status, 'available');
   assert.equal(project3d.model3d.solids[0].operations[0].type, 'pushFromProfile');
+  assert.deepEqual(project3d.model3d.solids[0].placement, record.placement);
   assert.equal(project3d.model3d.nextSolidId, 2);
   JSON.stringify(project3d);
 
@@ -1423,6 +1654,127 @@ function testCommandDispatcher() {
   assert.deepEqual(calls.slice(0, 2), [['setTool', 'line'], ['closeToolGroups']]);
   assert.deepEqual(calls.slice(2), [['startPolylineJoin'], ['closeToolGroups'], ['start'], ['closeToolGroups'],
     ['start'], ['closeToolGroups'], ['toggleGridSnap']]);
+}
+
+function testWebcadProjectSaveUsesLocationPicker() {
+  const calls = [];
+  const actions = createDocumentActions({
+    localFileManager: {
+      saveAs(...args) {
+        calls.push(args);
+        return Promise.resolve(true);
+      },
+    },
+  });
+  assert.equal(actions.saveWebcadProject(), true);
+  assert.equal(actions.exportDxf(), true);
+  assert.deepEqual(calls, [['webcad'], ['dxf']]);
+}
+
+async function testModularSaveLocationPicker() {
+  const registry = createCadFormatRegistry();
+  registry.register({
+    id: 'webcad',
+    label: 'Proyecto webCAD',
+    extension: '.webcad',
+    mimeType: 'application/json',
+    serialize: () => '{}',
+  });
+  const writes = [];
+  let nativeOptions = null;
+  const nativeHandle = {
+    name: 'modelo.webcad',
+    async createWritable() {
+      return {
+        async close() {
+          writes.push('native-close');
+        },
+        async write(content) {
+          writes.push(['native-write', content.type]);
+        },
+      };
+    },
+  };
+  const nativePicker = createSaveLocationPicker({
+    registry,
+    browserWindow: {
+      async showSaveFilePicker(options) {
+        nativeOptions = options;
+        return nativeHandle;
+      },
+    },
+  });
+  assert.equal(nativePicker.supportsLocationSelection(), true);
+  const nativeDestination = await nativePicker.select({
+    formatId: 'webcad',
+    suggestedName: 'modelo',
+  });
+  assert.equal(nativeOptions.suggestedName, 'modelo.webcad');
+  assert.equal(nativeDestination.handle, nativeHandle);
+  await nativePicker.write(nativeDestination, '{}', registry.get('webcad'));
+  assert.deepEqual(writes, [
+    ['native-write', 'application/json'],
+    'native-close',
+  ]);
+
+  const directoryCalls = [];
+  const directoryHandle = {
+    async getFileHandle(name, options) {
+      directoryCalls.push(['file', name, options]);
+      return nativeHandle;
+    },
+  };
+  const directoryPicker = createSaveLocationPicker({
+    registry,
+    browserWindow: {
+      async showDirectoryPicker(options) {
+        directoryCalls.push(['directory', options]);
+        return directoryHandle;
+      },
+    },
+    requestFileName(options) {
+      directoryCalls.push(['name', options]);
+      return 'reconstruido';
+    },
+  });
+  const directoryDestination = await directoryPicker.select({
+    formatId: 'webcad',
+    suggestedName: 'modelo.webcad',
+  });
+  assert.equal(directoryDestination.handle, nativeHandle);
+  assert.equal(directoryCalls[0][0], 'directory');
+  assert.equal(directoryCalls[1][1].directorySelected, true);
+  assert.deepEqual(directoryCalls[2], [
+    'file',
+    'reconstruido.webcad',
+    { create: true },
+  ]);
+
+  const downloads = [];
+  let unsupportedCount = 0;
+  const fallbackPicker = createSaveLocationPicker({
+    registry,
+    browserWindow: {},
+    requestFileName: () => 'copia',
+    onUnsupported: () => {
+      unsupportedCount += 1;
+    },
+    download: (content, format, name) => {
+      downloads.push([content, format.id, name]);
+    },
+  });
+  assert.equal(fallbackPicker.supportsLocationSelection(), false);
+  const fallbackDestination = await fallbackPicker.select({
+    formatId: 'webcad',
+    suggestedName: 'modelo.webcad',
+  });
+  await fallbackPicker.write(
+    fallbackDestination,
+    '{}',
+    registry.get('webcad'),
+  );
+  assert.equal(unsupportedCount, 1);
+  assert.deepEqual(downloads, [['{}', 'webcad', 'copia.webcad']]);
 }
 
 function testPolylineShortcutAlias() {
@@ -1655,6 +2007,8 @@ testRegularPolygonCommand();
 testMirrorSecondPointConfirmation();
 testDxfRoundTrip();
 testCommandDispatcher();
+testWebcadProjectSaveUsesLocationPicker();
+await testModularSaveLocationPicker();
 testPolylineShortcutAlias();
 testLineDraftStatus();
 testPointerGripSelectionStartsDrag();

@@ -12,6 +12,7 @@ export function createControllerKeyboardEventMethods(dependencies) {
     localFileManager,
     orthogonalInference,
     polylineWidthDialog,
+    rebuildModelDialog,
     redoDrawing,
     runCommand,
     settingsDialog,
@@ -24,7 +25,8 @@ export function createControllerKeyboardEventMethods(dependencies) {
     if (!drawingProfileDialog.hidden || !settingsDialog.hidden || !textDialog.hidden || !hatchDialog.hidden ||
         imageEditor?.isOpen() ||
         !imageCalibrationDialog.hidden ||
-        !polylineWidthDialog.hidden || !blockCreateDialog.hidden ||
+        !polylineWidthDialog.hidden || !rebuildModelDialog.hidden ||
+        !blockCreateDialog.hidden ||
         !blockInsertDialog.hidden || !aboutDialog.hidden) {
       return;
     }

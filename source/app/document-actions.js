@@ -23,7 +23,6 @@ export function createDocumentActions({
   activeDrawingProfile,
   getUnitsLabel,
   orthogonalInference,
-  serializeDocumentToDxf,
   syncProperties,
 }) {
   function newDrawing() {
@@ -63,16 +62,8 @@ export function createDocumentActions({
   }
 
   function exportDxf() {
-    const dxf = serializeDocumentToDxf(doc);
-    const blob = new Blob([dxf], { type: 'application/dxf' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = 'drawing.dxf';
-    link.click();
-    URL.revokeObjectURL(url);
-    state.statusText = `Exportadas ${doc.topLevelEntities().length} entidades DXF`;
-    renderer.draw();
+    void localFileManager.saveAs('dxf');
+    return true;
   }
 
   function importDxf() {
@@ -102,6 +93,66 @@ export function createDocumentActions({
   function saveWebcadProject() {
     void localFileManager.saveAs('webcad');
     return true;
+  }
+
+  async function rebuildModel3d({ toleranceFactor = 1 } = {}) {
+    if (state.blockEditDraft || state.sketchEditDraft) {
+      state.statusText = 'Finalice la edicion actual antes de reconstruir el modelo 3D';
+      controller.updateUiStatus();
+      renderer.draw();
+      return false;
+    }
+    const records = [...(doc.model3d?.solids ?? [])];
+    if (!records.length) {
+      state.statusText = 'No hay solidos 3D que reconstruir';
+      controller.updateUiStatus();
+      renderer.draw();
+      return false;
+    }
+    state.statusText =
+      `Reconstruyendo ${records.length} solido${records.length === 1 ? '' : 's'} 3D...`;
+    controller.updateUiStatus();
+    renderer.draw();
+    try {
+      const {
+        auditSolidCadTopology,
+        rebuildSolidCadTopology,
+      } = await import('../3d/three/manifold-boolean.js');
+      const rebuilt = records.map((record) => ({
+        record,
+        solid: rebuildSolidCadTopology(record.solid, { toleranceFactor }),
+      }));
+      if (rebuilt.some(({ solid }) =>
+        !solid || !auditSolidCadTopology(solid).valid)) {
+        state.statusText =
+          'No se pudo reconstruir el modelo con ese factor; no se hicieron cambios';
+        controller.updateUiStatus();
+        renderer.draw();
+        return false;
+      }
+      const beforeGroups = records.reduce((total, record) =>
+        total + (record.solid.metadata?.planarFaceGroups?.length ?? 0), 0);
+      const afterGroups = rebuilt.reduce((total, { solid }) =>
+        total + (solid.metadata?.planarFaceGroups?.length ?? 0), 0);
+      doc.recordHistory();
+      rebuilt.forEach(({ record, solid }) => {
+        doc.replace3dSolid(record.id, solid, { recordHistory: false });
+      });
+      refreshThreeDocumentView();
+      state.statusText =
+        `Modelo 3D reconstruido · ${beforeGroups} → ${afterGroups} caras planas` +
+        ` · factor ×${toleranceFactor}`;
+      controller.updateUiStatus();
+      renderer.draw();
+      return true;
+    }
+    catch (error) {
+      console.error('No se pudo reconstruir el modelo 3D', error);
+      state.statusText = 'No se pudo reconstruir el modelo 3D';
+      controller.updateUiStatus();
+      renderer.draw();
+      return false;
+    }
   }
 
   function exportStl() {
@@ -178,6 +229,7 @@ export function createDocumentActions({
     openWebcadProject,
     redoDrawing,
     resetInteractionState,
+    rebuildModel3d,
     saveWebcadProject,
     undoDrawing,
   };
