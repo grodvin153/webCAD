@@ -57,6 +57,7 @@ import { createXLineEntityClass } from './entities/xline.js';
 import { createRasterImageEntityClass } from './images/entity.js';
 import { createImageEditor } from './images/editor.js';
 import { createPngImporter } from './images/importer.js';
+import { createClipboardImagePasteHandler } from './images/clipboard.js';
 import {
   applyImageAlignment,
   bestImageAlignment,
@@ -1468,7 +1469,9 @@ pointTangentLineCommand = createPointTangentLineCommand({
 offsetCommand = createOffsetCommand({
   state,
   setTool: (tool) => controller.setTool(tool),
-  findEntityAt: (point) => controller.findEntityAt(point),
+  findEntityAt: (point) => controller.findEntityAt(point, {
+    includeSketchReferences: true,
+  }),
   distanceValue: activeOffsetDistance,
   application: offsetApplication,
   refresh: () => {
@@ -1790,6 +1793,10 @@ const pngImporter = createPngImporter({
     renderer.draw();
   },
 });
+const imagePasteHandler = createClipboardImagePasteHandler({
+  importPngFile: (file, options) => pngImporter.importFile(file, options),
+  is3dActive: () => window.webcadThreeMode?.isActive?.() === true,
+});
 
 imageEditor = createImageEditor({
   root: document,
@@ -1864,6 +1871,7 @@ Object.assign(
   createControllerSelectionMethods({
     DIMENSION_TOOLS,
     SNAP_THRESHOLD,
+    boundsIntersectsBounds,
     circularReferencePoints,
     createBounds,
     dimensionReferencePoints,
@@ -2391,6 +2399,7 @@ bindApplicationEvents({
   dialogs: runtimeDialogs,
   blockDialogs,
   hatchDialog: hatchDialogController,
+  imagePasteHandler,
 });
 
 bindDxfImportInput({

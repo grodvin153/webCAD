@@ -32,12 +32,15 @@ import {
   minimumBooleanOperationDistance,
 } from '../tolerances.js';
 import {
-  booleanSolid3d,
   isManifoldBooleanReady,
+  splitSolidByPlane3d,
   solidWithDerivedSurfaceTopology,
+  subtractSolid3dComponents,
   subtractFacePushSolid3d,
   subtractionCutterDistance,
+  unionSolid3dComponents,
 } from './manifold-boolean.js';
+import { consolidateAdditiveSweep } from './additive-solid-consolidation.js';
 
 const SOLID_INTEGRITY_EPSILON = 1e-6;
 let analyticRegionSequence = 0;
@@ -184,6 +187,26 @@ export function solidFromBooleanFeatureTool(sourceSolid, face, distance) {
   );
 }
 
+function consolidatedAdditiveFaceSweep(sourceSolid, face, distance, options = {}) {
+  const primaryTool = solidFromBooleanFeatureTool(sourceSolid, face, distance);
+  const primary = consolidateAdditiveSweep(sourceSolid, primaryTool, options);
+  if (primary) return primary;
+
+  const axis = normalizedNormal(
+    face?.analyticAxis ??
+    face?.normal ??
+    face?.exactProfile?.plane?.normal,
+  );
+  if (!axis) return null;
+  const overlap = booleanWeldTolerance(sourceSolid);
+  const fallbackTool = solidFromFacePush(
+    faceWithBooleanUnionOverlap(face, axis.multiplyScalar(Math.sign(distance)), overlap),
+    Number(distance) + Math.sign(distance) * overlap,
+    { allowSubMinimumThickness: true },
+  );
+  return consolidateAdditiveSweep(sourceSolid, fallbackTool, options);
+}
+
 function unavailableExactGeometry(reason, details = {}) {
   return {
     status: 'unavailable',
@@ -276,7 +299,17 @@ function facesHaveArea(solid) {
   return solid.faces.every((face) => faceArea3d(face, solid.vertices) > SOLID_INTEGRITY_EPSILON);
 }
 
-function movedFaceKeepsMaterial(sourceSolid, movingVertices, unitNormal, distance) {
+function movedFaceKeepsMaterial(
+  sourceSolid,
+  movingVertices,
+  unitNormal,
+  distance,
+  { allowOrientationCrossing = false } = {},
+) {
+  const microThicknessTolerance = Math.max(
+    SOLID_INTEGRITY_EPSILON,
+    booleanWeldTolerance(sourceSolid),
+  );
   return sourceSolid.edges.every((edge) => {
     const firstMoves = movingVertices.has(edge[0]);
     const secondMoves = movingVertices.has(edge[1]);
@@ -286,12 +319,12 @@ function movedFaceKeepsMaterial(sourceSolid, movingVertices, unitNormal, distanc
     const originalThickness = vertexVector(sourceSolid.vertices[movingIndex])
       .sub(vertexVector(sourceSolid.vertices[fixedIndex]))
       .dot(unitNormal);
-    if (Math.abs(originalThickness) <= SOLID_INTEGRITY_EPSILON) return true;
+    if (Math.abs(originalThickness) <= microThicknessTolerance) return true;
     const movedThickness = originalThickness + distance;
     const keepsOrientation = originalThickness > 0
       ? movedThickness > SOLID_INTEGRITY_EPSILON
       : movedThickness < -SOLID_INTEGRITY_EPSILON;
-    if (!keepsOrientation) return false;
+    if (!keepsOrientation) return allowOrientationCrossing;
     if (Math.abs(originalThickness) + SOLID_INTEGRITY_EPSILON <
         MINIMUM_3D_THICKNESS) {
       return true;
@@ -590,8 +623,14 @@ function exactProfileWorldLoops(profile) {
   const xAxis = vertexVector(plane?.xAxis);
   const normal = vertexVector(plane?.normal);
   if (xAxis.lengthSq() <= 1e-12 || normal.lengthSq() <= 1e-12) return null;
-  const worldLoop = (loop) => loop.map((point) =>
-    pointOnExactProfilePlane(point, plane));
+  const worldLoop = (loop) => {
+    const points = loop.map((point) => pointOnExactProfilePlane(point, plane));
+    if (points.length > 3 && points[0] && points.at(-1) &&
+        vertexVector(points[0]).distanceTo(vertexVector(points.at(-1))) <= 1e-9) {
+      points.pop();
+    }
+    return points;
+  };
   return {
     outer: worldLoop(sampled.outerLoop),
     holes: sampled.innerLoops.map(worldLoop),
@@ -622,6 +661,134 @@ function faceFromExactFeature(profile) {
       smoothHoles[loopIndex] ? [] : loop.map((_, index) => index)),
     holeSmoothProfileVertexIndices: loops.holes.map((loop, loopIndex) =>
       smoothHoles[loopIndex] ? loop.map((_, index) => index) : []),
+  };
+}
+
+function stableRegionHash(value) {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
+function canonicalLoopKey(loop, tolerance) {
+  const points = (loop ?? []).map((point) => [
+    Math.round(Number(point?.x) / tolerance),
+    Math.round(Number(point?.y) / tolerance),
+    Math.round((Number(point?.z) || 0) / tolerance),
+  ].join(':'));
+  if (!points.length) return '';
+  const orientations = [points, [...points].reverse()];
+  return orientations.flatMap((entries) => entries.map((_, start) => [
+    ...entries.slice(start),
+    ...entries.slice(0, start),
+  ].join('|'))).sort()[0];
+}
+
+function pushRegionIdentity(face, solid) {
+  const normal = normalizedNormal(face?.normal);
+  if (!normal || !Array.isArray(face?.points) || face.points.length < 3) return null;
+  const tolerance = coplanarFaceTolerance(solid);
+  const outerKey = canonicalLoopKey(face.points, tolerance);
+  const innerKeys = (face.holes ?? [])
+    .map((loop) => canonicalLoopKey(loop, tolerance))
+    .sort();
+  const boundaryKey = [outerKey, ...innerKeys].join('::');
+  const planeOffset = facePlaneOffset(face.points, normal);
+  const planeKey = [normal.x, normal.y, normal.z]
+    .map((value) => Math.round(value * 1e8))
+    .concat(Math.round(planeOffset / tolerance))
+    .join(':');
+  return {
+    type: 'push-region-v1',
+    id: `push-region-${stableRegionHash(`${planeKey}:${boundaryKey}`)}`,
+    boundaryKey,
+    plane: {
+      normal: { x: normal.x, y: normal.y, z: normal.z },
+      offset: planeOffset,
+    },
+    outerPointCount: face.points.length,
+    innerPointCounts: (face.holes ?? []).map((loop) => loop.length),
+  };
+}
+
+function pushFaceProvenance(face, solid) {
+  const latestFeature = solid?.metadata?.profileFeatures?.at?.(-1);
+  return {
+    analyticRegionId: face?.analyticRegionId ?? null,
+    analyticParentRegionId: face?.analyticParentRegionId ?? null,
+    sourceSolidDocumentId: face?.sourceSolidDocumentId ??
+      solid?.metadata?.sourceSolidDocumentId ?? null,
+    sourceFeature: latestFeature ? {
+      type: latestFeature.type ?? null,
+      analyticRegionId: latestFeature.analyticRegionId ?? null,
+      side: latestFeature.side ?? null,
+      component: latestFeature.component ?? null,
+    } : null,
+    planeCut: cloneJson(solid?.metadata?.planeCut ?? null),
+  };
+}
+
+export function pushInputFaceSnapshot(face, solid) {
+  const normal = normalizedNormal(face?.normal);
+  const points = (face?.points ?? []).map((point) => ({
+    x: Number(point?.x),
+    y: Number(point?.y),
+    z: Number(point?.z) || 0,
+  }));
+  const holes = (face?.holes ?? []).map((loop) => loop.map((point) => ({
+    x: Number(point?.x),
+    y: Number(point?.y),
+    z: Number(point?.z) || 0,
+  })));
+  if (!normal || points.length < 3 ||
+      [points, ...holes].some((loop) => loop.some((point) =>
+        ![point.x, point.y, point.z].every(Number.isFinite)))) {
+    return null;
+  }
+  return {
+    type: 'push-input-face-v2',
+    points,
+    holes,
+    normal: { x: normal.x, y: normal.y, z: normal.z },
+    region: pushRegionIdentity({ ...face, points, holes }, solid),
+    provenance: pushFaceProvenance(face, solid),
+    cadProfileVertexIndices: [...(face?.cadProfileVertexIndices ?? [])],
+    smoothProfileVertexIndices: [...(face?.smoothProfileVertexIndices ?? [])],
+    holeCadProfileVertexIndices: cloneJson(
+      face?.holeCadProfileVertexIndices ?? [],
+    ),
+    holeSmoothProfileVertexIndices: cloneJson(
+      face?.holeSmoothProfileVertexIndices ?? [],
+    ),
+  };
+}
+
+function faceFromPushInputSnapshot(snapshot) {
+  if (!['push-input-face-v1', 'push-input-face-v2'].includes(snapshot?.type)) {
+    return null;
+  }
+  const normal = normalizedNormal(snapshot.normal);
+  const points = cloneJson(snapshot.points ?? []);
+  const holes = cloneJson(snapshot.holes ?? []);
+  if (!normal || points.length < 3) return null;
+  return {
+    points,
+    holes,
+    normal: { x: normal.x, y: normal.y, z: normal.z },
+    analyticAxis: { x: normal.x, y: normal.y, z: normal.z },
+    cadProfileVertexIndices: [...(snapshot.cadProfileVertexIndices ?? [])],
+    smoothProfileVertexIndices: [...(snapshot.smoothProfileVertexIndices ?? [])],
+    holeCadProfileVertexIndices: cloneJson(
+      snapshot.holeCadProfileVertexIndices ?? [],
+    ),
+    holeSmoothProfileVertexIndices: cloneJson(
+      snapshot.holeSmoothProfileVertexIndices ?? [],
+    ),
+    region: cloneJson(snapshot.region ?? null),
+    provenance: cloneJson(snapshot.provenance ?? null),
   };
 }
 
@@ -674,11 +841,284 @@ function solidFromExactBase(sourceSolid) {
     ...solid.metadata,
     exactGeometry: cloneJson(base),
     profileFeatures: [],
+    sourceSolidDocumentId: sourceSolid.metadata?.sourceSolidDocumentId ?? null,
   };
   return solid;
 }
 
-function replayExactProfileFeature(sourceSolid, face, moveDistance) {
+function featureOperationType(feature, distance = feature?.distance) {
+  const value = Number(distance);
+  if (!Number.isFinite(value)) return null;
+  if (value > 0) return 'union';
+  if (value < 0) return 'subtract';
+  return null;
+}
+
+function replayedFeatureFace(feature) {
+  return feature?.exactProfile?.plane
+    ? faceFromExactFeature(feature.exactProfile)
+    : faceFromPushInputSnapshot(feature?.inputFace);
+}
+
+function applyStoredPushFeature(rebuilt, sourceFeature, options = {}) {
+  if (sourceFeature?.type === 'subtractSolid') {
+    const tool = rebuildSolidFromAuthority(sourceFeature?.tool?.authority, options);
+    if (!tool) return null;
+    const result = subtractSolid3dComponents(rebuilt, tool, {
+      operation: cloneJson(sourceFeature),
+      toolTransform: sourceFeature.tool.transform,
+    });
+    if (!result.ok) return null;
+    return result.solids[Number(sourceFeature.component) - 1] ?? null;
+  }
+  if (sourceFeature?.type === 'unionSolid') {
+    const tool = rebuildSolidFromAuthority(sourceFeature?.tool?.authority, options);
+    if (!tool) return null;
+    const components = unionSolid3dComponents(rebuilt, tool, {
+      operation: cloneJson(sourceFeature),
+      toolTransform: sourceFeature.tool.transform,
+    });
+    return components?.length === 1 ? components[0] : null;
+  }
+  if (sourceFeature?.type === 'cutSolidByPlane') {
+    const cut = splitSolidByPlane3d(rebuilt, sourceFeature.points, {
+      operation: cloneJson(sourceFeature),
+    });
+    if (!cut.ok) return null;
+    return cut.parts.find((part) =>
+      part.side === sourceFeature.side &&
+      part.componentIndex + 1 === Number(sourceFeature.component))?.solid ?? null;
+  }
+  const distance = Number(options.distance ?? sourceFeature?.distance);
+  const operationType = options.operationType ??
+    featureOperationType(sourceFeature, distance);
+  if (!['union', 'subtract'].includes(operationType) || !Number.isFinite(distance)) {
+    return null;
+  }
+  const featureFace = options.face ?? replayedFeatureFace(sourceFeature);
+  if (!featureFace) return null;
+  const operation = {
+    ...cloneJson(sourceFeature),
+    type: operationType,
+    distance,
+    requestedDistance: distance,
+  };
+  delete operation.kernelDistance;
+  if (Math.abs(distance) <= booleanWeldTolerance(rebuilt)) return rebuilt;
+  if (operationType === 'subtract') {
+    const featureNormal = normalizedNormal(featureFace.normal);
+    const featureOrigin = vertexVector(featureFace.points[0]);
+    operation.through = featureNormal
+      ? distance <= Math.min(...rebuilt.vertices.map((vertex) =>
+        vertexVector(vertex).sub(featureOrigin).dot(featureNormal))) +
+        booleanWeldTolerance(rebuilt)
+      : false;
+    const kernelDistance = featureNormal
+      ? subtractionCutterDistance(
+        rebuilt,
+        distance,
+        featureOrigin,
+        featureNormal,
+      )
+      : distance;
+    return subtractFacePushSolid3d(rebuilt, featureFace, distance, {
+      kernelDistance,
+      operation,
+      onDiagnostic: options.onDiagnostic,
+    });
+  }
+  operation.through = false;
+  return consolidatedAdditiveFaceSweep(rebuilt, featureFace, distance, {
+    operation,
+    onDiagnostic: options.onDiagnostic,
+  });
+}
+
+function rebuildSolidThroughFeatures(sourceSolid, endIndex, options = {}) {
+  const features = sourceSolid?.metadata?.profileFeatures;
+  if (!Array.isArray(features)) return null;
+  let rebuilt = solidFromExactBase(sourceSolid);
+  if (!rebuilt) return null;
+  for (let index = 0; index < endIndex; index += 1) {
+    rebuilt = applyStoredPushFeature(rebuilt, features[index], options);
+    if (!isValidSolid3d(rebuilt)) return null;
+  }
+  return rebuilt;
+}
+
+export function rebuildSolidFromAuthority(authority, options = {}) {
+  if (authority?.type !== 'parametric-solid-v1' ||
+      authority?.base?.type !== 'extrusion') return null;
+  const features = Array.isArray(authority.operations)
+    ? cloneJson(authority.operations)
+    : [];
+  const profile = cloneJson(authority.base.profile);
+  const sourceSolid = {
+    metadata: {
+      exactGeometry: {
+        status: 'available',
+        representation: 'exact-extrusion-v1',
+        base: {
+          status: 'available',
+          representation: 'exact-extrusion-v1',
+          profile,
+          extrusion: {
+            type: 'exact-extrusion',
+            version: 1,
+            profile: cloneJson(profile),
+            direction: cloneJson(authority.base.direction),
+            distance: Number(authority.base.distance),
+            metadata: cloneJson(authority.base.metadata ?? {}),
+          },
+        },
+      },
+      profileFeatures: features,
+      sourceSolidDocumentId: authority.sourceSolidDocumentId ?? null,
+    },
+  };
+  const rebuilt = rebuildSolidThroughFeatures(sourceSolid, features.length, options);
+  return isValidSolid3d(rebuilt) ? rebuilt : null;
+}
+
+function facePlaneOffset(points, normal) {
+  if (!Array.isArray(points) || !points.length) return null;
+  return points.reduce((sum, point) => sum + vertexVector(point).dot(normal), 0) /
+    points.length;
+}
+
+function inputFaceForMoveFeature(rebuilt, feature, terminalFace) {
+  const featureNormal = normalizedNormal(feature?.normal ?? feature?.analyticAxis);
+  const terminalNormal = normalizedNormal(terminalFace?.normal);
+  const distance = Number(feature?.distance);
+  if (!featureNormal || !terminalNormal || !Number.isFinite(distance) ||
+      featureNormal.dot(terminalNormal) < 1 - 1e-5) {
+    return null;
+  }
+  const terminalOffset = facePlaneOffset(terminalFace.points, featureNormal);
+  if (!Number.isFinite(terminalOffset)) return null;
+  const snapshotFace = faceFromPushInputSnapshot(feature.inputFace);
+  const snapshotOffset = snapshotFace
+    ? facePlaneOffset(snapshotFace.points, featureNormal)
+    : null;
+  const tolerance = Math.max(
+    booleanWeldTolerance(rebuilt),
+    booleanWeldTolerance(terminalFace.sourceSolid),
+  );
+  const persistedGroups = rebuilt.metadata?.planarFaceGroups ?? [];
+  const faceGroups = persistedGroups.length
+    ? persistedGroups
+    : rebuilt.faces.map((indices, faceIndex) => {
+      const normal = planarFaceNormal(indices, rebuilt.vertices);
+      return normal ? {
+        indices: [faceIndex],
+        outerLoop: indices.map((vertexIndex) => rebuilt.vertices[vertexIndex]),
+        innerLoops: [],
+        normal: { x: normal.x, y: normal.y, z: normal.z },
+      } : null;
+    }).filter(Boolean);
+  const candidates = faceGroups.filter((group) => {
+    const groupNormal = normalizedNormal(group?.normal);
+    const groupOffset = facePlaneOffset(group?.outerLoop, featureNormal);
+    const candidateRegion = pushRegionIdentity({
+      points: group.outerLoop,
+      holes: group.innerLoops ?? [],
+      normal: group.normal,
+    }, rebuilt);
+    return groupNormal && groupNormal.dot(featureNormal) >= 1 - 1e-5 &&
+      Number.isFinite(groupOffset) &&
+      Math.abs(groupOffset + distance - terminalOffset) <= tolerance &&
+      (!Number.isFinite(snapshotOffset) ||
+        Math.abs(groupOffset - snapshotOffset) <= tolerance) &&
+      (!snapshotFace?.region?.id ||
+        candidateRegion?.id === snapshotFace.region.id);
+  });
+  if (candidates.length !== 1) return null;
+  const group = candidates[0];
+  const face = snapshotFace ?? {
+    points: cloneJson(group.outerLoop),
+    holes: cloneJson(group.innerLoops ?? []),
+    normal: { x: featureNormal.x, y: featureNormal.y, z: featureNormal.z },
+    analyticAxis: { x: featureNormal.x, y: featureNormal.y, z: featureNormal.z },
+  };
+  return {
+    ...face,
+    sourceSolid: rebuilt,
+    sourceSolidDocumentId: terminalFace.sourceSolidDocumentId ?? null,
+    sourceSolidFaceIndex: group.indices[0],
+    sourceSolidFaceIndices: [...group.indices],
+  };
+}
+
+function replayMoveFaceFeature(sourceSolid, face, moveDistance, options = {}) {
+  const features = sourceSolid?.metadata?.profileFeatures;
+  const featureIndex = features?.length - 1;
+  const creator = features?.[featureIndex];
+  if (featureIndex < 0 || creator?.exactProfile ||
+      !['union', 'subtract'].includes(creator?.type) ||
+      !isManifoldBooleanReady()) {
+    return null;
+  }
+  const rebuilt = rebuildSolidThroughFeatures(sourceSolid, featureIndex, options);
+  if (!rebuilt) return null;
+  const topologySolid = Array.isArray(rebuilt.metadata?.planarFaceGroups)
+    ? rebuilt
+    : solidWithDerivedSurfaceTopology(rebuilt) ?? rebuilt;
+  const inputFace = inputFaceForMoveFeature(topologySolid, creator, face);
+  if (!inputFace) return null;
+  inputFace.sourceSolid = rebuilt;
+  const selectedNormal = normalizedNormal(face.normal);
+  const featureNormal = normalizedNormal(creator.normal ?? creator.analyticAxis);
+  const nextDistance = Number(creator.distance) + selectedNormal
+    .multiplyScalar(moveDistance)
+    .dot(featureNormal);
+  if (!Number.isFinite(nextDistance)) return null;
+  if (Math.abs(nextDistance) <= booleanWeldTolerance(rebuilt)) {
+    options.onDiagnostic?.({
+      operation: {
+        type: 'pushMoveFace',
+        requestedDistance: moveDistance,
+        previousDistance: Number(creator.distance),
+        resultingDistance: 0,
+      },
+      target: {
+        id: face?.sourceSolidDocumentId ??
+          sourceSolid?.metadata?.sourceSolidDocumentId ?? null,
+        vertexCount: sourceSolid.vertices.length,
+        faceCount: sourceSolid.faces.length,
+      },
+      cutter: {
+        region: cloneJson(creator.inputFace?.region ?? null),
+        provenance: cloneJson(creator.inputFace?.provenance ?? null),
+      },
+      coordinateSystem: face?.workplane ?? 'solid-local',
+      precheck: {
+        materialPredicted: true,
+        matchedInputRegion: true,
+      },
+      effectiveTolerance: booleanWeldTolerance(rebuilt),
+      phase: 'parametric-replay',
+      reason: 'success',
+    });
+    return {
+      ...rebuilt,
+      metadata: {
+        ...rebuilt.metadata,
+        lastPushDistance: moveDistance,
+        lastPushFaceIndex: null,
+        lastPushFaceIndices: [],
+        lastPushRegion: cloneJson(creator.inputFace?.region ?? null),
+        lastPushRequestedDistance: moveDistance,
+        lastPushNormal: cloneJson(face.normal),
+      },
+    };
+  }
+  return movedSolidFacePush(inputFace, nextDistance, {
+    ...options,
+    skipFeatureReplay: true,
+  });
+}
+
+function replayExactProfileFeature(sourceSolid, face, moveDistance, options = {}) {
   const features = sourceSolid?.metadata?.profileFeatures;
   const semanticFeatureIndex = Number(face?.analyticFeatureIndex);
   const featureIndex = face?.analyticRegionId
@@ -718,15 +1158,17 @@ function replayExactProfileFeature(sourceSolid, face, moveDistance) {
   if (!rebuilt) return null;
   for (let index = 0; index < features.length; index += 1) {
     const sourceFeature = features[index];
-    if (!['union', 'subtract'].includes(sourceFeature?.type) ||
-        !sourceFeature?.exactProfile) {
-      return null;
+    if (sourceFeature?.type === 'cutSolidByPlane') {
+      rebuilt = applyStoredPushFeature(rebuilt, sourceFeature, options);
+      if (!isValidSolid3d(rebuilt)) return null;
+      continue;
     }
+    if (!['union', 'subtract'].includes(sourceFeature?.type)) return null;
     const replacingCreator = index === featureIndex;
     const distance = replacingCreator ? nextDistance : Number(sourceFeature.distance);
     if (!Number.isFinite(distance)) return null;
     if (Math.abs(distance) <= tolerance) continue;
-    const featureFace = faceFromExactFeature(sourceFeature.exactProfile);
+    const featureFace = replayedFeatureFace(sourceFeature);
     if (!featureFace) return null;
     const operationType = replacingCreator ? replacementType : sourceFeature.type;
     if (!operationType) continue;
@@ -734,30 +1176,12 @@ function replayExactProfileFeature(sourceSolid, face, moveDistance) {
     if (replacingCreator && face?.exactProfile) {
       copyExactProfileSegmentSources(operation.exactProfile, face.exactProfile);
     }
-    operation.type = operationType;
-    operation.distance = distance;
-    operation.requestedDistance = distance;
-    delete operation.kernelDistance;
-    let next = null;
-    if (operationType === 'subtract') {
-      const featureNormal = normalizedNormal(featureFace.normal);
-      const featureOrigin = vertexVector(featureFace.points[0]);
-      operation.through = featureNormal
-        ? distance <= Math.min(...rebuilt.vertices.map((vertex) =>
-          vertexVector(vertex).sub(featureOrigin).dot(featureNormal))) + tolerance
-        : false;
-      next = subtractFacePushSolid3d(rebuilt, featureFace, distance, {
-        operation,
-      });
-    }
-    else {
-      operation.through = false;
-      const tool = solidFromBooleanFeatureTool(rebuilt, featureFace, distance);
-      next = booleanSolid3d(rebuilt, tool, {
-        operationType: 'union',
-        operation,
-      });
-    }
+    const next = applyStoredPushFeature(rebuilt, operation, {
+      ...options,
+      distance,
+      face: featureFace,
+      operationType,
+    });
     if (!isValidSolid3d(next)) return null;
     rebuilt = next;
   }
@@ -766,10 +1190,12 @@ function replayExactProfileFeature(sourceSolid, face, moveDistance) {
     metadata: {
       ...rebuilt.metadata,
       lastPushDistance: moveDistance,
-      lastPushFaceIndex: face.sourceSolidFaceIndex ?? null,
-      lastPushFaceIndices: Array.isArray(face.sourceSolidFaceIndices)
-        ? [...face.sourceSolidFaceIndices]
-        : [],
+      lastPushFaceIndex: null,
+      lastPushFaceIndices: [],
+      lastPushRegion: face.analyticRegionId ? {
+        type: 'analytic-region-v1',
+        id: face.analyticRegionId,
+      } : cloneJson(face.region ?? null),
       lastPushRequestedDistance: moveDistance,
       lastPushNormal: {
         x: face.normal.x,
@@ -783,17 +1209,52 @@ function replayExactProfileFeature(sourceSolid, face, moveDistance) {
   };
 }
 
-export function movedSolidFacePush(face, distance) {
+export function movedSolidFacePush(face, distance, options = {}) {
   const requestedDistance = pushHeightValue(distance);
   const sourceSolid = face?.sourceSolid;
   const faceIndex = face?.sourceSolidFaceIndex;
   const unitNormal = normalizedNormal(
     face?.exactProfile ? face?.analyticAxis ?? face?.normal : face?.normal,
   );
+  const emitDiagnostic = (diagnostic) => options.onDiagnostic?.({
+    operation: {
+      type: Number(distance) < 0 ? 'subtract' : 'union',
+      distance,
+      sourceSolidFaceIndex: faceIndex ?? null,
+      sourceSolidFaceIndices: face?.sourceSolidFaceIndices ?? null,
+    },
+    target: {
+      id: face?.sourceSolidDocumentId ?? sourceSolid?.metadata?.sourceSolidDocumentId ?? null,
+      vertexCount: sourceSolid?.vertices?.length ?? 0,
+      faceCount: sourceSolid?.faces?.length ?? 0,
+    },
+    cutter: {
+      outerPointCount: face?.points?.length ?? 0,
+      holeCount: face?.holes?.length ?? 0,
+    },
+    coordinateSystem: face?.workplane ?? 'solid-local',
+    ...diagnostic,
+  });
   if (requestedDistance === null) {
+    if (Number(distance) < 0) {
+      emitDiagnostic({
+        phase: 'distance-validation',
+        reason: 'below-useful-tolerance',
+        requestedDistance: distance,
+        effectiveTolerance: minimumBooleanOperationDistance(sourceSolid),
+      });
+    }
     throw new RangeError('La distancia de Push debe ser distinta de cero');
   }
   if (!sourceSolid || !Number.isInteger(faceIndex) || !unitNormal) {
+    if (requestedDistance < 0) {
+      emitDiagnostic({
+        phase: 'input-validation',
+        reason: !isValidSolid3d(sourceSolid)
+          ? 'invalid-target-solid'
+          : 'invalid-cutter-profile',
+      });
+    }
     return null;
   }
   const origin = vertexVector(
@@ -807,6 +1268,15 @@ export function movedSolidFacePush(face, distance) {
     requestedDistance,
   );
   if (Math.abs(cleanDistance) <= minimumBooleanOperationDistance(sourceSolid)) {
+    if (requestedDistance < 0) {
+      emitDiagnostic({
+        phase: 'distance-validation',
+        reason: 'below-useful-tolerance',
+        requestedDistance,
+        effectiveDistance: cleanDistance,
+        effectiveTolerance: minimumBooleanOperationDistance(sourceSolid),
+      });
+    }
     return null;
   }
   const analyticFace = {
@@ -814,18 +1284,34 @@ export function movedSolidFacePush(face, distance) {
     normal: { x: unitNormal.x, y: unitNormal.y, z: unitNormal.z },
     analyticAxis: { x: unitNormal.x, y: unitNormal.y, z: unitNormal.z },
   };
-  const replayedFeature = replayExactProfileFeature(
-    sourceSolid,
-    analyticFace,
-    cleanDistance,
-  );
+  const replayedFeature = options.skipFeatureReplay
+    ? null
+    : replayExactProfileFeature(
+      sourceSolid,
+      analyticFace,
+      cleanDistance,
+      options,
+    ) ?? replayMoveFaceFeature(
+      sourceSolid,
+      analyticFace,
+      cleanDistance,
+      options,
+    );
   if (replayedFeature) return replayedFeature;
   const faceIndices = Array.isArray(face?.sourceSolidFaceIndices) && face.sourceSolidFaceIndices.length
     ? face.sourceSolidFaceIndices
     : [faceIndex];
   const sourceFaces = faceIndices.map((index) => sourceSolid.faces?.[index]);
   if (sourceFaces.some((sourceFace) =>
-    !Array.isArray(sourceFace) || sourceFace.length < 3)) return null;
+    !Array.isArray(sourceFace) || sourceFace.length < 3)) {
+    if (cleanDistance < 0) {
+      emitDiagnostic({
+        phase: 'input-validation',
+        reason: 'invalid-cutter-profile',
+      });
+    }
+    return null;
+  }
   const movingVertices = new Set(sourceFaces.flat());
   if (faceCoversMovingVertices(face, sourceSolid, movingVertices) &&
       !movedFaceKeepsMaterial(
@@ -833,7 +1319,25 @@ export function movedSolidFacePush(face, distance) {
         movingVertices,
         unitNormal,
         cleanDistance,
+        {
+          // Una cara derivada puede atravesar otra región del sólido y seguir
+          // produciendo una unión o una resta válida. Manifold decide ese caso
+          // con el volumen barrido real; este precheck protege únicamente el
+          // fallback topológico usado cuando el núcleo no está disponible.
+          allowOrientationCrossing: isManifoldBooleanReady(),
+        },
       )) {
+    if (cleanDistance < 0) {
+      emitDiagnostic({
+        phase: 'precheck-material-thickness',
+        reason: 'minimum-thickness',
+        precheck: {
+          materialPredicted: false,
+          ignoredMicroThickness: booleanWeldTolerance(sourceSolid),
+        },
+        effectiveTolerance: MINIMUM_3D_THICKNESS,
+      });
+    }
     return null;
   }
   if (isManifoldBooleanReady()) {
@@ -847,14 +1351,15 @@ export function movedSolidFacePush(face, distance) {
     const analyticRegionId = analyticFace.exactProfile
       ? analyticFace.analyticRegionId ?? createAnalyticRegionId()
       : null;
+    const inputFace = analyticFace.exactProfile
+      ? null
+      : pushInputFaceSnapshot(analyticFace, sourceSolid);
     const operation = {
       type: operationType,
       distance: cleanDistance,
       requestedDistance,
       ...(kernelDistance !== cleanDistance ? { kernelDistance } : {}),
       through,
-      sourceSolidFaceIndex: faceIndex,
-      sourceSolidFaceIndices: faceIndices,
       normal: { x: unitNormal.x, y: unitNormal.y, z: unitNormal.z },
       analyticAxis: { x: unitNormal.x, y: unitNormal.y, z: unitNormal.z },
       sketchId: analyticFace.sketchId ?? null,
@@ -865,13 +1370,24 @@ export function movedSolidFacePush(face, distance) {
           analyticRegionId,
         )
         : null,
+      ...(inputFace ? {
+        inputFace,
+        sourceRegion: cloneJson(inputFace.region),
+        sourceProvenance: cloneJson(inputFace.provenance),
+      } : {}),
       ...(analyticRegionId ? {
         analyticRegionId,
       } : {}),
     };
     const metadata = {
-      lastPushFaceIndex: faceIndex,
-      lastPushFaceIndices: faceIndices,
+      lastPushFaceIndex: null,
+      lastPushFaceIndices: [],
+      lastPushRegion: cloneJson(
+        inputFace?.region ?? (analyticRegionId ? {
+          type: 'analytic-region-v1',
+          id: analyticRegionId,
+        } : null),
+      ),
       lastPushDistance: cleanDistance,
       lastPushRequestedDistance: requestedDistance,
       lastPushNormal: operation.normal,
@@ -880,26 +1396,25 @@ export function movedSolidFacePush(face, distance) {
       return subtractFacePushSolid3d(sourceSolid, analyticFace, cleanDistance, {
         kernelDistance,
         operation,
+        onDiagnostic: options.onDiagnostic,
         metadata,
       });
     }
-    const unionOverlap = booleanWeldTolerance(sourceSolid);
-    let toolSolid = null;
     try {
-      toolSolid = solidFromFacePush(
-        faceWithBooleanUnionOverlap(analyticFace, unitNormal, unionOverlap),
-        kernelDistance + unionOverlap,
-        { allowSubMinimumThickness: true },
+      return consolidatedAdditiveFaceSweep(
+        sourceSolid,
+        analyticFace,
+        kernelDistance,
+        {
+          operation,
+          onDiagnostic: options.onDiagnostic,
+          metadata,
+        },
       );
     }
     catch {
       return null;
     }
-    return booleanSolid3d(sourceSolid, toolSolid, {
-      operationType: operation.type,
-      operation,
-      metadata,
-    });
   }
   const effectiveDistance = constrainedMovedFaceDistance(
     sourceSolid,

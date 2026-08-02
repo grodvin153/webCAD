@@ -30,6 +30,7 @@ import {
   sketchSupportBoundaryEntities,
 } from '../source/3d/sketch-reference.js';
 import { visibleEntitiesForThreeView } from '../source/3d/three/entity-visibility.js';
+import { hydrateCompactModel3d } from '../source/3d/three/model3d-replay.js';
 import { profileFeaturePushSolid } from '../source/3d/three/profile-feature.js';
 import {
   createPushSolidMeshFromSolid,
@@ -510,9 +511,9 @@ addModel3dSolid(roundTripModel, thirdPush, { id: 'coincident-runtime-chain' });
 addModel3dSolid(roundTripModel, deepKernelOperands.at(-1).solid, {
   id: 'coincident-runtime-chain-deep',
 });
-const reopened = parseSerializedModel3d(JSON.parse(JSON.stringify(
+const reopened = hydrateCompactModel3d(parseSerializedModel3d(JSON.parse(JSON.stringify(
   serializeModel3d(roundTripModel),
-)));
+))));
 const reopenedSolid = reopened.solids.find((entry) =>
   entry.id === 'coincident-runtime-chain').solid;
 const reopenedDeepSolid = reopened.solids.find((entry) =>

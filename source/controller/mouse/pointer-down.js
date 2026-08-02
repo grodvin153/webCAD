@@ -299,7 +299,9 @@ export function createControllerPointerDownMethods(dependencies) {
       }
 
       if (this.state.copyDraft.selecting) {
-        const entity = this.findEntityAt(worldPoint);
+        const entity = this.findEntityAt(worldPoint, {
+          includeSketchReferences: true,
+        });
         if (entity) {
           this.doc.addSelectedEntities([entity]);
           this.state.statusText = `${this.doc.selectedEntities.size} entidad${this.doc.selectedEntities.size === 1 ? '' : 'es'} seleccionada${this.doc.selectedEntities.size === 1 ? '' : 's'} para copiar`;

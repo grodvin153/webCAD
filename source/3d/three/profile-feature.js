@@ -13,6 +13,7 @@ import {
 } from './manifold-boolean.js';
 import {
   createAnalyticRegionId,
+  pushInputFaceSnapshot,
   snapBooleanOperationDistance,
   solidFromBooleanFeatureTool,
   solidFromFacePush,
@@ -132,7 +133,7 @@ function polygonArea(loop, plane) {
   }, 0) * 0.5;
 }
 
-export function profileFeaturePushSolid(face, distance) {
+export function profileFeaturePushSolid(face, distance, options = {}) {
   const sourceSolid = face?.supportSolid;
   const outer = (face?.points ?? []).map(point3);
   const holes = (face?.holes ?? []).map((loop) => loop.map(point3));
@@ -143,8 +144,32 @@ export function profileFeaturePushSolid(face, distance) {
     type: 'fixed', origin: outer[0], normal,
     xAxis: { x: 1, y: 0, z: 0 },
   });
+  const emitDiagnostic = (diagnostic) => options.onDiagnostic?.({
+    operation: { type: Number(distance) < 0 ? 'subtract' : 'union', distance },
+    target: {
+      id: face?.sourceSolidDocumentId ?? null,
+      vertexCount: sourceSolid?.vertices?.length ?? 0,
+      faceCount: sourceSolid?.faces?.length ?? 0,
+    },
+    cutter: {
+      outerPointCount: outer.length,
+      holeCount: holes.length,
+    },
+    coordinateSystem: plane,
+    ...diagnostic,
+  });
   if (!isValidSolid3d(sourceSolid) || outer.length < 3 || supportOuter.length < 3 ||
-      !Number.isFinite(distance)) return null;
+      !Number.isFinite(distance)) {
+    if (Number(distance) < 0) {
+      emitDiagnostic({
+        phase: 'input-validation',
+        reason: !isValidSolid3d(sourceSolid)
+          ? 'invalid-target-solid'
+          : 'invalid-cutter-profile',
+      });
+    }
+    return null;
+  }
   const requestedDistance = Number(distance);
   const effectiveDistance = snapBooleanOperationDistance(
     sourceSolid,
@@ -153,9 +178,28 @@ export function profileFeaturePushSolid(face, distance) {
     requestedDistance,
   );
   if (Math.abs(effectiveDistance) <= minimumBooleanOperationDistance(sourceSolid)) {
+    if (requestedDistance < 0) {
+      emitDiagnostic({
+        phase: 'distance-validation',
+        reason: 'below-useful-tolerance',
+        requestedDistance,
+        effectiveDistance,
+        effectiveTolerance: minimumBooleanOperationDistance(sourceSolid),
+      });
+    }
     return null;
   }
-  if (!meetsMinimum3dThickness(effectiveDistance)) return null;
+  if (!meetsMinimum3dThickness(effectiveDistance)) {
+    if (requestedDistance < 0) {
+      emitDiagnostic({
+        phase: 'distance-validation',
+        reason: 'minimum-thickness',
+        requestedDistance,
+        effectiveDistance,
+      });
+    }
+    return null;
+  }
   const additiveContact = face?.supportContactOnly === true;
   const operationType = additiveContact || effectiveDistance > 0 ? 'union' : 'subtract';
   if (isManifoldBooleanReady()) {
@@ -173,6 +217,10 @@ export function profileFeaturePushSolid(face, distance) {
     const analyticRegionId = face.exactProfile
       ? face.analyticRegionId ?? createAnalyticRegionId()
       : null;
+    const inputFace = face.exactProfile
+      ? null
+      : pushInputFaceSnapshot(face, sourceSolid);
+    if (!face.exactProfile && !inputFace) return null;
     const operation = {
       type: operationType,
       distance: effectiveDistance,
@@ -188,6 +236,7 @@ export function profileFeaturePushSolid(face, distance) {
           analyticRegionId,
         )
         : null,
+      ...(inputFace ? { inputFace } : {}),
       ...(analyticRegionId ? {
         analyticRegionId,
       } : {}),
@@ -196,6 +245,7 @@ export function profileFeaturePushSolid(face, distance) {
       return subtractFacePushSolid3d(sourceSolid, face, effectiveDistance, {
         kernelDistance,
         operation,
+        onDiagnostic: options.onDiagnostic,
         metadata: {
           sourceSolidDocumentId: face.sourceSolidDocumentId ?? null,
         },
@@ -215,6 +265,7 @@ export function profileFeaturePushSolid(face, distance) {
     return booleanSolid3d(sourceSolid, toolSolid, {
       operationType: operation.type,
       operation,
+      onDiagnostic: options.onDiagnostic,
       metadata: {
         sourceSolidDocumentId: face.sourceSolidDocumentId ?? null,
       },

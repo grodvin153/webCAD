@@ -111,14 +111,27 @@ function exactExtrusionProfiles(metadata) {
   (metadata?.profileFeatures ?? []).forEach((feature, featureIndex) => {
     const profile = feature?.exactProfile;
     const distance = Number(feature?.distance);
-    if (!profile || !Number.isFinite(distance)) return;
-    entries.push({
-      featureIndex,
-      operationType: feature?.type ?? null,
-      profileIndex: entries.length,
-      profile,
-      regionId: feature?.analyticRegionId ?? null,
-      offset: scale(point3(profile.plane?.normal), distance),
+    if (profile && Number.isFinite(distance)) {
+      entries.push({
+        featureIndex,
+        operationType: feature?.type ?? null,
+        profileIndex: entries.length,
+        profile,
+        regionId: feature?.analyticRegionId ?? null,
+        offset: scale(point3(profile.plane?.normal), distance),
+      });
+    }
+    (feature?.analyticProfiles ?? []).forEach((entry) => {
+      const analyticDistance = Number(entry?.distance);
+      if (!entry?.profile?.plane || !Number.isFinite(analyticDistance)) return;
+      entries.push({
+        featureIndex,
+        operationType: entry.operationType ?? feature?.type ?? null,
+        profileIndex: entries.length,
+        profile: entry.profile,
+        regionId: null,
+        offset: scale(point3(entry.profile.plane.normal), analyticDistance),
+      });
     });
   });
   return entries;
@@ -232,6 +245,34 @@ function curveCandidates(metadata) {
           }
         });
       });
+    });
+  });
+  (metadata?.generatedAnalyticCurves ?? []).forEach((curve, index) => {
+    const radiusX = number(curve?.radiusX);
+    const radiusY = number(curve?.radiusY);
+    const uAxis = normalized(point3(curve?.uAxis), { x: 1, y: 0, z: 0 });
+    const vAxis = normalized(point3(curve?.vAxis), { x: 0, y: 1, z: 0 });
+    if (!['arc-circle', 'arc-ellipse'].includes(curve?.type) ||
+        !(radiusX > 0) || !(radiusY > 0) ||
+        Math.abs(dot(uAxis, vAxis)) > 1e-5) return;
+    candidates.push({
+      ...JSON.parse(JSON.stringify(curve)),
+      id: String(curve.id ?? `generated-analytic-${index}`),
+      center: point3(curve.center),
+      uAxis,
+      vAxis,
+      radiusX,
+      radiusY,
+      startAngle: normalizeAngle(curve.startAngle),
+      endAngle: normalizeAngle(curve.endAngle),
+      clockwise: curve.clockwise !== false,
+      closed: curve.closed !== false,
+      sweep: curve.closed === false
+        ? number(curve.sweep)
+        : TWO_PI,
+      analyticSource: curve.analyticSource
+        ? JSON.parse(JSON.stringify(curve.analyticSource))
+        : { role: 'generated-analytic-boundary' },
     });
   });
   return candidates;
@@ -941,6 +982,35 @@ function internalCoplanarEdgeKeys(solid, tolerance) {
   }));
 }
 
+function sharpPlanarBoundaryEdgeKeys(solid, tolerance) {
+  const groupByFace = new Map();
+  (solid.metadata?.planarFaceGroups ?? []).forEach((group, groupIndex) => {
+    const normal = normalized(point3(group?.normal), { x: 0, y: 0, z: 1 });
+    (group?.indices ?? []).forEach((faceIndex) => {
+      groupByFace.set(faceIndex, { groupIndex, normal });
+    });
+  });
+  const uses = new Map();
+  solid.faces.forEach((face, faceIndex) => face.forEach((start, index) => {
+    const end = face[(index + 1) % face.length];
+    const key = edgeKey(start, end);
+    if (!uses.has(key)) uses.set(key, { edge: [start, end], faces: [] });
+    uses.get(key).faces.push(faceIndex);
+  }));
+  return new Set([...uses.entries()].flatMap(([key, { edge, faces }]) => {
+    if (faces.length !== 2) return [];
+    const first = groupByFace.get(faces[0]);
+    const second = groupByFace.get(faces[1]);
+    if (!first || !second || first.groupIndex === second.groupIndex ||
+        Math.abs(dot(first.normal, second.normal)) >= 1 - 1e-4) return [];
+    const start = solid.vertices[edge[0]];
+    const end = solid.vertices[edge[1]];
+    return start && end && length(subtract(point3(end), point3(start))) > tolerance
+      ? [key]
+      : [];
+  }));
+}
+
 function faceTopologyEdgeKeys(solid) {
   return new Set(solid.faces.flatMap((face) => face.map((start, index) =>
     edgeKey(start, face[(index + 1) % face.length]))));
@@ -955,6 +1025,7 @@ export function deriveSolidAnalyticTopology(solid, options = {}) {
       semanticPlanarFaces: [],
       boundarySideEdges: [],
       transverseSideEdges: [],
+      longitudinalSideEdges: [],
       internalSideEdges: [],
       internalSideEdgeKeys: new Set(),
     };
@@ -1010,6 +1081,9 @@ export function deriveSolidAnalyticTopology(solid, options = {}) {
       : [];
   });
   const surfaceById = new Map(sideSurfaces.map((surface) => [surface.id, surface]));
+  const planarFaceIndices = new Set(
+    (solid.metadata?.planarFaceGroups ?? []).flatMap((group) => group?.indices ?? []),
+  );
   const classifiedSideBoundaryEdges = [...uses.entries()].flatMap(([key, use]) => {
     const surfaceIds = [...new Set(use.faces
       .map((faceIndex) => faceSurfaceIds[faceIndex])
@@ -1028,7 +1102,15 @@ export function deriveSolidAnalyticTopology(solid, options = {}) {
         Math.abs(location.axial - extrusionLength) <= tolerance);
       const transverse = Math.max(...locations.map((location) => location.axial)) -
         Math.min(...locations.map((location) => location.axial)) <= tolerance;
-      if (!atStart && !atEnd && !transverse) return [];
+      const angularTolerance = Math.max(
+        1e-4,
+        tolerance / Math.max(surface.radiusX, surface.radiusY),
+      );
+      const longitudinal = !atStart && !atEnd && !transverse &&
+        use.faces.some((faceIndex) =>
+          faceSurfaceIds[faceIndex] !== surfaceId && planarFaceIndices.has(faceIndex)) &&
+        angleDistance(locations[0].angle, locations[1].angle) <= angularTolerance;
+      if (!atStart && !atEnd && !transverse && !longitudinal) return [];
       return [{
         axial: locations.reduce((sum, location) => sum + location.axial, 0) /
           locations.length,
@@ -1037,6 +1119,7 @@ export function deriveSolidAnalyticTopology(solid, options = {}) {
         surfaceId,
         capIndex: atStart ? 0 : atEnd ? 1 : null,
         transverse,
+        longitudinal,
       }];
     });
   });
@@ -1044,6 +1127,8 @@ export function deriveSolidAnalyticTopology(solid, options = {}) {
     entry.capIndex !== null);
   const transverseSideEdges = classifiedSideBoundaryEdges.filter((entry) =>
     entry.transverse);
+  const longitudinalSideEdges = classifiedSideBoundaryEdges.filter((entry) =>
+    entry.longitudinal);
   return {
     version: 1,
     sideSurfaces,
@@ -1051,6 +1136,7 @@ export function deriveSolidAnalyticTopology(solid, options = {}) {
     semanticPlanarFaces: semanticCapFaces(solid, requestedNormals, tolerance),
     boundarySideEdges,
     transverseSideEdges,
+    longitudinalSideEdges,
     internalSideEdges,
     internalSideEdgeKeys: new Set(internalSideEdges.map((entry) => entry.key)),
   };
@@ -1502,7 +1588,7 @@ function transverseSurfaceBoundaryCurves(
   });
   return [...bucketsBySurface.entries()].flatMap(([surfaceId, buckets]) => {
     const surface = surfaceById.get(surfaceId);
-    if (!surface?.closed) return [];
+    if (!surface) return [];
     const axis = normalized(point3(surface.offset), { x: 0, y: 0, z: 1 });
     const surfaceTolerance = analyticSurfaceTolerance(
       solid,
@@ -1538,11 +1624,23 @@ function transverseSurfaceBoundaryCurves(
           angularTolerance,
           largestMatchAngularSpan(component) * 1.05,
         );
-        return closedCurveComponents({
+        const componentCurve = {
           ...curve,
           id: `${curve.id}-${componentIndex}`,
-        }, component, reconstructionGapTolerance)
-          .filter((candidate) => candidate.closed);
+        };
+        return surface.closed
+          ? closedCurveComponents(
+            componentCurve,
+            component,
+            reconstructionGapTolerance,
+          ).filter((candidate) => candidate.closed)
+          : partialCurveComponents(
+            solid,
+            componentCurve,
+            component,
+            reconstructionGapTolerance,
+            surfaceTolerance,
+          );
       });
     });
   });
@@ -1659,6 +1757,13 @@ export function deriveSolidAnalyticEdges(solid, options = {}) {
     solid,
     coplanarFaceTolerance(solid),
   );
+  const sharpPlanarBoundaryEdges = sharpPlanarBoundaryEdgeKeys(
+    solid,
+    meshTolerance,
+  );
+  const longitudinalSideEdgeKeys = new Set(
+    analyticTopology.longitudinalSideEdges.map((entry) => entry.key),
+  );
   const topologyEdges = faceTopologyEdgeKeys(solid);
   const rawLines = solid.edges.flatMap((edge, index) => {
     const key = edgeKey(edge[0], edge[1]);
@@ -1674,13 +1779,14 @@ export function deriveSolidAnalyticEdges(solid, options = {}) {
       rejectedCurveSeams.has(key) ||
       coplanarInternalEdges.has(key) ||
       analyticTopology.internalSideEdgeKeys.has(key) ||
-      (degenerateEdges.has(key) && !exactLineCandidate) ||
-      isNonSemanticAnalyticSurfaceSeam(
+      (degenerateEdges.has(key) && !exactLineCandidate &&
+        !sharpPlanarBoundaryEdges.has(key)) ||
+      (isNonSemanticAnalyticSurfaceSeam(
         solid,
         edge,
         analyticTopology.sideSurfaces,
         options,
-      )
+      ) && !longitudinalSideEdgeKeys.has(key))
     ) {
       return [];
     }

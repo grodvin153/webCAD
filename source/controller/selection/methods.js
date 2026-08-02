@@ -6,6 +6,7 @@ export function createControllerSelectionMethods(dependencies) {
   const {
     DIMENSION_TOOLS,
     SNAP_THRESHOLD,
+    boundsIntersectsBounds,
     circularReferencePoints,
     createBounds,
     dimensionReferencePoints,
@@ -40,7 +41,14 @@ export function createControllerSelectionMethods(dependencies) {
   findEntityAt(point, options = {}) {
     const tolerance = 7 / this.state.viewScale;
     const pickBounds = expandBounds(createBounds(point.x, point.y, point.x, point.y), tolerance);
-    const candidates = this.doc.queryBounds(pickBounds);
+    const sketchReferences = options.includeSketchReferences
+      ? (this.state.sketchReferenceEntities ?? []).filter((entity) =>
+        boundsIntersectsBounds(entity.bounds(), pickBounds))
+      : [];
+    const candidates = [
+      ...this.doc.queryBounds(pickBounds),
+      ...sketchReferences,
+    ];
     const pickCandidates = [
       ...candidates.filter((entity) => entity.type === 'HATCH'),
       ...candidates.filter((entity) => entity.type !== 'HATCH'),
@@ -165,7 +173,11 @@ export function createControllerSelectionMethods(dependencies) {
   updateHoveredEntity() {
     const imageCalibration = this.state.imageCalibrationDraft;
     this.state.hoveredEntity = this.isEntityHoverSelectionActive() && this.state.mouseWorld
-      ? this.findEntityAt(this.state.mouseWorld, { exclude: imageCalibration?.entity })
+      ? this.findEntityAt(this.state.mouseWorld, {
+        exclude: imageCalibration?.entity,
+        includeSketchReferences:
+          this.state.tool === 'copy' || this.state.tool === 'offset',
+      })
       : null;
     if (imageCalibration?.phase === 'target') {
       imageCalibration.targetSegment = this.imageReferenceSegmentAt(

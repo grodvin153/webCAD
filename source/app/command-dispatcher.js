@@ -1,5 +1,11 @@
 /* webCAD - Despacho central de ordenes | SPDX-License-Identifier: GPL-3.0-or-later */
 
+import {
+  isCommandAvailableInMode,
+  TOOLBAR_MODE_2D,
+  TOOLBAR_MODE_3D,
+} from '../ui/mode-toolbar.js';
+
 export function createCommandDispatcher({
   state,
   controller,
@@ -9,8 +15,13 @@ export function createCommandDispatcher({
   commands,
   actions,
   elements,
+  getInterfaceMode = () =>
+    globalThis.window?.webcadThreeMode?.isActive?.()
+      ? TOOLBAR_MODE_3D
+      : TOOLBAR_MODE_2D,
 }) {
   function run(command) {
+    if (!isCommandAvailableInMode(command, getInterfaceMode())) return false;
     if (repeatableCommands.has(command)) state.lastCommand = command;
     if (command === 'undo') actions.undoDrawing();
     if (command === 'redo') actions.redoDrawing();
@@ -85,6 +96,7 @@ export function createCommandDispatcher({
     if (command === 'import-png') actions.importPng();
     if (command === 'about') actions.showAbout();
     if (!command.startsWith('toggle-')) actions.closeToolGroups();
+    return true;
   }
 
   return { run };

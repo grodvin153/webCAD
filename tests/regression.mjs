@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import { createCommandDispatcher } from '../source/app/command-dispatcher.js';
 import { createDocumentActions } from '../source/app/document-actions.js';
@@ -9,6 +10,7 @@ import {
 } from '../source/3d/solid-placement.js';
 import { solidTransformFromAlias } from '../source/3d/solid-transform-aliases.js';
 import { copySolids, moveSolids, rotateSolids } from '../source/3d/solid-transformations.js';
+import { solidFromFacePush } from '../source/3d/three/push-geometry.js';
 import {
   inferProjectedAxis,
   isSolidTransformConfirmEvent,
@@ -19,10 +21,18 @@ import {
 } from '../source/3d/three/solid-transform-command.js';
 import { createControllerTransformMethods } from '../source/controller/commands/transforms.js';
 import { createControllerDimensionMethods } from '../source/controller/commands/dimensions.js';
+import { createControllerImageMethods } from '../source/controller/commands/images.js';
 import { createControllerInputMethods } from '../source/controller/keyboard/input.js';
 import { createControllerShortcutMethods } from '../source/controller/keyboard/shortcuts.js';
 import { createControllerPointerMethods } from '../source/controller/mouse/pointer.js';
+import { createControllerSelectionMethods } from '../source/controller/selection/methods.js';
 import { createControllerStatusMethods } from '../source/controller/status.js';
+import {
+  applyToolbarMode,
+  commandToolbarMode,
+  isCommandAvailableInMode,
+  isToolbarScopeVisible,
+} from '../source/ui/mode-toolbar.js';
 import { createCadDocumentClass } from '../source/document/cad-document.js';
 import { createArcEntityClass } from '../source/entities/arc.js';
 import { createCircleEntityClass } from '../source/entities/circle.js';
@@ -45,7 +55,9 @@ import {
   circularParameter,
   createBounds,
   distance,
+  distancePointToSegment,
   entityArcSweep,
+  expandBounds,
   lineParameter,
   mergeBounds,
   normalizeAngle,
@@ -59,6 +71,11 @@ import {
 } from '../source/geometry.js';
 import { createRasterImageEntityClass } from '../source/images/entity.js';
 import {
+  createClipboardImagePasteHandler,
+  normalizeClipboardImageToPng,
+} from '../source/images/clipboard.js';
+import { createPngImporter } from '../source/images/importer.js';
+import {
   circleCircleIntersectionPoints,
   entityIntersectionPoints,
   isCircularEntity,
@@ -69,6 +86,10 @@ import {
   parseRelativeCoordinateInput,
   parseScalarExpression,
 } from '../source/input/entry.js';
+import {
+  hideCursorInput,
+  updateCursorInput,
+} from '../source/input/cursor-input.js';
 import {
   pointFromPartialRelativeCoordinates,
   pointFromRelativeCoordinates,
@@ -81,6 +102,7 @@ import {
 import { createCircularTrimOperations } from '../source/operations/trim/circular.js';
 import { createLineTrimOperations } from '../source/operations/trim/line.js';
 import { createEllipseTrimOperations } from '../source/operations/trim/ellipse.js';
+import { createHitTesting } from '../source/selection/hit-testing.js';
 import { entitiesFromSelectionWindow } from '../source/selection/window.js';
 import { mirrorEntityAcrossAxis } from '../source/transformations/mirror.js';
 import { moveEntityByVector } from '../source/transformations/move.js';
@@ -132,6 +154,34 @@ function testInputAndCoordinates() {
     pointFromPartialRelativeCoordinates({ x: 1, y: 2, z: 3 }, { x: 8, y: 9, z: 3 }, '10,,5'),
     { x: 11, y: 9, z: 8 },
   );
+  const classes = new Set();
+  const attributes = new Map();
+  const cursorInput = {
+    classList: {
+      toggle(name, enabled) {
+        if (enabled) classes.add(name);
+        else classes.delete(name);
+      },
+    },
+    getBoundingClientRect: () => ({ width: 30, height: 20 }),
+    parentElement: {
+      getBoundingClientRect: () => ({ left: 100, top: 50, width: 100, height: 80 }),
+    },
+    setAttribute: (name, value) => attributes.set(name, value),
+    style: {},
+    textContent: '',
+  };
+  updateCursorInput(cursorInput, {
+    clientPoint: { x: 195, y: 125 },
+    text: '-12.5 mm',
+  });
+  assert.equal(classes.has('is-visible'), true);
+  assert.equal(attributes.get('aria-hidden'), 'false');
+  assert.equal(cursorInput.textContent, '-12.5 mm');
+  assert.equal(cursorInput.style.transform, 'translate(66px, 56px)');
+  hideCursorInput(cursorInput);
+  assert.equal(classes.has('is-visible'), false);
+  assert.equal(attributes.get('aria-hidden'), 'true');
 }
 
 function testEntitiesAndTransforms() {
@@ -162,6 +212,270 @@ function testEntitiesAndTransforms() {
   scaleEntityAroundPoint(line, { x: 1, y: 1, z: 99 }, 2);
   mirrorEntityAcrossAxis(line, { x: 0, y: 0, z: 99 }, { x: 1, y: 0, z: 99 });
   assert.deepEqual([line.start.z, line.end.z], [0, 8]);
+}
+
+async function testClipboardImageUsesPngImportRoute() {
+  const previousFileReader = globalThis.FileReader;
+  const previousImage = globalThis.Image;
+  const inputListeners = new Map();
+  const loaded = [];
+  class FakeFileReader {
+    constructor() {
+      this.listeners = new Map();
+      this.result = '';
+    }
+
+    addEventListener(type, listener) {
+      this.listeners.set(type, listener);
+    }
+
+    readAsDataURL(file) {
+      this.result = `data:${file.type};base64,UE5H`;
+      this.listeners.get('load')?.();
+    }
+  }
+  class FakeImage {
+    constructor() {
+      this.listeners = new Map();
+      this.naturalWidth = 640;
+      this.naturalHeight = 320;
+    }
+
+    addEventListener(type, listener) {
+      this.listeners.set(type, listener);
+    }
+
+    set src(value) {
+      if (value) this.listeners.get('load')?.();
+    }
+  }
+  globalThis.FileReader = FakeFileReader;
+  globalThis.Image = FakeImage;
+  try {
+    const input = {
+      files: [],
+      value: '',
+      addEventListener(type, listener) {
+        inputListeners.set(type, listener);
+      },
+      click() {},
+    };
+    const pngImporter = createPngImporter({
+      input,
+      onLoad: (imageData) => loaded.push(imageData),
+      onError: () => assert.fail('El PNG normalizado no debe producir error'),
+    });
+    const clipboardImage = { type: 'image/jpeg' };
+    const normalizedPng = { name: 'Imagen pegada.png', type: 'image/png' };
+    let prevented = 0;
+    const handler = createClipboardImagePasteHandler({
+      importPngFile: (file, options) => pngImporter.importFile(file, options),
+      normalizeImage: async (file) => {
+        assert.equal(file, clipboardImage);
+        return normalizedPng;
+      },
+    });
+    assert.equal(await handler({
+      clipboardData: {
+        items: [{
+          kind: 'file',
+          type: 'image/jpeg',
+          getAsFile: () => clipboardImage,
+        }],
+      },
+      composedPath: () => [],
+      preventDefault: () => { prevented += 1; },
+    }), true);
+    assert.equal(prevented, 1);
+    assert.deepEqual(loaded, [{
+      source: 'data:image/png;base64,UE5H',
+      name: 'Imagen pegada.png',
+      pixelWidth: 640,
+      pixelHeight: 320,
+    }]);
+    assert.equal(inputListeners.has('change'), true);
+  }
+  finally {
+    if (previousFileReader === undefined) delete globalThis.FileReader;
+    else globalThis.FileReader = previousFileReader;
+    if (previousImage === undefined) delete globalThis.Image;
+    else globalThis.Image = previousImage;
+  }
+}
+
+async function testClipboardImagePasteGuards() {
+  const clipboardImage = { type: 'image/webp' };
+  const clipboardData = {
+    items: [{
+      kind: 'file',
+      type: 'image/webp',
+      getAsFile: () => clipboardImage,
+    }],
+  };
+  let imports = 0;
+  let prevented = 0;
+  const handler = createClipboardImagePasteHandler({
+    importPngFile: async () => { imports += 1; },
+    normalizeImage: async () => ({ name: 'Imagen pegada.png', type: 'image/png' }),
+  });
+  for (const target of [
+    { tagName: 'INPUT' },
+    { tagName: 'TEXTAREA' },
+    { isContentEditable: true },
+    { getAttribute: (name) => name === 'role' ? 'spinbutton' : null },
+  ]) {
+    assert.equal(await handler({
+      clipboardData,
+      composedPath: () => [target],
+      preventDefault: () => { prevented += 1; },
+    }), false);
+  }
+  assert.equal(imports, 0);
+  assert.equal(prevented, 0);
+
+  const handler3d = createClipboardImagePasteHandler({
+    importPngFile: async () => { imports += 1; },
+    is3dActive: () => true,
+    normalizeImage: async () => ({ name: 'Imagen pegada.png', type: 'image/png' }),
+  });
+  assert.equal(await handler3d({
+    clipboardData,
+    composedPath: () => [],
+    preventDefault: () => { prevented += 1; },
+  }), false);
+  assert.equal(imports, 0);
+  assert.equal(prevented, 0);
+
+  assert.equal(await handler({
+    clipboardData: {
+      items: [{ kind: 'string', type: 'text/plain' }],
+    },
+    composedPath: () => [],
+    preventDefault: () => { prevented += 1; },
+  }), false);
+  assert.equal(imports, 0);
+  assert.equal(prevented, 0);
+}
+
+async function testClipboardImageNormalizationReleasesObjectUrl() {
+  const calls = [];
+  class FakeFile {
+    constructor(parts, name, options) {
+      this.parts = parts;
+      this.name = name;
+      this.type = options.type;
+    }
+  }
+  class FakeImage {
+    constructor() {
+      this.listeners = new Map();
+      this.naturalWidth = 20;
+      this.naturalHeight = 10;
+    }
+
+    addEventListener(type, listener) {
+      this.listeners.set(type, listener);
+    }
+
+    set src(value) {
+      if (value) this.listeners.get('load')?.();
+    }
+  }
+  const canvas = {
+    getContext: () => ({ drawImage: () => calls.push('draw') }),
+    toBlob: (callback) => callback({ type: 'image/png' }),
+  };
+  const result = await normalizeClipboardImageToPng(
+    { type: 'image/webp' },
+    {
+      FileClass: FakeFile,
+      ImageClass: FakeImage,
+      documentRoot: { createElement: () => canvas },
+      urlApi: {
+        createObjectURL: () => {
+          calls.push('create');
+          return 'blob:webcad-test';
+        },
+        revokeObjectURL: (url) => calls.push(['revoke', url]),
+      },
+    },
+  );
+  assert.equal(result.type, 'image/png');
+  assert.equal(result.name, 'Imagen pegada.png');
+  assert.deepEqual(calls, ['create', 'draw', ['revoke', 'blob:webcad-test']]);
+}
+
+function testPastedImagePlacementUndoAndProjectRoundTrip() {
+  const imageMethods = createControllerImageMethods({
+    RasterImageEntity,
+    SNAP_THRESHOLD: 1e-9,
+    activeLayerName: () => 'Continua',
+    applyImageAlignment: () => false,
+    bestImageAlignment: () => null,
+    dimensionLineFromEntity: () => null,
+    distance,
+    distancePointToSegment,
+    orthogonalInference: { clear() {} },
+  });
+  const doc = createTestCadDocument();
+  const state = {
+    imageDraft: null,
+    mouseWorld: null,
+    statusText: '',
+    tool: 'select',
+    viewOffset: { x: 10, y: 20 },
+  };
+  const renderer = {
+    draw() {},
+    visibleWorldHeight: () => 200,
+    visibleWorldWidth: () => 400,
+  };
+  const controller = {
+    ...imageMethods,
+    doc,
+    renderer,
+    state,
+    resolveInputPoint: (point) => ({ ...point, z: point.z ?? 0 }),
+    setTool(tool) {
+      state.tool = tool;
+      state.imageDraft = null;
+    },
+    updateUiStatus() {},
+  };
+  controller.startImageInsertion({
+    name: 'Imagen pegada.png',
+    pixelHeight: 300,
+    pixelWidth: 600,
+    source: 'data:image/png;base64,UE5H',
+  });
+  assert.equal(state.tool, 'image-insert');
+  assert.equal(state.imageDraft.preview.type, 'IMAGE');
+  assert.equal(state.imageDraft.preview.width, 140);
+  assert.equal(state.imageDraft.preview.height, 70);
+  assert.equal(controller.handleImagePoint({ x: 25, y: 35 }), true);
+  assert.equal(doc.entities.length, 1);
+  assert.equal(doc.undoStack.length, 1);
+  assert.equal(doc.entities[0] instanceof RasterImageEntity, true);
+  assert.deepEqual(doc.entities[0].center, { x: 25, y: 35, z: 0 });
+
+  assert.equal(doc.undo(), true);
+  assert.equal(doc.entities.length, 0);
+  assert.equal(doc.redo(), true);
+  assert.equal(doc.entities.length, 1);
+  assert.equal(doc.undoStack.length, 1);
+
+  const project = parseWebcadProject(serializeWebcadProject({ doc, state }));
+  const reopened = createTestCadDocument();
+  reopened.restoreSnapshot({
+    ...project.document2d.snapshot,
+    model3d: project.model3d,
+  });
+  assert.equal(reopened.entities.length, 1);
+  assert.equal(reopened.entities[0] instanceof RasterImageEntity, true);
+  assert.equal(reopened.entities[0].source, 'data:image/png;base64,UE5H');
+  assert.equal(reopened.entities[0].name, 'Imagen pegada.png');
+  assert.equal(reopened.entities[0].width, 140);
+  assert.equal(reopened.entities[0].height, 70);
 }
 
 function testIntersectionsAndSelection() {
@@ -199,6 +513,45 @@ function testIntersectionsAndSelection() {
   assert.deepEqual(entitiesFromSelectionWindow(ellipseDoc, {
     startWorld: { x: 5, y: -8 }, currentWorld: { x: 12, y: 8 },
   }), []);
+}
+
+function testSketchReferenceHitTesting() {
+  const hitTesting = createHitTesting({
+    dimensionGeometry: () => ({ arcs: [], lines: [], text: null }),
+    polylineSegmentEntity: () => null,
+  });
+  const methods = createControllerSelectionMethods({
+    DIMENSION_TOOLS: new Set(),
+    boundsIntersectsBounds,
+    createBounds,
+    distance,
+    distancePointToSegment,
+    expandBounds,
+    isCircularEntity,
+    isEllipseEntity,
+    ...hitTesting,
+  });
+  const reference = new ArcEntity(
+    { x: 0, y: 0 },
+    5,
+    0,
+    Math.PI,
+    { clockwise: true },
+  );
+  reference.isSketchReference = true;
+  const controller = {
+    ...methods,
+    doc: { queryBounds: () => [] },
+    state: {
+      sketchReferenceEntities: [reference],
+      viewScale: 1,
+    },
+  };
+  const point = { x: 5, y: 0 };
+  assert.equal(controller.findEntityAt(point), null);
+  assert.equal(controller.findEntityAt(point, {
+    includeSketchReferences: true,
+  }), reference);
 }
 
 function testExactEllipseEntityAndIntersections() {
@@ -537,7 +890,7 @@ function testDocumentHistory() {
 
   const emptyDoc = new CadDocument();
   assert.deepEqual(emptyDoc.model3d, {
-    version: 1,
+    version: 2,
     sketchPlane: 'XY',
     sketches: [],
     nextSketchId: 1,
@@ -633,6 +986,11 @@ function testDocumentHistory() {
   assert.equal(sketchDoc.entities[0].end.z, 0);
   assert.equal(sketchDoc.model3d.sketches[0].plane.axisRotation, 90);
   assert.equal(sketchDoc.endSketchEdit(), true);
+  const sketchBoundary = sketchDoc.model3d.sketches[0].entities[0];
+  assert.equal(sketchDoc.remove3dSketchEntities(sketch.id, [sketchBoundary]), 1);
+  assert.equal(sketchDoc.model3d.sketches[0].entities.length, 1);
+  assert.equal(sketchDoc.undo(), true);
+  assert.equal(sketchDoc.model3d.sketches[0].entities.length, 2);
   sketchDoc.set3dSketchPlane('YZ');
   assert.equal(sketchDoc.model3d.sketches[0].plane.type, 'fixed');
   assert.equal(sketchDoc.model3d.sketches[0].plane.axisRotation, 90);
@@ -670,7 +1028,7 @@ function testDocumentHistory() {
   const solidRecord = emptyDoc.add3dSolid(visualSolid, {
     operation: { type: 'pushFromProfile', distance: 2, sourceKey: 'POLYLINE:profile-1' },
   });
-  assert.equal(emptyDoc.model3d.version, 1);
+  assert.equal(emptyDoc.model3d.version, 2);
   assert.equal(emptyDoc.model3d.solids.length, 1);
   assert.equal(solidRecord.id, 'solid3d-1');
   assert.equal(solidRecord.visible, true);
@@ -918,6 +1276,22 @@ function createTestCadDocument() {
           clockwise: entity.clockwise,
         } : {}),
       });
+    }
+    if (entity.type === 'IMAGE') {
+      return new RasterImageEntity(
+        entity.center,
+        entity.width,
+        entity.height,
+        entity.source,
+        {
+          ...entityOptions(entity),
+          name: entity.name,
+          rotation: entity.rotation,
+          opacity: entity.opacity,
+          flipX: entity.flipX,
+          flipY: entity.flipY,
+        },
+      );
     }
     return new LineEntity(entity.start, entity.end, entityOptions(entity));
   };
@@ -1442,7 +1816,7 @@ function testWebcadProjectFormat() {
   assert.equal(project2d.document2d.snapshot.entities.length, 1);
   assert.equal(project2d.document2d.settings.layers.length, 1);
   assert.equal(project2d.document2d.counters.nextEntityGroupId, 7);
-  assert.equal(project2d.model3d.version, 1);
+  assert.equal(project2d.model3d.version, 2);
   assert.equal(project2d.model3d.sketchPlane, 'XY');
   assert.equal(project2d.model3d.sketches.length, 0);
   assert.equal(project2d.model3d.solids.length, 0);
@@ -1483,30 +1857,24 @@ function testWebcadProjectFormat() {
       },
     },
   });
-  const visualSolid = {
-    vertices: [
-      { x: 0, y: 0, z: 0 },
-      { x: 1, y: 0, z: 0 },
-      { x: 1, y: 1, z: 0 },
-      { x: 0, y: 1, z: 0 },
-      { x: 0, y: 0, z: 3 },
-      { x: 1, y: 0, z: 3 },
-      { x: 1, y: 1, z: 3 },
-      { x: 0, y: 1, z: 3 },
-    ],
-    faces: [[3, 2, 1, 0], [4, 5, 6, 7], [0, 1, 5, 4], [1, 2, 6, 5], [2, 3, 7, 6], [3, 0, 4, 7]],
-    edges: [[0, 1], [1, 2], [2, 3], [3, 0], [4, 5], [5, 6], [6, 7], [7, 4], [0, 4], [1, 5], [2, 6], [3, 7]],
-    metadata: {
-      type: 'push',
-      distance: 3,
-      sourceKey: 'POLYLINE:profile-webcad',
-      exactGeometry: {
-        status: 'available',
-        representation: 'exact-extrusion-v1',
-        extrusion: { type: 'exact-extrusion', version: 1 },
-      },
+  const profileVertices = [
+    { x: 0, y: 0, z: 0 },
+    { x: 1, y: 0, z: 0 },
+    { x: 1, y: 1, z: 0 },
+    { x: 0, y: 1, z: 0 },
+  ];
+  const visualSolid = solidFromFacePush({
+    id: 'profile-webcad',
+    points: profileVertices,
+    holes: [],
+    normal: { x: 0, y: 0, z: 1 },
+    sourceEntity: {
+      id: 'profile-webcad',
+      type: 'POLYLINE',
+      closed: true,
+      vertices: profileVertices,
     },
-  };
+  }, 3);
   const record = doc3d.add3dSolid(visualSolid, {
     operation: { type: 'pushFromProfile', distance: 3, sourceKey: 'POLYLINE:profile-webcad' },
     placement: {
@@ -1531,8 +1899,9 @@ function testWebcadProjectFormat() {
   );
   assert.equal(project3d.model3d.solids[0].id, record.id);
   assert.equal(project3d.model3d.solids[0].visible, true);
-  assert.equal(project3d.model3d.solids[0].exactGeometry.status, 'available');
-  assert.equal(project3d.model3d.solids[0].operations[0].type, 'pushFromProfile');
+  assert.equal(project3d.model3d.solids[0].solid, undefined);
+  assert.equal(project3d.model3d.solids[0].authority.type, 'parametric-solid-v1');
+  assert.equal(project3d.model3d.solids[0].authority.base.type, 'extrusion');
   assert.deepEqual(project3d.model3d.solids[0].placement, record.placement);
   assert.equal(project3d.model3d.nextSolidId, 2);
   JSON.stringify(project3d);
@@ -1654,6 +2023,96 @@ function testCommandDispatcher() {
   assert.deepEqual(calls.slice(0, 2), [['setTool', 'line'], ['closeToolGroups']]);
   assert.deepEqual(calls.slice(2), [['startPolylineJoin'], ['closeToolGroups'], ['start'], ['closeToolGroups'],
     ['start'], ['closeToolGroups'], ['toggleGridSnap']]);
+
+  const threeModeCalls = [];
+  const threeModeDispatcher = createCommandDispatcher({
+    state: { lastCommand: null },
+    controller: new Proxy({}, {
+      get: (_target, name) => (...args) => threeModeCalls.push([name, ...args]),
+    }),
+    repeatableCommands: new Set(['line']),
+    dimensionTools: new Set(),
+    localFileManager: { save() { threeModeCalls.push(['save']); }, saveAs() {} },
+    commands: {
+      tangentLine: noOpCommand, pointTangentLine: noOpCommand, xline: noOpCommand,
+      regularPolygon: noOpCommand, ellipse: noOpCommand,
+      stretch: noOpCommand, polarArray: noOpCommand, scale: noOpCommand,
+      trim: noOpCommand, offset: noOpCommand,
+    },
+    actions: new Proxy({}, {
+      get: (_target, name) => (...args) => threeModeCalls.push([name, ...args]),
+    }),
+    elements: { circleToolButton: { dataset: {} }, arcToolButton: { dataset: {} } },
+    getInterfaceMode: () => '3d',
+  });
+  assert.equal(threeModeDispatcher.run('line'), false);
+  assert.equal(threeModeDispatcher.run('save'), true);
+  assert.deepEqual(threeModeCalls, [['save'], ['closeToolGroups']]);
+}
+
+function testModeToolbar() {
+  assert.equal(commandToolbarMode('undo'), 'global');
+  assert.equal(commandToolbarMode('line'), '2d');
+  assert.equal(commandToolbarMode('rebuild-model3d'), '3d');
+  assert.equal(isCommandAvailableInMode('line', '3d'), false);
+  assert.equal(isCommandAvailableInMode('rebuild-model3d', '2d'), false);
+  assert.equal(isCommandAvailableInMode('export-dxf', '3d'), false);
+  assert.equal(isCommandAvailableInMode('export-stl', '3d'), true);
+  assert.equal(isCommandAvailableInMode('undo', '2d'), true);
+  assert.equal(isCommandAvailableInMode('undo', '3d'), true);
+  assert.equal(isCommandAvailableInMode('line', 'sketch'), true);
+  assert.equal(isToolbarScopeVisible('2d sketch', 'sketch'), true);
+
+  const scoped = ['2d sketch', '3d', 'sketch'].map((toolMode) => ({
+    dataset: { toolMode },
+    hidden: false,
+  }));
+  const expanded = new Map();
+  const openGroup = {
+    classList: { remove: (name) => expanded.set('class', name) },
+    querySelector: () => ({
+      setAttribute: (name, value) => expanded.set(name, value),
+    }),
+  };
+  const root = {
+    dataset: {},
+    querySelectorAll(selector) {
+      if (selector === '[data-tool-mode]') return scoped;
+      if (selector === '.tool-group.is-open') return [openGroup];
+      return [];
+    },
+  };
+  assert.equal(applyToolbarMode(root, '3d'), '3d');
+  assert.deepEqual(scoped.map((element) => element.hidden), [true, false, true]);
+  assert.equal(root.dataset.webcadMode, '3d');
+  assert.equal(expanded.get('class'), 'is-open');
+  assert.equal(expanded.get('aria-expanded'), 'false');
+  applyToolbarMode(root, 'sketch');
+  assert.deepEqual(scoped.map((element) => element.hidden), [false, true, false]);
+}
+
+function testSketchControlsRemainInHorizontalAndSidebarToolbars() {
+  const html = readFileSync(
+    new URL('../source/index.html', import.meta.url),
+    'utf8',
+  );
+  const ids = [...html.matchAll(/\bid="([^"]+)"/g)].map((match) => match[1]);
+
+  assert.equal(new Set(ids).size, ids.length);
+  ['new', 'edit', 'toggle', 'rename', 'delete'].forEach((action) => {
+    assert.equal(
+      [...html.matchAll(new RegExp(`data-sketch-action="${action}"`, 'g'))].length,
+      2,
+    );
+  });
+  assert.match(
+    html,
+    /id="three-new-sketch"[^>]*>Nuevo croquis<\/button>/,
+  );
+  assert.match(html, /id="three-edit-sketch"[^>]*>E<\/button>/);
+  assert.match(html, /id="three-toggle-sketch"[^>]*>V<\/button>/);
+  assert.match(html, /id="three-rename-sketch"[^>]*>R<\/button>/);
+  assert.match(html, /id="three-delete-sketch"[^>]*>B<\/button>/);
 }
 
 function testWebcadProjectSaveUsesLocationPicker() {
@@ -1988,7 +2447,12 @@ function testPointerGripSelectionStartsDrag() {
 
 testInputAndCoordinates();
 testEntitiesAndTransforms();
+await testClipboardImageUsesPngImportRoute();
+await testClipboardImagePasteGuards();
+await testClipboardImageNormalizationReleasesObjectUrl();
+testPastedImagePlacementUndoAndProjectRoundTrip();
 testIntersectionsAndSelection();
+testSketchReferenceHitTesting();
 testExactEllipseEntityAndIntersections();
 testPointTangentsToEllipses();
 testEllipseCommandAndTrim();
@@ -2007,6 +2471,8 @@ testRegularPolygonCommand();
 testMirrorSecondPointConfirmation();
 testDxfRoundTrip();
 testCommandDispatcher();
+testModeToolbar();
+testSketchControlsRemainInHorizontalAndSidebarToolbars();
 testWebcadProjectSaveUsesLocationPicker();
 await testModularSaveLocationPicker();
 testPolylineShortcutAlias();

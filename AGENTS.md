@@ -399,8 +399,9 @@ Añadir o modificar un tipo puede afectar simultáneamente a:
 
 ### Proyecto `.webcad`
 
-`source/files/formats/webcad-project.js` define el formato
-`webcad-project`, versión 1. Contiene:
+`source/files/formats/webcad-project.js` define el contenedor
+`webcad-project`, versión 1. Su modelo 3D autoritativo usa el esquema compacto
+versión 2. Contiene:
 
 - snapshot y ajustes 2D;
 - contadores de ids;
@@ -409,6 +410,26 @@ Añadir o modificar un tipo puede afectar simultáneamente a:
 No cambies silenciosamente la forma persistida. Si una modificación deja de ser
 compatible, incrementa la versión, valida el nuevo esquema y añade migración o
 un error explícito. Prueba round trips JSON y proyectos antiguos relevantes.
+
+El modelo 3D versión 2 persiste únicamente la extrusión base exacta, las
+operaciones paramétricas ordenadas, sus parámetros y contornos estables, el
+`placement` y la procedencia necesaria para el replay. Vértices, caras,
+triángulos, aristas visuales, normales de renderizado, grupos derivados y
+cachés de selección existen solo en memoria y se reconstruyen y validan antes
+de mostrar el modelo. Ningún índice de triangulación puede usarse como identidad
+persistida, ni directa ni indirectamente dentro de metadata, operaciones o
+snapshots serializados.
+Los índices runtime de la cara de apoyo de un croquis, como
+`supportFace.sourceFaceIndices`, tampoco forman parte de v2: persiste el sólido
+de procedencia y sus contornos o `boundaries` estables.
+
+Los modelos experimentales versión 1 basados en malla se rechazan con un error
+explícito si no ofrecen el contrato autoritativo actual; nunca se copian dentro
+de un guardado versión 2 ni se sobrescribe su archivo durante el intento de
+apertura. Todo cambio de persistencia 3D debe probar como mínimo ausencia de
+malla e índices derivados, replay determinista, round trip editable, Push y
+corte tras reapertura, placements de Mover/Girar/Copiar, varios sólidos,
+undo/redo y rechazo seguro de entradas heredadas incompatibles.
 
 ### DXF y STL
 
@@ -456,6 +477,14 @@ trazado visual.
 - Los controles modales deben poder cancelar sin mutar el documento.
 - No edites `docs/index.html` ni CSS/JS con hash; se regeneran con el build.
 
+La barra lateral es única y dependiente del modo. `source/ui/mode-toolbar.js`
+clasifica órdenes globales, 2D y 3D, mientras que `data-tool-mode` declara qué
+secciones ocupan las zonas laterales en `2d`, `3d` o `sketch`. Las acciones
+globales no se duplican ni reciben un ámbito de modo. Registra futuras
+herramientas dentro de las secciones, grupos y desplegables existentes, añade
+su ámbito a la clasificación central y haz que el cambio de modo cancele antes
+la interacción activa del controlador o del visor.
+
 ### Cambio 3D
 
 - Mantén separadas geometría exacta/documental, malla renderizable y objetos
@@ -470,6 +499,13 @@ trazado visual.
   de croquis.
 - Conserva las curvas analíticas como `ARC`, `ELLIPSE_ARC`, círculo o elipse,
   incluidos sus parámetros.
+- En los cortes por plano, agrupa todos los fragmentos teselados de una
+  intersección conocida bajo una única curva analítica (línea, círculo, arco o
+  elipse); no expongas esos fragmentos como aristas CAD independientes.
+- Al modificar un Push existente, reconstruye desde su estado de entrada
+  paramétrico. Identifica la cara por plano, contorno, región estable y
+  procedencia; los índices de caras o triángulos son solo datos runtime y no
+  pueden ser la identidad persistida de la operación.
 - Respeta la diferencia semántica entre `projection` y `section`.
 - Verifica que los `supportFace` antiguos sin `boundaries` funcionen mediante
   enriquecimiento dinámico.

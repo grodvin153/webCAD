@@ -31,21 +31,26 @@ export function createPngImporter({ input, onLoad, onError }) {
     return { source, name: file.name, pixelWidth: size.width, pixelHeight: size.height };
   }
 
+  async function importFile(file, { reportError = true } = {}) {
+    try {
+      onLoad(await handleFile(file));
+      return true;
+    }
+    catch (error) {
+      if (reportError) onError(error);
+      return false;
+    }
+  }
+
   input.addEventListener('change', async () => {
     const file = input.files?.[0];
     if (!file) return;
-    try {
-      onLoad(await handleFile(file));
-    }
-    catch (error) {
-      onError(error);
-    }
-    finally {
-      input.value = '';
-    }
+    await importFile(file);
+    input.value = '';
   });
 
   return {
+    importFile,
     importPng() {
       input.value = '';
       input.click();

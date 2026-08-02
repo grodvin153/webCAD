@@ -519,8 +519,10 @@ export function transformLine3dRecords(lines, transform) {
 export function createLine3dCommand({
   camera,
   canvas,
+  cursorInput = null,
   getContext,
   getSnap = () => null,
+  getUnitsLabel = () => 'mm',
   onCommit = () => null,
   onSnap = () => {},
   onStatus = () => {},
@@ -669,6 +671,7 @@ export function createLine3dCommand({
   const picker = createPoint3dInput({
     camera,
     canvas,
+    cursorInput,
     getSnap: (event) => {
       const existing = getSnap(event, {
         context,
@@ -682,6 +685,7 @@ export function createLine3dCommand({
         : existing;
     },
     getWorkplane: () => context?.plane,
+    getUnitsLabel,
     onHelper(point) {
       axisHelper.position.set(point.x, point.y, point.z);
       axisHelper.visible = true;
@@ -793,7 +797,9 @@ export function createLine3dCommand({
 export function createLine3dTransformCommand({
   camera,
   canvas,
+  cursorInput = null,
   getSnap = () => null,
+  getUnitsLabel = () => 'mm',
   getWorkplane,
   onSnap = () => {},
   onStatus = () => {},
@@ -979,8 +985,10 @@ export function createLine3dTransformCommand({
   const picker = createPoint3dInput({
     camera,
     canvas,
+    cursorInput,
     getSnap,
     getWorkplane,
+    getUnitsLabel,
     onHelper(point) {
       axisHelper.position.set(point.x, point.y, point.z);
       axisHelper.visible = true;

@@ -4,7 +4,7 @@ import { normalizePrincipalPlane } from './principal-plane.js';
 import { normalizeSketchPlane } from './sketch-plane.js';
 import { normalizeSolidPlacement } from './solid-placement.js';
 
-export const MODEL3D_VERSION = 1;
+export const MODEL3D_VERSION = 2;
 
 const SKIPPED_METADATA_KEYS = new Set([
   'sourceEntity',
@@ -118,14 +118,21 @@ function cloneSketchRecord(record, cloneEntity = null) {
 
 function inferOperationFromSolid(solid) {
   const metadata = solid?.metadata && typeof solid.metadata === 'object' ? solid.metadata : {};
+  const hasStablePushRegion = Boolean(metadata.lastPushRegion?.id);
   return {
-    type: metadata.lastPushFaceIndex === undefined || metadata.lastPushFaceIndex === null
+    type: !hasStablePushRegion &&
+        (metadata.lastPushFaceIndex === undefined || metadata.lastPushFaceIndex === null)
       ? 'pushFromProfile'
       : 'pushMoveFace',
     distance: metadata.lastPushDistance ?? metadata.distance ?? metadata.height ?? null,
     sourceKey: metadata.sourceKey ?? null,
     sourceEntityId: metadata.sourceEntityId ?? null,
-    sourceSolidFaceIndex: metadata.lastPushFaceIndex ?? metadata.sourceSolidFaceIndex ?? null,
+    ...(hasStablePushRegion ? {
+      sourceRegion: cloneJsonValue(metadata.lastPushRegion),
+    } : {
+      sourceSolidFaceIndex: metadata.lastPushFaceIndex ??
+        metadata.sourceSolidFaceIndex ?? null,
+    }),
   };
 }
 
@@ -330,6 +337,7 @@ export function addModel3dSolid(model, solid, options = {}) {
     name: options.name ?? `Solid-${solidNumber}`,
     operation: options.operation,
     placement: options.placement,
+    previous: options.previous,
     visible: options.visible,
   });
   target.solids.push(record);

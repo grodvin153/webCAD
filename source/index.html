@@ -24,10 +24,10 @@
             <button class="submenu-item" type="button" data-command="save-webcad">Guardar proyecto webCAD...</button>
             <button class="submenu-item" type="button" data-command="drawing-profile">Tipo de dibujo...</button>
             <button class="submenu-item" type="button" data-command="settings">Configuracion...</button>
-            <button class="submenu-item" type="button" data-command="import-dxf">Importar DXF</button>
-            <button class="submenu-item" type="button" data-command="export-dxf">Exportar DXF</button>
-            <button class="submenu-item" type="button" data-command="export-stl">Exportar STL...</button>
-            <button class="submenu-item" type="button" data-command="import-png">Importar PNG...</button>
+            <button class="submenu-item" type="button" data-command="import-dxf" data-tool-mode="2d sketch">Importar DXF</button>
+            <button class="submenu-item" type="button" data-command="export-dxf" data-tool-mode="2d sketch">Exportar DXF</button>
+            <button class="submenu-item" type="button" data-command="export-stl" data-tool-mode="3d" hidden>Exportar STL...</button>
+            <button class="submenu-item" type="button" data-command="import-png" data-tool-mode="2d sketch">Importar PNG...</button>
           </div>
         </div>
         <div class="menu-item">
@@ -35,16 +35,16 @@
           <div class="submenu" role="menu">
             <button class="submenu-item" type="button" data-command="undo">Deshacer</button>
             <button class="submenu-item" type="button" data-command="redo">Rehacer</button>
-            <button class="submenu-item" type="button" data-command="select">Seleccionar</button>
-            <button class="submenu-item" type="button" data-command="select-set">Seleccionar conjunto (DS)</button>
-            <button class="submenu-item" type="button" data-command="toggle-ortho">Modo ortogonal</button>
+            <button class="submenu-item" type="button" data-command="select" data-tool-mode="2d sketch">Seleccionar</button>
+            <button class="submenu-item" type="button" data-command="select-set" data-tool-mode="2d sketch">Seleccionar conjunto (DS)</button>
+            <button class="submenu-item" type="button" data-command="toggle-ortho" data-tool-mode="2d sketch">Modo ortogonal</button>
             <button class="submenu-item" type="button" data-command="toggle-grid">Snap a rejilla</button>
-            <button class="submenu-item" type="button" data-command="rebuild-model3d">
+            <button class="submenu-item" type="button" data-command="rebuild-model3d" data-tool-mode="3d" hidden>
               Reconstruir modelo 3D...
             </button>
           </div>
         </div>
-        <div class="menu-item">
+        <div class="menu-item" data-tool-mode="2d sketch">
           <button class="menu-title" type="button">Dibujar</button>
           <div class="submenu" role="menu">
             <button class="submenu-item" type="button" data-command="line">Linea</button>
@@ -64,7 +64,7 @@
             <button class="submenu-item" type="button" data-command="ellipse">Elipse por ejes (EL)</button>
           </div>
         </div>
-        <div class="menu-item">
+        <div class="menu-item" data-tool-mode="2d sketch">
           <button class="menu-title" type="button">Modificar</button>
           <div class="submenu" role="menu">
             <button class="submenu-item" type="button" data-command="copy">Copiar</button>
@@ -83,14 +83,14 @@
             <button class="submenu-item" type="button" data-command="explode">Descomponer (X)</button>
           </div>
         </div>
-        <div class="menu-item">
+        <div class="menu-item" data-tool-mode="2d sketch">
           <button class="menu-title" type="button">Bloques</button>
           <div class="submenu" role="menu">
             <button class="submenu-item" type="button" data-command="block-create">Crear bloque...</button>
             <button class="submenu-item" type="button" data-command="block-insert">Insertar bloque...</button>
           </div>
         </div>
-        <div class="menu-item">
+        <div class="menu-item" data-tool-mode="2d sketch">
           <button class="menu-title" type="button">Acotar</button>
           <div class="submenu" role="menu">
             <button class="submenu-item" type="button" data-command="dimension-horizontal">Horizontal</button>
@@ -107,22 +107,26 @@
             <button class="submenu-item" type="button" data-command="fit">Ajustar vista</button>
             <button class="submenu-item" type="button" data-command="navigation-mouse">Navegacion con raton</button>
             <button class="submenu-item" type="button" data-command="navigation-trackpad">Navegacion con trackpad</button>
-            <div class="submenu-separator" role="separator"></div>
+            <div class="submenu-separator" role="separator" data-tool-mode="3d" hidden></div>
             <button
               id="view-projection-perspective"
               class="submenu-item submenu-choice"
               type="button"
               data-command="three-projection-perspective"
+              data-tool-mode="3d"
               role="menuitemradio"
               aria-checked="true"
+              hidden
             >Vista 3D · Perspectiva</button>
             <button
               id="view-projection-orthographic"
               class="submenu-item submenu-choice"
               type="button"
               data-command="three-projection-orthographic"
+              data-tool-mode="3d"
               role="menuitemradio"
               aria-checked="false"
+              hidden
             >Vista 3D · Isométrica (ortográfica)</button>
           </div>
         </div>
@@ -135,7 +139,7 @@
       </nav>
     </div>
     <nav class="menu-actions" aria-label="Acciones principales">
-      <div class="line-style-control" title="Capa / grosor activo">
+      <div class="line-style-control" title="Capa / grosor activo" data-tool-mode="2d sketch">
         <span>Capa</span>
         <div class="layer-picker">
           <button
@@ -343,14 +347,14 @@
           <path d="M8 3v6h8V3M8 21v-7h8v7"></path>
         </svg>
       </button>
-      <button id="action-import-dxf" class="menu-button" type="button" title="Importar DXF" aria-label="Importar DXF">
+      <button id="action-import-dxf" class="menu-button" type="button" title="Importar DXF" aria-label="Importar DXF" data-tool-mode="2d sketch">
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <path d="M12 3v12"></path>
           <path d="m7 10 5 5 5-5"></path>
           <path d="M5 21h14"></path>
         </svg>
       </button>
-      <button id="action-export-dxf" class="menu-button" type="button" title="Exportar DXF" aria-label="Exportar DXF">
+      <button id="action-export-dxf" class="menu-button" type="button" title="Exportar DXF" aria-label="Exportar DXF" data-tool-mode="2d sketch">
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <path d="M12 21V9"></path>
           <path d="m7 14 5-5 5 5"></path>
@@ -370,7 +374,7 @@
 
   <main class="workspace">
     <aside class="toolbox" aria-label="Herramientas CAD">
-      <section class="tool-section tool-section-selection" aria-labelledby="tools-selection-title">
+      <section class="tool-section tool-section-selection" aria-labelledby="tools-selection-title" data-tool-mode="2d sketch">
         <h2 id="tools-selection-title" class="tool-section-title">Selección</h2>
       <button
         id="tool-select"
@@ -387,7 +391,7 @@
       </button>
       </section>
 
-      <section class="tool-section" aria-labelledby="tools-draw-title">
+      <section class="tool-section" aria-labelledby="tools-draw-title" data-tool-mode="2d sketch">
         <h2 id="tools-draw-title" class="tool-section-title">Dibujar</h2>
       <button
         id="tool-line"
@@ -611,7 +615,7 @@
       </button>
       </section>
 
-      <section class="tool-section" aria-labelledby="tools-modify-title">
+      <section class="tool-section" aria-labelledby="tools-modify-title" data-tool-mode="2d sketch">
         <h2 id="tools-modify-title" class="tool-section-title">Modificar</h2>
       <button
         id="tool-trim"
@@ -863,6 +867,101 @@
         </svg>
       </button>
       </section>
+
+      <section
+        class="tool-section tool-section-selection"
+        aria-labelledby="tools-selection-3d-title"
+        data-tool-mode="3d"
+        hidden
+      >
+        <h2 id="tools-selection-3d-title" class="tool-section-title">Selección 3D</h2>
+        <button
+          id="tool-select-3d"
+          class="tool-button is-active"
+          type="button"
+          title="Seleccionar caras, aristas, líneas o sólidos 3D (Esc)"
+          aria-label="Seleccionar geometría 3D"
+          aria-pressed="true"
+        >
+          <svg viewBox="0 0 48 48" aria-hidden="true">
+            <path d="M15 8 34 27 24 29 19 40z"></path>
+            <path d="M26 28 35 39"></path>
+            <path d="M31 10 39 14 31 18 23 14zM23 14v8l8 4 8-4v-8"></path>
+          </svg>
+        </button>
+      </section>
+
+      <section
+        class="tool-section"
+        aria-labelledby="tools-create-3d-title"
+        data-tool-mode="3d"
+        hidden
+      >
+        <h2 id="tools-create-3d-title" class="tool-section-title">Crear</h2>
+        <div class="tool-group" data-tool-group="sketch-3d">
+          <button
+            id="tool-new-sketch-3d"
+            class="tool-button tool-button-main"
+            type="button"
+            data-sketch-action="new"
+            data-shortcut="SK"
+            title="Crear un croquis 3D en el plano o cara actual (SK)"
+            aria-label="Nuevo croquis 3D"
+          >
+            <svg viewBox="0 0 48 48" aria-hidden="true">
+              <path d="M10 34 24 39 38 30 24 25z"></path>
+              <path d="M24 9v12M18 15h12"></path>
+              <path d="M10 19 24 24 38 15"></path>
+            </svg>
+          </button>
+          <button
+            id="tool-sketch-menu"
+            class="tool-menu-button"
+            type="button"
+            title="Gestionar croquis 3D"
+            aria-label="Más herramientas de croquis 3D"
+            aria-expanded="false"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 9 5 5 5-5"></path></svg>
+          </button>
+          <div class="tool-flyout" role="menu" aria-label="Herramientas de croquis 3D">
+            <button id="tool-edit-sketch-3d" class="tool-flyout-item" type="button" data-sketch-action="edit">Editar croquis</button>
+            <button id="tool-toggle-sketch-3d" class="tool-flyout-item" type="button" data-sketch-action="toggle">Ocultar o mostrar croquis</button>
+            <button id="tool-rename-sketch-3d" class="tool-flyout-item" type="button" data-sketch-action="rename">Renombrar croquis</button>
+            <button id="tool-delete-sketch-3d" class="tool-flyout-item" type="button" data-sketch-action="delete">Borrar croquis</button>
+          </div>
+        </div>
+        <button
+          id="tool-line-3d"
+          class="tool-button"
+          type="button"
+          data-shortcut="L"
+          title="Crear una cadena de líneas espaciales 3D (L)"
+          aria-label="Línea 3D"
+          aria-pressed="false"
+        >
+          <svg viewBox="0 0 48 48" aria-hidden="true">
+            <path d="M9 36 38 10"></path>
+            <circle cx="9" cy="36" r="3"></circle>
+            <circle cx="38" cy="10" r="3"></circle>
+          </svg>
+        </button>
+        <button
+          id="tool-push"
+          class="tool-button"
+          type="button"
+          data-shortcut="P"
+          title="Crear o modificar un sólido empujando una cara (P)"
+          aria-label="Push 3D"
+          aria-pressed="false"
+        >
+          <svg viewBox="0 0 48 48" aria-hidden="true">
+            <path d="M13 31 24 37 35 31 24 25z"></path>
+            <path d="M13 18 24 24 35 18 24 12zM13 18v13M35 18v13M24 24v13"></path>
+            <path d="M24 8v-4M19 8l5-5 5 5"></path>
+          </svg>
+        </button>
+      </section>
     </aside>
 
     <section class="canvas-panel" aria-label="Area de dibujo">
@@ -912,12 +1011,16 @@
           class="view-mode-button"
           type="button"
           title="Cambiar a vista 3D experimental"
+          aria-label="Activar modo 3D"
+          aria-pressed="false"
         >3D</button>
         <button
           id="view-mode-2d"
           class="view-mode-button is-return"
           type="button"
           title="Volver al editor 2D"
+          aria-label="Modo 3D activo; volver al editor 2D"
+          aria-pressed="false"
           hidden
         >2D</button>
         <div id="three-plane-control" class="three-plane-control" hidden>
@@ -929,12 +1032,12 @@
               <option value="YZ">Perfil YZ</option>
             </select>
           </label>
-          <button id="three-new-sketch" type="button" title="Nuevo croquis (SK)">Nuevo croquis</button>
+          <button id="three-new-sketch" type="button" data-sketch-action="new" title="Nuevo croquis (SK)">Nuevo croquis</button>
           <select id="three-sketch-list" aria-label="Croquis del modelo"></select>
-          <button id="three-edit-sketch" class="is-icon" type="button" title="Editar croquis" aria-label="Editar croquis">E</button>
-          <button id="three-toggle-sketch" class="is-icon" type="button" title="Ocultar o mostrar croquis" aria-label="Ocultar o mostrar croquis">V</button>
-          <button id="three-rename-sketch" class="is-icon" type="button" title="Renombrar croquis" aria-label="Renombrar croquis">R</button>
-          <button id="three-delete-sketch" class="is-icon" type="button" title="Borrar croquis" aria-label="Borrar croquis">B</button>
+          <button id="three-edit-sketch" class="is-icon" type="button" data-sketch-action="edit" title="Editar croquis" aria-label="Editar croquis">E</button>
+          <button id="three-toggle-sketch" class="is-icon" type="button" data-sketch-action="toggle" title="Ocultar o mostrar croquis" aria-label="Ocultar o mostrar croquis">V</button>
+          <button id="three-rename-sketch" class="is-icon" type="button" data-sketch-action="rename" title="Renombrar croquis" aria-label="Renombrar croquis">R</button>
+          <button id="three-delete-sketch" class="is-icon" type="button" data-sketch-action="delete" title="Borrar croquis" aria-label="Borrar croquis">B</button>
         </div>
         <div id="sketch-editor-bar" class="block-editor-bar sketch-editor-bar" hidden>
           <div>
@@ -965,6 +1068,7 @@
           id="status-ortho"
           class="status-toggle"
           type="button"
+          data-tool-mode="2d sketch"
           title="Modo ortogonal"
           aria-label="Modo ortogonal"
           aria-pressed="false"
@@ -1009,6 +1113,7 @@
           id="status-lineweight"
           class="status-toggle status-toggle-text is-active"
           type="button"
+          data-tool-mode="2d sketch"
           title="Grosores de línea visibles"
           aria-label="Visibilidad de grosores de línea"
           aria-pressed="true"
@@ -1019,14 +1124,14 @@
         <span id="status-cursor">Cursor: -</span>
         <span id="status-entities">Entidades: 0</span>
         <span id="status-length">Longitud: -</span>
-        <span id="status-layer">Capa: Normal</span>
+        <span id="status-layer" data-tool-mode="2d sketch">Capa: Normal</span>
         <span id="status-message">Listo</span>
-        <span id="status-dxf">DXF: LINE</span>
+        <span id="status-dxf" data-tool-mode="2d sketch">DXF: LINE</span>
       </footer>
     </section>
 
-    <aside class="toolbox toolbox-right" aria-label="Cotas y bloques">
-      <section class="tool-section tool-section-dimensions" aria-labelledby="tools-dimension-title">
+    <aside class="toolbox toolbox-right" aria-label="Herramientas CAD secundarias">
+      <section class="tool-section tool-section-dimensions" aria-labelledby="tools-dimension-title" data-tool-mode="2d sketch">
         <h2 id="tools-dimension-title" class="tool-section-title">Cotas</h2>
         <label class="dimension-style-control" title="Tamaño del estilo de cota">
           <span>Estilo</span>
@@ -1058,7 +1163,7 @@
         </button>
       </section>
 
-      <section class="tool-section tool-section-blocks" aria-labelledby="tools-block-title">
+      <section class="tool-section tool-section-blocks" aria-labelledby="tools-block-title" data-tool-mode="2d sketch">
         <h2 id="tools-block-title" class="tool-section-title">Bloques</h2>
         <div class="tool-group" data-tool-group="block">
           <button
@@ -1092,40 +1197,21 @@
         </div>
       </section>
 
-      <section class="tool-section tool-section-3d" aria-labelledby="tools-3d-title">
-        <h2 id="tools-3d-title" class="tool-section-title">3D</h2>
-        <button
-          id="tool-line-3d"
-          class="tool-button"
-          type="button"
-          title="Línea 3D (L)"
-          aria-label="Línea 3D"
-        >
-          <svg viewBox="0 0 48 48" aria-hidden="true">
-            <path d="M9 36 38 10"></path>
-            <circle cx="9" cy="36" r="3"></circle>
-            <circle cx="38" cy="10" r="3"></circle>
-          </svg>
-        </button>
-        <button
-          id="tool-push"
-          class="tool-button"
-          type="button"
-          title="Push (P)"
-          aria-label="Push"
-        >
-          <svg viewBox="0 0 48 48" aria-hidden="true">
-            <path d="M13 31 24 37 35 31 24 25z"></path>
-            <path d="M13 18 24 24 35 18 24 12zM13 18v13M35 18v13M24 24v13"></path>
-            <path d="M24 8v-4M19 8l5-5 5 5"></path>
-          </svg>
-        </button>
+      <section
+        class="tool-section"
+        aria-labelledby="tools-modify-3d-title"
+        data-tool-mode="3d"
+        hidden
+      >
+        <h2 id="tools-modify-3d-title" class="tool-section-title">Modificar</h2>
         <button
           id="tool-copy-solid"
           class="tool-button"
           type="button"
-          title="Copiar sólido 3D (C)"
-          aria-label="Copiar sólido"
+          data-shortcut="C"
+          title="Copiar líneas o sólidos 3D (C)"
+          aria-label="Copiar geometría 3D"
+          aria-pressed="false"
         >
           <svg viewBox="0 0 48 48" aria-hidden="true">
             <path d="M8 27 19 33 30 27 19 21zM8 14 19 20 30 14 19 8zM8 14v13M30 14v13M19 20v13"></path>
@@ -1136,8 +1222,10 @@
           id="tool-move-solid"
           class="tool-button"
           type="button"
-          title="Mover sólido 3D (D)"
-          aria-label="Mover sólido"
+          data-shortcut="D"
+          title="Mover líneas o sólidos 3D (D)"
+          aria-label="Mover geometría 3D"
+          aria-pressed="false"
         >
           <svg viewBox="0 0 48 48" aria-hidden="true">
             <path d="M13 31 24 37 35 31 24 25zM13 18 24 24 35 18 24 12zM13 18v13M35 18v13M24 24v13"></path>
@@ -1148,8 +1236,10 @@
           id="tool-rotate-solid"
           class="tool-button"
           type="button"
-          title="Girar sólido 3D (G)"
-          aria-label="Girar sólido"
+          data-shortcut="G"
+          title="Girar líneas o sólidos 3D alrededor de un eje (G)"
+          aria-label="Girar geometría 3D"
+          aria-pressed="false"
         >
           <svg viewBox="0 0 48 48" aria-hidden="true">
             <path d="M13 31 24 37 35 31 24 25zM13 18 24 24 35 18 24 12zM13 18v13M35 18v13M24 24v13"></path>
@@ -1157,13 +1247,137 @@
           </svg>
         </button>
         <button
+          id="tool-cut-solid-plane"
+          class="tool-button"
+          type="button"
+          title="Cortar sólido por un plano definido mediante tres puntos"
+          aria-label="Cortar sólido por plano"
+          aria-pressed="false"
+        >
+          <svg viewBox="0 0 48 48" aria-hidden="true">
+            <path d="M12 16 24 10 36 16 24 22zM12 16v16l12 6 12-6V16M24 22v16"></path>
+            <path d="m7 30 18-9 16-2-18 9z"></path>
+          </svg>
+        </button>
+        <button
+          id="tool-union-solid"
+          class="tool-button"
+          type="button"
+          title="Unir sólidos materialmente conectados"
+          aria-label="Unir sólidos"
+          aria-pressed="false"
+        >
+          <svg viewBox="0 0 48 48" aria-hidden="true">
+            <path d="M7 18 18 12l11 6-11 6zM7 18v13l11 6 11-6V18M18 24v13"></path>
+            <path d="m20 25 10-6 11 6-11 6zM30 31v9M41 25v9l-11 6-6-3"></path>
+            <path d="M22 25h12"></path>
+          </svg>
+        </button>
+        <button
+          id="tool-subtract-solid"
+          class="tool-button"
+          type="button"
+          title="Restar uno o varios sólidos cortadores del sólido objetivo"
+          aria-label="Restar sólidos"
+          aria-pressed="false"
+        >
+          <svg viewBox="0 0 48 48" aria-hidden="true">
+            <path d="M7 18 18 12l11 6-11 6zM7 18v13l11 6 11-6V18M18 24v13"></path>
+            <path d="m25 25 8-5 8 5-8 5zM33 30v9M41 25v9l-8 5-5-3"></path>
+            <path d="M26 25h14"></path>
+          </svg>
+        </button>
+        <button
+          id="tool-delete-3d"
+          class="tool-button"
+          type="button"
+          data-shortcut="B"
+          title="Borrar recintos, líneas o sólidos 3D (B o Supr)"
+          aria-label="Borrar geometría 3D"
+          aria-pressed="false"
+        >
+          <svg viewBox="0 0 48 48" aria-hidden="true">
+            <path d="M14 15h20l-2 25H16zM11 15h26M19 15V9h10v6"></path>
+            <path d="M21 21v13M27 21v13"></path>
+          </svg>
+        </button>
+      </section>
+
+      <section
+        class="tool-section"
+        aria-labelledby="tools-model-3d-title"
+        data-tool-mode="3d"
+        hidden
+      >
+        <h2 id="tools-model-3d-title" class="tool-section-title">Modelo</h2>
+        <button
+          id="tool-rebuild-3d"
+          class="tool-button"
+          type="button"
+          data-command="rebuild-model3d"
+          title="Reconstruir la topología del modelo 3D"
+          aria-label="Reconstruir modelo 3D"
+        >
+          <svg viewBox="0 0 48 48" aria-hidden="true">
+            <path d="M13 30 24 36 35 30 24 24zM13 17 24 23 35 17 24 11zM13 17v13M35 17v13"></path>
+            <path d="M8 15a18 18 0 0 1 31 7M40 12v10H30"></path>
+          </svg>
+        </button>
+      </section>
+
+      <section
+        class="tool-section"
+        aria-labelledby="tools-view-3d-title"
+        data-tool-mode="3d"
+        hidden
+      >
+        <h2 id="tools-view-3d-title" class="tool-section-title">Visualizar</h2>
+        <div class="tool-group" data-tool-group="view-3d">
+          <button
+            id="tool-hidden-edges-3d"
+            class="tool-button tool-button-main"
+            type="button"
+            data-shortcut="K"
+            title="Mostrar u ocultar las aristas ocultas 3D (K)"
+            aria-label="Alternar aristas ocultas 3D"
+            aria-pressed="false"
+          >
+            <svg viewBox="0 0 48 48" aria-hidden="true">
+              <path d="M11 17 24 10 37 17 24 24zM11 17v15l13 7 13-7V17M24 24v15"></path>
+              <path d="M11 32 24 25 37 32" stroke-dasharray="4 4"></path>
+            </svg>
+          </button>
+          <button
+            id="tool-view-3d-menu"
+            class="tool-menu-button"
+            type="button"
+            title="Proyección de la cámara 3D"
+            aria-label="Opciones de cámara 3D"
+            aria-expanded="false"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 9 5 5 5-5"></path></svg>
+          </button>
+          <div class="tool-flyout" role="menu" aria-label="Proyección de la cámara 3D">
+            <button class="tool-flyout-item" type="button" data-command="three-projection-perspective">Perspectiva</button>
+            <button class="tool-flyout-item" type="button" data-command="three-projection-orthographic">Ortográfica</button>
+          </div>
+        </div>
+      </section>
+
+      <section
+        class="tool-section tool-section-selection"
+        aria-labelledby="tools-sketch-reference-title"
+        data-tool-mode="sketch"
+        hidden
+      >
+        <h2 id="tools-sketch-reference-title" class="tool-section-title">Referencias</h2>
+        <button
           id="tool-sketch-section"
           class="tool-button sketch-reference-toggle"
           type="button"
           title="Referencias: proyección completa"
           aria-label="Mostrar referencias en sección"
           aria-pressed="false"
-          hidden
         >
           <svg viewBox="0 0 48 48" aria-hidden="true">
             <rect x="9" y="9" width="30" height="30" rx="3"></rect>
@@ -1610,7 +1824,7 @@
       <header>
         <div>
           <span class="cad-dialog-kicker">AUTORIA Y VERSION</span>
-          <h2 id="about-dialog-title">webCAD 0.8.0</h2>
+          <h2 id="about-dialog-title">webCAD 0.9.0</h2>
         </div>
         <button id="about-dialog-close" class="cad-dialog-close" type="button" aria-label="Cerrar">×</button>
       </header>
@@ -1620,7 +1834,7 @@
         <div>
           <strong>Gonzalo Rodriguez</strong>
           <span>Autor y desarrollador de webCAD</span>
-          <small>gonzalorv@gmail.com · Editor CAD 2D/3D experimental para navegador · Versión estable 0.8.0</small>
+          <small>gonzalorv@gmail.com · Editor CAD 2D/3D experimental para navegador · Versión estable 0.9.0</small>
         </div>
       </div>
 
@@ -1649,13 +1863,13 @@
           </ul>
         </section>
         <section class="about-feature-card is-release">
-          <h3>Novedades de 0.8.0</h3>
+          <h3>Novedades de 0.9.0</h3>
           <ul>
-            <li>Líneas espaciales y transformaciones de sólidos completos con colocación documental.</li>
-            <li>Reconstrucción automática y manual de caras coplanarias, perímetros y aristas CAD.</li>
-            <li>Curvas de caras conservadas como entidades analíticas con snaps de centro y cuadrante.</li>
-            <li>Booleanas y Push reforzados frente a residuos, costuras internas y espesores degenerados.</li>
-            <li>Selector modular de guardado para elegir nombre y carpeta de destino.</li>
+            <li>Nuevas herramientas 3D para unir, restar y cortar sólidos mediante tres puntos.</li>
+            <li>Push interactivo con previsualización, entrada dinámica, snaps y diagnósticos geométricos.</li>
+            <li>Persistencia 3D compacta y paramétrica, sin mallas derivadas, con reconstrucción al abrir.</li>
+            <li>Barra lateral única que adapta sus herramientas a los modos 2D, 3D y edición de croquis.</li>
+            <li>Pegado directo de imágenes PNG, JPEG y WebP desde el portapapeles.</li>
           </ul>
         </section>
       </div>

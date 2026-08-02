@@ -299,6 +299,31 @@ export function createCadDocumentClass(dependencies) {
       return record;
     }
 
+    replace3dSolidWithParts(id, parts, options = {}) {
+      const previous = this.model3d?.solids?.find((record) => record?.id === id);
+      const replacements = (parts ?? []).filter((part) => part?.solid);
+      if (!previous || !replacements.length) return [];
+      if (options.recordHistory !== false) this.recordHistory();
+      const records = replacements.map((part, index) => {
+        const recordOptions = {
+          locked: part.locked ?? previous.locked,
+          name: part.name,
+          operation: part.operation ?? options.operation,
+          placement: part.placement ?? previous.placement,
+          visible: part.visible ?? previous.visible,
+        };
+        return index === 0
+          ? replaceModel3dSolid(this.model3d, id, part.solid, recordOptions)
+          : addModel3dSolid(this.model3d, part.solid, {
+            ...recordOptions,
+            previous,
+          });
+      }).filter(Boolean);
+      if (records.length !== replacements.length) return [];
+      this.markDirty();
+      return records;
+    }
+
     remove3dSolid(id, options = {}) {
       if (!this.model3d?.solids?.some((record) => record?.id === id)) {
         return false;
@@ -406,6 +431,23 @@ export function createCadDocumentClass(dependencies) {
       const removed = removeModel3dSketch(this.model3d, id);
       if (removed) this.markDirty();
       return removed;
+    }
+
+    remove3dSketchEntities(id, entities, options = {}) {
+      const sketch = this.model3d?.sketches?.find((record) => record?.id === id);
+      const requested = Array.isArray(entities) ? entities : [entities];
+      const removeSet = new Set(requested.filter(Boolean));
+      if (!sketch || !removeSet.size) return 0;
+      if (this.editingSketchId === id) {
+        return this.removeEntities([...removeSet], options);
+      }
+      const removable = new Set(sketch.entities.filter((entity) => removeSet.has(entity)));
+      if (!removable.size) return 0;
+      if (options.recordHistory !== false) this.recordHistory();
+      sketch.entities = sketch.entities.filter((entity) => !removable.has(entity));
+      sketch.revision = (Number(sketch.revision) || 0) + 1;
+      this.markDirty();
+      return removable.size;
     }
 
     set3dSketchVisibility(id, visible, options = {}) {

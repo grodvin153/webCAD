@@ -81,6 +81,7 @@ import {
   parseSerializedModel3d,
   serializeModel3d,
 } from '../source/3d/serialization.js';
+import { deleteRegionFromDocument } from '../source/3d/region-deletion.js';
 import {
   canExtrudeEntityAsProfile,
   extrudePolylineLikeEntity,
@@ -130,7 +131,14 @@ import {
   solidWithDerivedSurfaceTopology,
   subtractionCutterDistance,
 } from '../source/3d/three/manifold-boolean.js';
-import { pushDistanceToPoint, pushSolidForFace } from '../source/3d/three/push-command.js';
+import { hydrateCompactModel3d } from '../source/3d/three/model3d-replay.js';
+import {
+  pushDistanceToPoint,
+  pushInputHeightForDirection,
+  pushOperationForFace,
+  pushSolidForFace,
+} from '../source/3d/three/push-command.js';
+
 import {
   isClosedLine3dChain,
   isLine3dFinishEvent,
@@ -143,9 +151,19 @@ import {
   transformLine3dRecords,
 } from '../source/3d/three/line3d-command.js';
 import {
+  createSolidObjectSnapQuery,
   nearestSolidObjectSnap,
   solidObjectSnapCandidates,
 } from '../source/3d/three/solid-object-snaps.js';
+import {
+  createPoint3dInput,
+  resolvePoint3dFromInput,
+} from '../source/3d/three/solid-transform-command.js';
+import {
+  createPushDragPreview,
+  createPushPointerProjector,
+  pushAxisFromFaceMesh,
+} from '../source/3d/three/push-preview.js';
 import { nearestSolidEdgeAtPointer } from '../source/3d/three/solid-edge-interaction.js';
 import { cameraClipRangeForBounds } from '../source/3d/three/camera-clipping.js';
 import {
@@ -164,10 +182,14 @@ import {
   CAMERA_PROJECTION_ORTHOGRAPHIC,
   CAMERA_PROJECTION_PERSPECTIVE,
   createSwitchableThreeCamera,
+  normalizeCameraProjection,
   setCameraProjection,
   updateCameraProjectionViewport,
 } from '../source/3d/three/three-camera-projection.js';
-import { cameraWorldHeight } from '../source/3d/three/three-navigation-controls.js';
+import {
+  cameraWorldHeight,
+  zoomCameraByWheel,
+} from '../source/3d/three/three-navigation-controls.js';
 import { VIEW_CUBE_AXIS_COLORS } from '../source/3d/three/three-view-cube.js';
 import {
   buildPushSilhouetteSegments,
@@ -224,6 +246,10 @@ import {
 } from '../source/3d/wireframe-renderer.js';
 import { createWorldXYPlane, projectPointToWorkplane } from '../source/3d/workplane.js';
 
+function parseRuntimeModel3d(model) {
+  return hydrateCompactModel3d(parseSerializedModel3d(model));
+}
+
 assert.equal(pushDistanceToPoint({
   points: [{ x: 0, y: 10, z: 0 }, { x: 10, y: 10, z: 0 }, { x: 10, y: 10, z: 10 }],
   normal: { x: 0, y: -1, z: 0 },
@@ -232,6 +258,374 @@ assert.equal(pushDistanceToPoint({
   points: [{ x: 20, y: 0, z: 0 }, { x: 20, y: 10, z: 0 }, { x: 20, y: 10, z: 10 }],
   normal: { x: -1, y: 0, z: 0 },
 }, { x: 5, y: 700, z: 300 }), 15);
+assert.equal(pushInputHeightForDirection('25', 3), 25);
+assert.equal(pushInputHeightForDirection('25', -3), -25);
+assert.equal(pushInputHeightForDirection('-25', 3), -25);
+assert.equal(pushInputHeightForDirection('+25', -3), 25);
+assert.deepEqual(resolvePoint3dFromInput('25', {
+  anchor: { x: 10, y: 20, z: 30 },
+  direction: { x: -1, y: 0, z: 0 },
+}), { x: -15, y: 20, z: 30 });
+assert.deepEqual(resolvePoint3dFromInput('25', {
+  anchor: { x: 10, y: 20, z: 30 },
+  direction: { x: 0, y: 0, z: 1 },
+}), { x: 10, y: 20, z: 55 });
+const pointInputCamera = new THREE.PerspectiveCamera(36, 1, 0.1, 1000);
+pointInputCamera.position.set(0, 0, 10);
+pointInputCamera.lookAt(0, 0, 0);
+pointInputCamera.updateProjectionMatrix();
+pointInputCamera.updateMatrixWorld(true);
+const pointInputClasses = new Set();
+const pointInputElement = {
+  classList: {
+    toggle(name, enabled) {
+      if (enabled) pointInputClasses.add(name);
+      else pointInputClasses.delete(name);
+    },
+  },
+  getBoundingClientRect: () => ({ width: 54, height: 20 }),
+  parentElement: {
+    getBoundingClientRect: () => ({ left: 0, top: 0, width: 200, height: 200 }),
+  },
+  setAttribute() {},
+  style: {},
+  textContent: '',
+};
+let pointInputPreview = null;
+let pointInputResult = null;
+const pointInput = createPoint3dInput({
+  camera: pointInputCamera,
+  canvas: {
+    getBoundingClientRect: () => ({ left: 0, top: 0, width: 200, height: 200 }),
+  },
+  cursorInput: pointInputElement,
+  getUnitsLabel: () => 'mm',
+  onPreview: (point) => { pointInputPreview = point; },
+});
+pointInput.start({
+  anchor: { x: 0, y: 0, z: 0 },
+  prompt: 'Destino',
+  onPoint: (point) => { pointInputResult = point; },
+});
+pointInput.pointer({ clientX: 150, clientY: 100, shiftKey: false });
+assert.equal(pointInputClasses.has('is-visible'), true);
+assert.match(pointInputElement.textContent, /mm$/);
+pointInput.keydown({ key: '2' });
+pointInput.keydown({ key: '5' });
+assert.equal(pointInputElement.textContent, '25 mm');
+assert.ok(pointInputPreview.x > 0);
+assert.ok(Math.abs(Math.hypot(
+  pointInputPreview.x,
+  pointInputPreview.y,
+  pointInputPreview.z,
+) - 25) < 1e-9);
+pointInput.pointer({ clientX: 50, clientY: 100, shiftKey: false });
+assert.ok(pointInputPreview.x < 0);
+assert.ok(Math.abs(Math.hypot(
+  pointInputPreview.x,
+  pointInputPreview.y,
+  pointInputPreview.z,
+) - 25) < 1e-9);
+pointInput.keydown({ key: 'Enter' });
+assert.ok(pointInputResult.x < 0);
+assert.equal(pointInputClasses.has('is-visible'), false);
+
+const regionEntityA = { id: 'region-a' };
+const regionEntityB = { id: 'region-b' };
+const regionEntityC = { id: 'region-c' };
+const regionDocument = {
+  entities: [regionEntityA, regionEntityB, regionEntityC],
+  removeEntities(entities) {
+    const selected = new Set(entities);
+    const previous = this.entities.length;
+    this.entities = this.entities.filter((entity) => !selected.has(entity));
+    return previous - this.entities.length;
+  },
+};
+assert.deepEqual(deleteRegionFromDocument(regionDocument, {
+  sourceEntities: [regionEntityA, regionEntityB],
+}), { count: 2, kind: 'entities' });
+assert.deepEqual(regionDocument.entities, [regionEntityC]);
+const regionSketchDocument = {
+  model3d: {
+    sketches: [{ id: 'sketch-region', entities: [regionEntityA, regionEntityB] }],
+  },
+  remove3dSketchEntities(id, entities) {
+    assert.equal(id, 'sketch-region');
+    return entities.length;
+  },
+};
+assert.deepEqual(deleteRegionFromDocument(regionSketchDocument, {
+  sketchId: 'sketch-region',
+  sourceEntities: [regionEntityA, regionEntityB],
+}), { count: 2, kind: 'sketch' });
+const regionLineDocument = {
+  model3d: {
+    lines: [
+      { id: 'line-a', groupId: 'region-lines' },
+      { id: 'line-b', groupId: 'region-lines' },
+      { id: 'line-c', groupId: 'other-lines' },
+    ],
+  },
+  remove3dLines(ids) {
+    assert.deepEqual(ids, ['line-a', 'line-b']);
+    return ids.length;
+  },
+};
+assert.deepEqual(deleteRegionFromDocument(regionLineDocument, {
+  line3dGroupId: 'region-lines',
+}), { count: 2, kind: 'line3d' });
+const pushPreviewGeometry = new THREE.BufferGeometry();
+pushPreviewGeometry.setAttribute('position', new THREE.Float32BufferAttribute([
+  0, 0, 0,
+  2, 0, 0,
+  0, 1, 0,
+], 3));
+pushPreviewGeometry.setIndex([0, 1, 2]);
+pushPreviewGeometry.computeVertexNormals();
+const pushPreviewFace = new THREE.Mesh(
+  pushPreviewGeometry,
+  new THREE.MeshBasicMaterial(),
+);
+pushPreviewFace.position.set(4, 5, 6);
+pushPreviewFace.rotation.x = Math.PI / 2;
+pushPreviewFace.updateMatrixWorld(true);
+const transformedPushAxis = pushAxisFromFaceMesh(pushPreviewFace);
+assert.ok(Math.abs(transformedPushAxis.normal.x) < 1e-9);
+assert.ok(Math.abs(transformedPushAxis.normal.y + 1) < 1e-9);
+assert.ok(Math.abs(transformedPushAxis.normal.z) < 1e-9);
+const semanticPushAxis = pushAxisFromFaceMesh(pushPreviewFace, {
+  worldNormal: { x: 0, y: 1, z: 0 },
+});
+assert.ok(Math.abs(semanticPushAxis.normal.x) < 1e-9);
+assert.ok(Math.abs(semanticPushAxis.normal.y - 1) < 1e-9);
+assert.ok(Math.abs(semanticPushAxis.normal.z) < 1e-9);
+assert.equal(pushOperationForFace({ points: [] }, -2), 'add');
+assert.equal(pushOperationForFace({
+  supportSolid: {},
+  supportContactOnly: true,
+}, -2), 'add');
+assert.equal(pushOperationForFace({ sourceSolid: {} }, -2), 'subtract');
+assert.equal(pushOperationForFace({ sourceSolid: {} }, 2), 'add');
+const pushPreviewCamera = new THREE.PerspectiveCamera(36, 1, 0.1, 1000);
+pushPreviewCamera.position.set(12, 14, 16);
+pushPreviewCamera.lookAt(4, 5, 6);
+pushPreviewCamera.updateProjectionMatrix();
+pushPreviewCamera.updateMatrixWorld(true);
+const dragPreview = createPushDragPreview(pushPreviewFace, {
+  camera: pushPreviewCamera,
+  initialDistance: 1,
+});
+assert.ok(dragPreview);
+assert.ok(dragPreview.group.getObjectByName('webcad-push-normal-positive'));
+assert.ok(dragPreview.group.getObjectByName('webcad-push-normal-negative'));
+assert.equal(dragPreview.group.userData.operation, 'add');
+assert.equal(dragPreview.volume.geometry.getAttribute('position').count, 18);
+assert.equal(dragPreview.volume.material.depthTest, true);
+assert.ok(dragPreview.volume.material.opacity < dragPreview.cap.material.opacity);
+const semanticDragPreview = createPushDragPreview(pushPreviewFace, {
+  camera: pushPreviewCamera,
+  initialDistance: -1,
+  operationAtDistance: () => 'add',
+  worldNormal: { x: 0, y: 1, z: 0 },
+});
+assert.equal(semanticDragPreview.group.userData.operation, 'add');
+assert.equal(semanticDragPreview.volume.material.color.getHex(), 0xf0a13a);
+assert.ok(Math.abs(semanticDragPreview.axis.normal.y - 1) < 1e-9);
+semanticDragPreview.dispose();
+const reusableCapGeometry = dragPreview.cap.geometry;
+const reusableCurtain = dragPreview.curtain;
+const reusableVolumeGeometry = dragPreview.volume.geometry;
+const reusableVolumePositions = dragPreview.volume.geometry.getAttribute('position');
+const previewBasePosition = dragPreview.cap.position.clone().addScaledVector(
+  new THREE.Vector3(
+    dragPreview.axis.normal.x,
+    dragPreview.axis.normal.y,
+    dragPreview.axis.normal.z,
+  ),
+  -1,
+);
+assert.equal(dragPreview.update(3.5), true);
+assert.equal(dragPreview.cap.geometry, reusableCapGeometry);
+assert.equal(dragPreview.curtain, reusableCurtain);
+assert.equal(dragPreview.volume.geometry, reusableVolumeGeometry);
+assert.equal(
+  dragPreview.volume.geometry.getAttribute('position'),
+  reusableVolumePositions,
+);
+assert.ok(Math.abs(
+  dragPreview.cap.position.clone().sub(previewBasePosition).dot(
+    new THREE.Vector3(
+      dragPreview.axis.normal.x,
+      dragPreview.axis.normal.y,
+      dragPreview.axis.normal.z,
+    ),
+  ) - 3.5,
+) < 1e-9);
+assert.equal(dragPreview.update(-2), true);
+assert.equal(dragPreview.group.userData.distance, -2);
+assert.equal(dragPreview.group.userData.operation, 'subtract');
+assert.equal(dragPreview.volume.material.color.getHex(), 0xd83b36);
+assert.equal(dragPreview.cap.material.color.getHex(), 0xd83b36);
+assert.equal(dragPreview.volume.material.depthTest, false);
+assert.equal(dragPreview.cap.material.depthTest, false);
+assert.ok(dragPreview.volume.material.opacity < dragPreview.cap.material.opacity);
+const pushPointerProjector = createPushPointerProjector({
+  axis: dragPreview.axis,
+  camera: pushPreviewCamera,
+  controls: { target: new THREE.Vector3(4, 5, 6) },
+  startPointer: { x: 100, y: 100 },
+  viewport: () => ({ width: 800, height: 600 }),
+});
+const projectedScreenAxis = pushPointerProjector.screenAxis;
+assert.ok(pushPointerProjector.distanceAt({
+  clientX: 100 + projectedScreenAxis.x * 40,
+  clientY: 100 + projectedScreenAxis.y * 40,
+}) > 0);
+assert.ok(pushPointerProjector.distanceAt({
+  clientX: 100 - projectedScreenAxis.x * 40,
+  clientY: 100 - projectedScreenAxis.y * 40,
+}) < 0);
+assert.equal(normalizeCameraProjection('unknown'), CAMERA_PROJECTION_PERSPECTIVE);
+assert.equal(
+  cameraProjectionForOrientation(
+    cameraViewOrientation('planta'),
+    CAMERA_PROJECTION_PERSPECTIVE,
+  ),
+  CAMERA_PROJECTION_ORTHOGRAPHIC,
+);
+assert.equal(
+  cameraProjectionForOrientation(
+    cameraViewOrientation('perfil-derecho'),
+    CAMERA_PROJECTION_PERSPECTIVE,
+  ),
+  CAMERA_PROJECTION_ORTHOGRAPHIC,
+);
+assert.equal(
+  cameraProjectionForOrientation(
+    cameraViewOrientation(DEFAULT_ISOMETRIC_VIEW_ID),
+    CAMERA_PROJECTION_PERSPECTIVE,
+  ),
+  CAMERA_PROJECTION_PERSPECTIVE,
+);
+assert.equal(
+  cameraProjectionForOrientation(
+    cameraViewOrientation(DEFAULT_ISOMETRIC_VIEW_ID),
+    CAMERA_PROJECTION_ORTHOGRAPHIC,
+  ),
+  CAMERA_PROJECTION_ORTHOGRAPHIC,
+);
+const switchableCamera = createSwitchableThreeCamera({
+  aspect: 4 / 3,
+  far: 1000,
+  near: 0.1,
+});
+switchableCamera.position.set(0, -30, 20);
+const switchableTarget = new THREE.Vector3(0, 0, 0);
+switchableCamera.lookAt(switchableTarget);
+switchableCamera.updateMatrixWorld(true);
+const perspectiveWorldHeight = cameraWorldHeight(switchableCamera, switchableTarget);
+assert.equal(cameraProjection(switchableCamera), CAMERA_PROJECTION_PERSPECTIVE);
+assert.equal(switchableCamera.isPerspectiveCamera, true);
+assert.equal(switchableCamera.isOrthographicCamera, false);
+setCameraProjection(switchableCamera, CAMERA_PROJECTION_ORTHOGRAPHIC);
+updateCameraProjectionViewport(switchableCamera, {
+  height: 600,
+  viewHeight: perspectiveWorldHeight,
+  width: 800,
+});
+assert.equal(cameraProjection(switchableCamera), CAMERA_PROJECTION_ORTHOGRAPHIC);
+assert.equal(switchableCamera.isPerspectiveCamera, false);
+assert.equal(switchableCamera.isOrthographicCamera, true);
+assert.ok(Math.abs(
+  cameraWorldHeight(switchableCamera, switchableTarget) - perspectiveWorldHeight,
+) < 1e-12);
+setCameraProjection(switchableCamera, CAMERA_PROJECTION_PERSPECTIVE);
+assert.equal(switchableCamera.isPerspectiveCamera, true);
+assert.equal(switchableCamera.isOrthographicCamera, false);
+const orthographicNavigationCamera = new THREE.OrthographicCamera(
+  -8,
+  8,
+  6,
+  -6,
+  0.1,
+  1000,
+);
+orthographicNavigationCamera.position.set(12, 14, 16);
+orthographicNavigationCamera.zoom = 2;
+orthographicNavigationCamera.lookAt(4, 5, 6);
+orthographicNavigationCamera.updateProjectionMatrix();
+orthographicNavigationCamera.updateMatrixWorld(true);
+const orthographicNavigationControls = {
+  target: new THREE.Vector3(4, 5, 6),
+  updates: 0,
+  update() {
+    this.updates += 1;
+  },
+};
+assert.equal(
+  cameraWorldHeight(
+    orthographicNavigationCamera,
+    orthographicNavigationControls.target,
+  ),
+  6,
+);
+const orthographicPositionBeforeZoom =
+  orthographicNavigationCamera.position.toArray();
+assert.equal(zoomCameraByWheel(
+  orthographicNavigationCamera,
+  orthographicNavigationControls,
+  360,
+), true);
+assert.ok(Math.abs(
+  orthographicNavigationCamera.zoom - 2 / Math.E,
+) < 1e-12);
+assert.deepEqual(
+  orthographicNavigationCamera.position.toArray(),
+  orthographicPositionBeforeZoom,
+);
+assert.equal(orthographicNavigationControls.updates, 1);
+const orthographicPushProjector = createPushPointerProjector({
+  axis: dragPreview.axis,
+  camera: orthographicNavigationCamera,
+  controls: orthographicNavigationControls,
+  startPointer: { x: 100, y: 100 },
+  viewport: () => ({ width: 800, height: 600 }),
+});
+const orthographicScreenAxis = orthographicPushProjector.screenAxis;
+assert.ok(Math.abs(
+  orthographicPushProjector.distanceAt({
+    clientX: 100 + orthographicScreenAxis.x * 40,
+    clientY: 100 + orthographicScreenAxis.y * 40,
+  }) -
+  40 * 12 / orthographicNavigationCamera.zoom / 600
+) < 1e-9);
+dragPreview.dispose();
+pushPreviewFace.material.dispose();
+const densePreviewGeometry = new THREE.BufferGeometry();
+densePreviewGeometry.setAttribute('position', new THREE.Float32BufferAttribute(
+  Array.from({ length: 30 }, (_, index) => {
+    const angle = index * Math.PI * 2 / 30;
+    return [Math.cos(angle), Math.sin(angle), 0];
+  }).flat(),
+  3,
+));
+densePreviewGeometry.setAttribute('normal', new THREE.Float32BufferAttribute(
+  Array.from({ length: 30 }, () => [0, 0, 1]).flat(),
+  3,
+));
+const densePreviewFace = new THREE.Mesh(
+  densePreviewGeometry,
+  new THREE.MeshBasicMaterial(),
+);
+densePreviewFace.updateMatrixWorld(true);
+const denseDragPreview = createPushDragPreview(densePreviewFace, {
+  camera: pushPreviewCamera,
+});
+assert.equal(denseDragPreview.curtain.userData.segmentCount, 12);
+denseDragPreview.dispose();
+densePreviewFace.geometry.dispose();
+densePreviewFace.material.dispose();
 const alignedSnapCamera = new THREE.PerspectiveCamera(36, 1, 0.1, 1000);
 alignedSnapCamera.position.set(10, 0, 0);
 alignedSnapCamera.lookAt(0, 0, 0);
@@ -252,6 +646,24 @@ assert.equal(nearestSolidObjectSnap({
   event: { clientX: 50, clientY: 50 },
   solidObjects: [alignedSnapGroup],
 })?.point.x, 0);
+const localSnapQuery = createSolidObjectSnapQuery({
+  camera: alignedSnapCamera,
+  canvas: { getBoundingClientRect: () => ({ left: 0, top: 0, width: 100, height: 100 }) },
+  solidObjects: [alignedSnapGroup],
+  maxDistancePixels: 12,
+  extraCandidates: Array.from({ length: 200 }, (_, index) => ({
+    type: 'endpoint',
+    point: { x: -20, y: index - 100, z: index - 100 },
+  })),
+  visibleOnly: true,
+});
+assert.equal(localSnapQuery.nearest({ clientX: 50, clientY: 50 })?.point.x, 0);
+assert.ok(localSnapQuery.candidateCount > localSnapQuery.getLastCandidateChecks());
+const hiddenSnapRoot = alignedSnapGroup.clone();
+hiddenSnapRoot.visible = false;
+assert.equal(solidObjectSnapCandidates([hiddenSnapRoot], {
+  visibleOnly: true,
+}).length, 1);
 
 assert.deepEqual(add3({ x: 1, y: 2, z: 3 }, { x: 4, y: 5, z: 6 }), { x: 5, y: 7, z: 9 });
 assert.deepEqual(sub3({ x: 4, y: 5, z: 6 }, { x: 1, y: 2, z: 3 }), { x: 3, y: 3, z: 3 });
@@ -365,7 +777,7 @@ const spatialLineRecords = addModel3dLines(spatialLineModel, [
 assert.equal(spatialLineRecords.length, 3);
 assert.equal(spatialLineModel.lines[1].end.z, 2);
 assert.deepEqual(
-  parseSerializedModel3d(serializeModel3d(spatialLineModel)).lines,
+  parseRuntimeModel3d(serializeModel3d(spatialLineModel)).lines,
   spatialLineModel.lines,
 );
 const spatialLineSnaps = line3dRecordSnapCandidates(spatialLineRecords);
@@ -729,14 +1141,26 @@ assert.ok(Math.abs(fullTurn.position.y - movedPlacement.position.y) < 1e-9);
 assert.ok(Math.abs(fullTurn.position.z - movedPlacement.position.z) < 1e-9);
 assert.ok(Math.abs(fullTurn.quaternion.w - 1) < 1e-9);
 const placementRoundTripModel = createModel3d();
-const placementRecord = addModel3dSolid(placementRoundTripModel, referencePrism.solid, {
+const placementSolid = solidFromFacePush({
+  id: 'placement-profile',
+  points: referencePrism.solid.vertices.slice(0, 4),
+  holes: [],
+  normal: { x: 0, y: 0, z: 1 },
+  sourceEntity: {
+    id: 'placement-profile',
+    type: 'POLYLINE',
+    closed: true,
+    vertices: referencePrism.solid.vertices.slice(0, 4),
+  },
+}, 2);
+const placementRecord = addModel3dSolid(placementRoundTripModel, placementSolid, {
   placement: arbitraryPlacement,
 });
-const parsedPlacementModel = parseSerializedModel3d(JSON.parse(JSON.stringify(
+const parsedPlacementModel = parseRuntimeModel3d(JSON.parse(JSON.stringify(
   serializeModel3d(placementRoundTripModel),
 )));
 assert.deepEqual(parsedPlacementModel.solids[0].placement, placementRecord.placement);
-const legacyPlacementModel = parseSerializedModel3d({
+const legacyPlacementModel = parseRuntimeModel3d({
   ...serializeModel3d(placementRoundTripModel),
   solids: [{
     ...serializeModel3d(placementRoundTripModel).solids[0],
@@ -3511,7 +3935,7 @@ const firstInclinedModel = createModel3d();
 addModel3dSolid(firstInclinedModel, firstInclinedExtended, {
   id: 'first-inclined-union-solid',
 });
-const reopenedFirstInclinedUnion = parseSerializedModel3d(
+const reopenedFirstInclinedUnion = parseRuntimeModel3d(
   JSON.parse(JSON.stringify(serializeModel3d(firstInclinedModel))),
 ).solids[0].solid;
 assert.deepEqual(
@@ -4731,7 +5155,7 @@ addModel3dSketch(phaseFourModel, {
   plane: phaseZeroSupportPlane,
   metadata: { supportFace: phaseZeroSupport },
 });
-const phaseFourReopened = parseSerializedModel3d(JSON.parse(JSON.stringify(
+const phaseFourReopened = parseRuntimeModel3d(JSON.parse(JSON.stringify(
   serializeModel3d(phaseFourModel),
 )));
 const phaseFourReopenedSketch = phaseFourReopened.sketches[0];
@@ -5716,7 +6140,7 @@ const legacyResidualRoundTripModel = createModel3d();
 addModel3dSolid(legacyResidualRoundTripModel, legacyResidualFirstPush, {
   id: 'legacy-residual-first-push',
 });
-const legacyResidualRoundTrip = parseSerializedModel3d(
+const legacyResidualRoundTrip = parseRuntimeModel3d(
   JSON.parse(JSON.stringify(serializeModel3d(legacyResidualRoundTripModel))),
 ).solids[0].solid;
 assert.equal(isValidSolid3d(legacyResidualRoundTrip), true);
@@ -5901,7 +6325,7 @@ const residualBeforeFeatureModel = createModel3d();
 addModel3dSolid(residualBeforeFeatureModel, repeatedDividedRegionSolid, {
   id: 'residual-region-before-feature',
 });
-const reopenedResidualBeforeFeature = parseSerializedModel3d(
+const reopenedResidualBeforeFeature = parseRuntimeModel3d(
   JSON.parse(JSON.stringify(serializeModel3d(residualBeforeFeatureModel))),
 ).solids[0].solid;
 const reopenedResidualSelection = analyticRegionHit(
@@ -6066,7 +6490,7 @@ const dividedRegionModel = createModel3d();
 addModel3dSolid(dividedRegionModel, alternatingDividedRegionsSolid, {
   id: 'divided-analytic-regions-solid',
 });
-const reopenedDividedRegionSolid = parseSerializedModel3d(
+const reopenedDividedRegionSolid = parseRuntimeModel3d(
   JSON.parse(JSON.stringify(serializeModel3d(dividedRegionModel))),
 ).solids[0].solid;
 assert.deepEqual(
@@ -6434,10 +6858,15 @@ assert.deepEqual(phaseZeroContract, {
 }, 'La topologia CAD del cilindro oblicuo debe ser independiente de la teselacion');
 
 await import('./3d-coincident-fixture.mjs');
-await import('./3d-residual-dispatch.mjs');
 await import('./3d-planar-base-face-split.mjs');
-await import('./3d-push-planar-face-group.mjs');
 await import('./3d-boolean-reconciliation.mjs');
 await import('./3d-rebuild-boundaries.mjs');
+await import('./3d-plane-cut.mjs');
+await import('./3d-subtraction-diagnostics.mjs');
+await import('./3d-compact-persistence.mjs');
+await import('./3d-additive-consolidation.mjs');
+await import('./3d-push-subtract-cylinder.mjs');
+await import('./3d-solid-union.mjs');
+await import('./3d-solid-subtraction.mjs');
 
 console.log('webCAD 3D foundation: OK');

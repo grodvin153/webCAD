@@ -1,19 +1,30 @@
 /* webCAD - Alternancia reversible entre vistas 2D y 3D | SPDX-License-Identifier: GPL-3.0-or-later */
 
+import { DRAWING_PROFILES } from '../../config.js';
+import { hideCursorInput } from '../../input/cursor-input.js';
+import {
+  applyToolbarMode,
+  TOOLBAR_MODE_2D,
+  TOOLBAR_MODE_3D,
+  TOOLBAR_MODE_SKETCH,
+} from '../../ui/mode-toolbar.js';
 import { principalSketchPlane, sketchPlaneFromFace } from '../sketch-plane.js';
 import { snapshotSketchSupportFace } from '../sketch-reference.js';
 import { solidTransformFromAlias } from '../solid-transform-aliases.js';
 
 const canvas2d = document.getElementById('cad-canvas');
 const canvas3d = document.getElementById('three-canvas');
+const cursorInput = document.getElementById('cursor-input');
 const viewCube = document.getElementById('three-view-cube');
 const viewCubeCanvas = document.getElementById('three-view-cube-canvas');
 const viewCubeHome = document.getElementById('three-view-cube-home');
 const viewCubeLabel = document.getElementById('three-view-cube-label');
-const projectionPerspectiveButton =
-  document.getElementById('view-projection-perspective');
-const projectionOrthographicButton =
-  document.getElementById('view-projection-orthographic');
+const projectionPerspectiveButtons = [
+  ...document.querySelectorAll('[data-command="three-projection-perspective"]'),
+];
+const projectionOrthographicButtons = [
+  ...document.querySelectorAll('[data-command="three-projection-orthographic"]'),
+];
 const canvasWrap = document.querySelector('.canvas-wrap');
 const enterButton = document.getElementById('view-mode-3d');
 const exitButton = document.getElementById('view-mode-2d');
@@ -22,16 +33,25 @@ const line3dButton = document.getElementById('tool-line-3d');
 const copySolidButton = document.getElementById('tool-copy-solid');
 const moveSolidButton = document.getElementById('tool-move-solid');
 const rotateSolidButton = document.getElementById('tool-rotate-solid');
+const cutSolidPlaneButton = document.getElementById('tool-cut-solid-plane');
+const unionSolidButton = document.getElementById('tool-union-solid');
+const subtractSolidButton = document.getElementById('tool-subtract-solid');
+const delete3dButton = document.getElementById('tool-delete-3d');
+const select3dButton = document.getElementById('tool-select-3d');
+const hiddenEdgesButton = document.getElementById('tool-hidden-edges-3d');
 const status = document.getElementById('three-mode-status');
 const statusLength = document.getElementById('status-length');
 const planeControl = document.getElementById('three-plane-control');
 const planeSelect = document.getElementById('three-sketch-plane');
-const newSketchButton = document.getElementById('three-new-sketch');
 const sketchList = document.getElementById('three-sketch-list');
-const editSketchButton = document.getElementById('three-edit-sketch');
-const toggleSketchButton = document.getElementById('three-toggle-sketch');
-const renameSketchButton = document.getElementById('three-rename-sketch');
-const deleteSketchButton = document.getElementById('three-delete-sketch');
+const sketchActionButtons = (action) => [
+  ...document.querySelectorAll(`[data-sketch-action="${action}"]`),
+];
+const newSketchButtons = sketchActionButtons('new');
+const editSketchButtons = sketchActionButtons('edit');
+const toggleSketchButtons = sketchActionButtons('toggle');
+const renameSketchButtons = sketchActionButtons('rename');
+const deleteSketchButtons = sketchActionButtons('delete');
 const sketchEditorBar = document.getElementById('sketch-editor-bar');
 const sketchEditorName = document.getElementById('sketch-editor-name');
 const rotateSketchAxesButton = document.getElementById('sketch-editor-rotate-axes');
@@ -47,6 +67,8 @@ let threeModeActive = false;
 let resizeObserver = null;
 let sketchShortcutTimer = null;
 let initialPlaneResolver = null;
+let activeThreeTool = 'select';
+let hiddenEdgesVisible = false;
 let projectionPreference = (() => {
   try {
     return localStorage.getItem('webcad-three-projection') === 'orthographic'
@@ -70,13 +92,17 @@ let sketchReferenceMode = (() => {
 
 function syncProjectionMenu() {
   [
-    [projectionPerspectiveButton, 'perspective'],
-    [projectionOrthographicButton, 'orthographic'],
-  ].forEach(([button, value]) => {
-    if (!button) return;
+    [projectionPerspectiveButtons, 'perspective'],
+    [projectionOrthographicButtons, 'orthographic'],
+  ].forEach(([buttons, value]) => {
     const selected = projectionPreference === value;
-    button.classList.toggle('is-active', selected);
-    button.setAttribute('aria-checked', String(selected));
+    buttons.forEach((button) => {
+      button.classList.toggle('is-active', selected);
+      if (button.hasAttribute('aria-checked')) {
+        button.setAttribute('aria-checked', String(selected));
+      }
+      else button.setAttribute('aria-pressed', String(selected));
+    });
   });
 }
 
@@ -93,6 +119,77 @@ function setProjectionPreference(value) {
   syncProjectionMenu();
   viewer?.setProjectionPreference?.(projectionPreference);
   return projectionPreference;
+}
+
+function closeToolGroups() {
+  document.querySelectorAll('.tool-group.is-open').forEach((group) => {
+    group.classList.remove('is-open');
+    group.querySelector('.tool-menu-button')?.setAttribute('aria-expanded', 'false');
+  });
+}
+
+function setThreeToolsDisabled(disabled) {
+  document.querySelectorAll(
+    '[data-tool-mode="3d"] button, #three-plane-control button',
+  ).forEach((button) => {
+    button.disabled = disabled;
+  });
+}
+
+function syncThreeToolState(preferredTool = activeThreeTool) {
+  if (!threeModeActive || !viewer) {
+    activeThreeTool = 'select';
+  }
+  else if (viewer.isPushActive?.()) activeThreeTool = 'push';
+  else if (viewer.isLine3dActive?.()) {
+    activeThreeTool = ['copy', 'move', 'rotate'].includes(preferredTool)
+      ? preferredTool
+      : 'line';
+  }
+  else if (viewer.isSolidPlaneCutActive?.()) activeThreeTool = 'cut-plane';
+  else if (viewer.isSolidUnionActive?.()) activeThreeTool = 'union-solid';
+  else if (viewer.isSolidSubtractionActive?.()) activeThreeTool = 'subtract-solid';
+  else if (viewer.isSolidTransformActive?.()) activeThreeTool = preferredTool;
+  else if (viewer.isDeleteSolidActive?.()) activeThreeTool = 'delete';
+  else activeThreeTool = 'select';
+
+  const buttonTools = new Map([
+    [select3dButton, 'select'],
+    [line3dButton, 'line'],
+    [pushButton, 'push'],
+    [copySolidButton, 'copy'],
+    [moveSolidButton, 'move'],
+    [rotateSolidButton, 'rotate'],
+    [cutSolidPlaneButton, 'cut-plane'],
+    [unionSolidButton, 'union-solid'],
+    [subtractSolidButton, 'subtract-solid'],
+    [delete3dButton, 'delete'],
+  ]);
+  buttonTools.forEach((tool, button) => {
+    if (!button) return;
+    const selected = activeThreeTool === tool;
+    button.classList.toggle('is-active', selected);
+    button.setAttribute('aria-pressed', String(selected));
+  });
+  hiddenEdgesButton?.classList.toggle('is-active', hiddenEdgesVisible);
+  hiddenEdgesButton?.setAttribute('aria-pressed', String(hiddenEdgesVisible));
+  return activeThreeTool;
+}
+
+function cancel2dInteraction() {
+  const runtime = sketchRuntime();
+  runtime?.controller?.cancelCurrentCommand?.();
+  runtime?.controller?.updateUiStatus?.();
+  runtime?.renderer?.draw?.();
+  hideCursorInput(cursorInput);
+  closeToolGroups();
+}
+
+function cancel3dInteraction() {
+  viewer?.cancelActiveCommand?.();
+  hideCursorInput(cursorInput);
+  closeToolGroups();
+  syncThreeToolState('select');
 }
 
 function sketchReferenceOptions(sketch = null) {
@@ -197,8 +294,12 @@ function syncSketchControls(preferredId = null) {
   }
   const hasSketch = Boolean(selectedSketch());
   sketchList.disabled = !hasSketch;
-  [editSketchButton, toggleSketchButton, renameSketchButton, deleteSketchButton]
-    .forEach((button) => { if (button) button.disabled = !hasSketch; });
+  [
+    ...editSketchButtons,
+    ...toggleSketchButtons,
+    ...renameSketchButtons,
+    ...deleteSketchButtons,
+  ].forEach((button) => { button.disabled = !hasSketch; });
 }
 
 function refreshDocumentView() {
@@ -244,12 +345,21 @@ function syncSize() {
 }
 
 function show2dMode({ sketchEditing = false } = {}) {
+  cancel3dInteraction();
   viewer?.stop();
   threeModeActive = false;
+  applyToolbarMode(
+    document,
+    sketchEditing ? TOOLBAR_MODE_SKETCH : TOOLBAR_MODE_2D,
+  );
   canvas3d.hidden = true;
   canvas2d.hidden = false;
   enterButton.hidden = sketchEditing;
+  enterButton.classList.remove('is-active');
+  enterButton.setAttribute('aria-pressed', 'false');
   exitButton.hidden = true;
+  exitButton.classList.remove('is-active');
+  exitButton.setAttribute('aria-pressed', 'false');
   status.hidden = true;
   if (viewCube) viewCube.hidden = true;
   if (statusLength) statusLength.textContent = 'Longitud: -';
@@ -257,6 +367,7 @@ function show2dMode({ sketchEditing = false } = {}) {
   sketchEditorBar.hidden = !sketchEditing;
   if (sketchSectionButton) sketchSectionButton.hidden = !sketchEditing;
   canvasWrap.classList.remove('is-three-mode');
+  syncThreeToolState('select');
   requestAnimationFrame(() => canvas2d.focus({ preventScroll: true }));
 }
 
@@ -274,11 +385,18 @@ async function show3dMode() {
     planeSelect.value = selectedPlane;
     applyInitialGridDefault();
   }
+  cancel2dInteraction();
   threeModeActive = true;
+  applyToolbarMode(document, TOOLBAR_MODE_3D);
+  setThreeToolsDisabled(true);
   canvas2d.hidden = true;
   canvas3d.hidden = false;
   enterButton.hidden = true;
+  enterButton.classList.add('is-active');
+  enterButton.setAttribute('aria-pressed', 'true');
   exitButton.hidden = false;
+  exitButton.classList.add('is-active');
+  exitButton.setAttribute('aria-pressed', 'true');
   status.hidden = false;
   if (viewCube) viewCube.hidden = false;
   planeControl.hidden = false;
@@ -298,8 +416,12 @@ async function show3dMode() {
     if (!viewer) {
       const { createThreeDemoViewer } = await import('./three-demo-viewer.js');
       viewer = await createThreeDemoViewer(canvas3d, {
+        cursorInput,
         doc: cadDocument(),
         entities,
+        getUnitsLabel: () => DRAWING_PROFILES[
+          window.webcadDebug?.state?.drawingProfile
+        ]?.unitsLabel ?? 'mm',
         getNavigationDevice: () => viewSettings().navigationDevice,
         gridVisible: settings.gridVisible,
         axesVisible: settings.axesVisible,
@@ -313,7 +435,10 @@ async function show3dMode() {
             ? `Longitud: ${length.toLocaleString('es-ES', { maximumFractionDigits: 3 })} mm`
             : 'Longitud: -';
         },
-        onStatus: (message) => { status.textContent = message; },
+        onStatus: (message) => {
+          status.textContent = message;
+          requestAnimationFrame(() => syncThreeToolState());
+        },
         viewCube: {
           container: viewCube,
           canvas: viewCubeCanvas,
@@ -333,6 +458,9 @@ async function show3dMode() {
     }
     syncSize();
     viewer.start();
+    setThreeToolsDisabled(false);
+    syncSketchControls();
+    syncThreeToolState('select');
     const count = viewer.getSegmentCount();
     const entityCount = viewer.getEntityCount();
     status.textContent = settings.navigationDevice === 'mouse'
@@ -344,6 +472,7 @@ async function show3dMode() {
     show2dMode();
   }
   finally {
+    if (!threeModeActive) setThreeToolsDisabled(false);
     loading = false;
   }
 }
@@ -481,69 +610,148 @@ function ensureInitialSketchForPush() {
 }
 
 function startPush() {
+  if (!threeModeActive) return false;
   ensureInitialSketchForPush();
-  if (viewer?.isSolidTransformActive?.() || viewer?.isLine3dActive?.()) return false;
-  return viewer?.startPush?.() || false;
+  if (viewer?.isSolidPlaneCutActive?.() || viewer?.isSolidUnionActive?.() ||
+      viewer?.isSolidSubtractionActive?.() ||
+      viewer?.isSolidTransformActive?.() || viewer?.isLine3dActive?.()) return false;
+  const started = viewer?.startPush?.() || false;
+  if (started) syncThreeToolState('push');
+  return started;
 }
 
 function startMoveSolids() {
-  if (viewer?.isPushActive?.() || viewer?.isLine3dActive?.()) return false;
-  if (!viewer?.getSelectedSolidIds?.().length && viewer?.getSelectedLine3dGroupId?.()) {
-    return viewer?.startMoveLine3d?.() || false;
-  }
-  return viewer?.startMoveSolids?.() || false;
+  if (!threeModeActive) return false;
+  if (viewer?.isPushActive?.() || viewer?.isSolidPlaneCutActive?.() ||
+      viewer?.isSolidUnionActive?.() ||
+      viewer?.isSolidSubtractionActive?.() ||
+      viewer?.isLine3dActive?.()) return false;
+  const started = !viewer?.getSelectedSolidIds?.().length &&
+    viewer?.getSelectedLine3dGroupId?.()
+    ? viewer?.startMoveLine3d?.() || false
+    : viewer?.startMoveSolids?.() || false;
+  if (started) syncThreeToolState('move');
+  return started;
 }
 
 function startCopySolids() {
-  if (viewer?.isPushActive?.() || viewer?.isLine3dActive?.()) return false;
-  if (!viewer?.getSelectedSolidIds?.().length && viewer?.getSelectedLine3dGroupId?.()) {
-    return viewer?.startCopyLine3d?.() || false;
-  }
-  return viewer?.startCopySolids?.() || false;
+  if (!threeModeActive) return false;
+  if (viewer?.isPushActive?.() || viewer?.isSolidPlaneCutActive?.() ||
+      viewer?.isSolidUnionActive?.() ||
+      viewer?.isSolidSubtractionActive?.() ||
+      viewer?.isLine3dActive?.()) return false;
+  const started = !viewer?.getSelectedSolidIds?.().length &&
+    viewer?.getSelectedLine3dGroupId?.()
+    ? viewer?.startCopyLine3d?.() || false
+    : viewer?.startCopySolids?.() || false;
+  if (started) syncThreeToolState('copy');
+  return started;
 }
 
 function startRotateSolids() {
-  if (viewer?.isPushActive?.() || viewer?.isLine3dActive?.()) return false;
-  if (!viewer?.getSelectedSolidIds?.().length && viewer?.getSelectedLine3dGroupId?.()) {
-    return viewer?.startRotateLine3d?.() || false;
-  }
-  return viewer?.startRotateSolids?.() || false;
+  if (!threeModeActive) return false;
+  if (viewer?.isPushActive?.() || viewer?.isSolidPlaneCutActive?.() ||
+      viewer?.isSolidUnionActive?.() ||
+      viewer?.isSolidSubtractionActive?.() ||
+      viewer?.isLine3dActive?.()) return false;
+  const started = !viewer?.getSelectedSolidIds?.().length &&
+    viewer?.getSelectedLine3dGroupId?.()
+    ? viewer?.startRotateLine3d?.() || false
+    : viewer?.startRotateSolids?.() || false;
+  if (started) syncThreeToolState('rotate');
+  return started;
 }
 
 function startLine3d() {
-  if (viewer?.isPushActive?.() || viewer?.isSolidTransformActive?.()) return false;
-  return viewer?.startLine3d?.() || false;
+  if (!threeModeActive) return false;
+  if (viewer?.isPushActive?.() || viewer?.isSolidPlaneCutActive?.() ||
+      viewer?.isSolidUnionActive?.() ||
+      viewer?.isSolidSubtractionActive?.() ||
+      viewer?.isSolidTransformActive?.()) return false;
+  const started = viewer?.startLine3d?.() || false;
+  if (started) syncThreeToolState('line');
+  return started;
+}
+
+function startDelete3d() {
+  if (!threeModeActive) return false;
+  if (viewer?.isSolidPlaneCutActive?.() || viewer?.isSolidUnionActive?.() ||
+      viewer?.isSolidSubtractionActive?.()) return false;
+  const started = viewer?.startDeleteSolid?.() || false;
+  if (started) syncThreeToolState('delete');
+  return started;
+}
+
+function startSolidPlaneCut() {
+  if (!threeModeActive || viewer?.isPushActive?.() ||
+      viewer?.isSolidTransformActive?.() || viewer?.isLine3dActive?.() ||
+      viewer?.isDeleteSolidActive?.() || viewer?.isSolidUnionActive?.() ||
+      viewer?.isSolidSubtractionActive?.()) return false;
+  const started = viewer?.startSolidPlaneCut?.() || false;
+  if (started) syncThreeToolState('cut-plane');
+  return started;
+}
+
+function startSolidUnion() {
+  if (!threeModeActive || viewer?.isPushActive?.() ||
+      viewer?.isSolidTransformActive?.() || viewer?.isLine3dActive?.() ||
+      viewer?.isDeleteSolidActive?.() || viewer?.isSolidPlaneCutActive?.() ||
+      viewer?.isSolidSubtractionActive?.()) return false;
+  const started = viewer?.startSolidUnion?.() || false;
+  if (started) syncThreeToolState('union-solid');
+  return started;
+}
+
+function startSolidSubtraction() {
+  if (!threeModeActive || viewer?.isPushActive?.() ||
+      viewer?.isSolidTransformActive?.() || viewer?.isLine3dActive?.() ||
+      viewer?.isDeleteSolidActive?.() || viewer?.isSolidPlaneCutActive?.() ||
+      viewer?.isSolidUnionActive?.()) return false;
+  const started = viewer?.startSolidSubtraction?.() || false;
+  if (started) syncThreeToolState('subtract-solid');
+  return started;
+}
+
+function activateThreeSelection() {
+  if (!threeModeActive) return false;
+  cancel3dInteraction();
+  status.textContent = 'Selección 3D activa';
+  canvas3d.focus({ preventScroll: true });
+  return true;
+}
+
+function toggleHiddenEdges() {
+  if (!threeModeActive) return false;
+  hiddenEdgesVisible = viewer?.toggleHiddenEdges?.() === true;
+  syncThreeToolState();
+  return hiddenEdgesVisible;
 }
 
 enterButton?.addEventListener('click', show3dMode);
 exitButton?.addEventListener('click', show2dMode);
-pushButton?.addEventListener('click', async () => {
-  if (!threeModeActive) {
-    await show3dMode();
-  }
-  startPush();
+pushButton?.addEventListener('click', startPush);
+line3dButton?.addEventListener('click', startLine3d);
+copySolidButton?.addEventListener('click', startCopySolids);
+moveSolidButton?.addEventListener('click', startMoveSolids);
+rotateSolidButton?.addEventListener('click', startRotateSolids);
+cutSolidPlaneButton?.addEventListener('click', startSolidPlaneCut);
+unionSolidButton?.addEventListener('click', startSolidUnion);
+subtractSolidButton?.addEventListener('click', startSolidSubtraction);
+delete3dButton?.addEventListener('click', startDelete3d);
+select3dButton?.addEventListener('click', activateThreeSelection);
+hiddenEdgesButton?.addEventListener('click', toggleHiddenEdges);
+[
+  [newSketchButtons, createNewSketch],
+  [editSketchButtons, editSelectedSketch],
+  [toggleSketchButtons, toggleSelectedSketch],
+  [renameSketchButtons, renameSelectedSketch],
+  [deleteSketchButtons, deleteSelectedSketch],
+].forEach(([buttons, action]) => {
+  buttons.forEach((button) => button.addEventListener('click', () => {
+    closeToolGroups();
+    action();
+  }));
 });
-line3dButton?.addEventListener('click', async () => {
-  if (!threeModeActive) await show3dMode();
-  startLine3d();
-});
-copySolidButton?.addEventListener('click', async () => {
-  if (!threeModeActive) await show3dMode();
-  startCopySolids();
-});
-moveSolidButton?.addEventListener('click', async () => {
-  if (!threeModeActive) await show3dMode();
-  startMoveSolids();
-});
-rotateSolidButton?.addEventListener('click', async () => {
-  if (!threeModeActive) await show3dMode();
-  startRotateSolids();
-});
-newSketchButton?.addEventListener('click', createNewSketch);
-editSketchButton?.addEventListener('click', editSelectedSketch);
-toggleSketchButton?.addEventListener('click', toggleSelectedSketch);
-renameSketchButton?.addEventListener('click', renameSelectedSketch);
-deleteSketchButton?.addEventListener('click', deleteSelectedSketch);
 finishSketchButton?.addEventListener('click', finishSketchEdit);
 rotateSketchAxesButton?.addEventListener('click', rotateActiveSketchAxes);
 sketchSectionButton?.addEventListener('click', () => {
@@ -625,6 +833,7 @@ document.addEventListener('keydown', async (event) => {
 document.addEventListener('keydown', (event) => {
   if (!threeModeActive || event.metaKey || event.ctrlKey || event.altKey ||
       viewer?.isPushActive?.() || viewer?.isSolidTransformActive?.() ||
+      viewer?.isSolidPlaneCutActive?.() ||
       viewer?.isLine3dActive?.() ||
       viewer?.isDeleteSolidActive?.() ||
       event.target instanceof HTMLInputElement ||
@@ -674,7 +883,7 @@ document.addEventListener('keydown', (event) => {
   }
   event.preventDefault();
   event.stopImmediatePropagation();
-  viewer?.toggleHiddenEdges?.();
+  toggleHiddenEdges();
 }, true);
 
 document.addEventListener('keydown', (event) => {
@@ -684,6 +893,7 @@ document.addEventListener('keydown', (event) => {
   const isCancelKey = event.key === 'Escape';
   if (!threeModeActive || (!isDeleteKey && !isEraseAlias && !isConfirmKey && !isCancelKey) ||
       event.metaKey || event.ctrlKey || event.altKey || viewer?.isPushActive?.() ||
+      viewer?.isSolidTransformActive?.() ||
       viewer?.isLine3dActive?.() ||
       event.target instanceof HTMLInputElement ||
       event.target instanceof HTMLSelectElement ||
@@ -696,8 +906,9 @@ document.addEventListener('keydown', (event) => {
   event.stopImmediatePropagation();
   if (isConfirmKey) viewer?.confirmDeleteSolidSelection?.();
   else if (isCancelKey) viewer?.cancelDeleteSolid?.();
-  else if (isEraseAlias) viewer?.startDeleteSolid?.();
+  else if (isEraseAlias) startDelete3d();
   else viewer?.deleteSelected3d?.();
+  requestAnimationFrame(() => syncThreeToolState());
 }, true);
 
 document.addEventListener('click', () => {
@@ -725,9 +936,13 @@ window.webcadThreeMode = {
   exit: show2dMode,
   getViewer: () => viewer,
   isActive: () => threeModeActive,
-  startDeleteSolid: () => viewer?.startDeleteSolid?.() || false,
+  startDeleteSolid: startDelete3d,
   confirmDeleteSolidSelection: () => viewer?.confirmDeleteSolidSelection?.() || false,
   deleteSelectedSolid: () => viewer?.deleteSelectedSolid?.() || false,
+  fitView: () => {
+    if (!threeModeActive) return false;
+    return viewer?.fitView?.() || false;
+  },
   refreshDocument: refreshDocumentView,
   createNewSketch,
   editSelectedSketch,
@@ -741,4 +956,7 @@ window.webcadThreeMode = {
   syncSettings: syncViewSettings,
 };
 
+applyToolbarMode(document, TOOLBAR_MODE_2D);
+setThreeToolsDisabled(false);
+syncThreeToolState('select');
 syncProjectionMenu();

@@ -242,6 +242,12 @@ export function createRuntimeControls({
   }
 
   function fitView() {
+    const threeMode = globalThis.window?.webcadThreeMode;
+    if (threeMode?.isActive?.() && threeMode.fitView?.()) {
+      state.statusText = 'Vista 3D ajustada';
+      controller.updateUiStatus();
+      return;
+    }
     state.statusText = 'Vista ajustada';
     renderer.fitToDocument();
     controller.updateUiStatus();

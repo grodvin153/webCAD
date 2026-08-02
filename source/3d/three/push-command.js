@@ -2,9 +2,12 @@
 
 import * as THREE from 'three';
 
+import {
+  hideCursorInput,
+  updateCursorInput,
+} from '../../input/cursor-input.js';
 import { formatNumber, parseScalarExpression } from '../../input/entry.js';
 import {
-  meetsMinimum3dThickness,
   MINIMUM_3D_THICKNESS,
 } from '../tolerances.js';
 import { normalizeSolidPlacement } from '../solid-placement.js';
@@ -20,6 +23,10 @@ import {
   solidFromFacePush,
 } from './push-geometry.js';
 import { profileFeaturePushSolid } from './profile-feature.js';
+import {
+  createPushDragPreview,
+  createPushPointerProjector,
+} from './push-preview.js';
 
 const ALLOWED_INPUT = /^[0-9eE+\-*/().,\s]$/;
 
@@ -30,26 +37,57 @@ export function pushStrategyForFace(face) {
   return 'profile';
 }
 
-export function pushSolidForFace(face, distance) {
+export function pushOperationForFace(face, distance) {
+  const value = Number(distance);
+  if (!Number.isFinite(value)) return null;
+  const strategy = pushStrategyForFace(face);
+  if (strategy === 'profile' || face?.supportContactOnly === true) return 'add';
+  return value < 0 ? 'subtract' : 'add';
+}
+
+export function pushSolidForFace(face, distance, options = {}) {
   const geometryFace = face?.localFace ?? face;
   const strategy = pushStrategyForFace(geometryFace);
   if (strategy === 'profileFeature') {
-    return profileFeaturePushSolid(geometryFace, distance);
+    return profileFeaturePushSolid(geometryFace, distance, options);
   }
   if (strategy === 'moveFace') {
-    return movedSolidFacePush(geometryFace, distance);
+    return movedSolidFacePush(geometryFace, distance, options);
   }
-  return solidFromFacePush(geometryFace, distance);
+  const solid = solidFromFacePush(geometryFace, distance);
+  if (!solid && Number(distance) < 0) {
+    options.onDiagnostic?.({
+      operation: { type: 'subtract', distance },
+      target: null,
+      cutter: {
+        outerPointCount: geometryFace?.points?.length ?? 0,
+        holeCount: geometryFace?.holes?.length ?? 0,
+      },
+      coordinateSystem: geometryFace?.workplane ?? geometryFace?.sketchPlane ?? 'face-local',
+      phase: 'profile-extrusion',
+      reason: Math.abs(Number(distance)) < MINIMUM_3D_THICKNESS
+        ? 'minimum-thickness'
+        : 'invalid-cutter-profile',
+      effectiveTolerance: MINIMUM_3D_THICKNESS,
+    });
+  }
+  return solid;
 }
 
-function pointerHeight(event, camera, controls, viewport, startY) {
-  const target = controls?.target || new THREE.Vector3();
-  const distance = camera.position.distanceTo(target);
-  const visibleWorld = 2 * Math.max(1, distance) * Math.tan(THREE.MathUtils.degToRad(camera.fov || 36) / 2);
-  const pixels = Math.max(1, viewport().height || 1);
-  const rawHeight = (startY - event.clientY) * (visibleWorld / pixels);
-  if (Math.abs(rawHeight) > 1e-9) return rawHeight;
-  return rawHeight < 0 ? -0.1 : 0.1;
+export function pushFailureMessage(diagnostic) {
+  return {
+    'no-intersection': 'Push no válido · el perfil cortador no intersecta el sólido',
+    'tangent-contact': 'Push no válido · el cortador solo tiene contacto tangente',
+    'below-useful-tolerance': 'Push no válido · la intersección queda por debajo de la tolerancia útil',
+    'invalid-target-solid': 'Push no válido · el sólido objetivo tiene geometría inválida',
+    'invalid-cutter-profile': 'Push no válido · el perfil cortador no es cerrado o válido',
+    'minimum-thickness': `Push no válido · el resultado incumple el espesor mínimo ${MINIMUM_3D_THICKNESS}`,
+    'invalid-result-topology': 'Push no válido · la booleana produjo una topología no utilizable',
+    'result-empty': 'Push no válido · la sustracción eliminaría completamente el sólido',
+    'kernel-error': 'Push no válido · el núcleo booleano no pudo resolver la operación',
+    'kernel-unavailable': 'Push no válido · el núcleo booleano 3D no está disponible',
+    'invalid-overlap-test': 'Push no válido · no se pudo verificar el solape del cortador',
+  }[diagnostic?.reason] ?? 'Push no válido · no se pudo completar la operación';
 }
 
 function faceCenter(face) {
@@ -81,42 +119,16 @@ export function pushDistanceToPoint(face, point) {
   return Math.abs(distance) > 1e-9 ? distance : null;
 }
 
-function pointerDistanceAlongFaceNormal(event, camera, controls, viewport, face, startPointer) {
-  if (!startPointer || !face?.normal) return null;
-  const center = faceCenter(face);
-  const normal = new THREE.Vector3(
-    Number(face.normal.x),
-    Number(face.normal.y),
-    Number(face.normal.z),
-  );
-  if (!center || normal.lengthSq() <= 1e-12) return null;
-  normal.normalize();
-  const distance = camera.position.distanceTo(controls?.target || center);
-  const normalEnd = center.clone().addScaledVector(normal, Math.max(distance * 0.12, 1));
-  const startProjected = center.clone().project(camera);
-  const endProjected = normalEnd.project(camera);
-  const width = Math.max(1, viewport().width || 1);
-  const height = Math.max(1, viewport().height || 1);
-  const screenNormal = new THREE.Vector2(
-    (endProjected.x - startProjected.x) * width * 0.5,
-    -(endProjected.y - startProjected.y) * height * 0.5,
-  );
-  if (screenNormal.lengthSq() < 64) screenNormal.set(0, -1);
-  else screenNormal.normalize();
-  const pointerDelta = new THREE.Vector2(
-    event.clientX - startPointer.x,
-    event.clientY - startPointer.y,
-  );
-  const pixels = pointerDelta.dot(screenNormal);
-  const visibleWorld = 2 * Math.max(1, distance) * Math.tan(THREE.MathUtils.degToRad(camera.fov || 36) / 2);
-  const worldPerPixel = visibleWorld / height;
-  const rawDistance = pixels * worldPerPixel;
-  if (Math.abs(rawDistance) > 1e-9) return rawDistance;
-  return rawDistance < 0 ? -0.1 : 0.1;
-}
-
 function parsePushInput(input) {
   return pushHeightValue(parseScalarExpression(String(input).replace(',', '.')));
+}
+
+export function pushInputHeightForDirection(input, directionHeight) {
+  const source = String(input ?? '').trim();
+  const parsed = parsePushInput(source);
+  if (parsed === null) return null;
+  if (/^[+-]/.test(source)) return parsed;
+  return Math.abs(parsed) * (Number(directionHeight) < 0 ? -1 : 1);
 }
 
 function pushStartPointerFromSelection(selection) {
@@ -130,8 +142,10 @@ export function createPushCommand({
   camera,
   canvas,
   controls,
+  cursorInput = null,
+  getUnitsLabel = () => 'mm',
   getSelectedFace,
-  getObjectSnap = null,
+  prepareObjectSnaps = null,
   onObjectSnap = null,
   onStatus = null,
   onConsumeFace = null,
@@ -147,14 +161,15 @@ export function createPushCommand({
   let commandFace = null;
   let input = '';
   let preview = null;
-  let startPointerY = 0;
+  let pointerProjector = null;
+  let snapQuery = null;
   let startPointer = null;
+  let lastPointer = null;
   let currentHeight = 1;
   let pointerDown = null;
   let pointerDragged = false;
   let activeSnap = null;
-  const pointer = new THREE.Vector2();
-  const raycaster = new THREE.Raycaster();
+  let controlsWereEnabled = true;
 
   function status(message) {
     onStatus?.(message);
@@ -182,17 +197,23 @@ export function createPushCommand({
     return pushDistanceToPoint(face, snap?.point);
   }
 
-  function inputHeight(parsed) {
-    if (parsed === null) return null;
-    if (parsed < 0) return parsed;
-    return Math.abs(parsed) * (currentHeight < 0 ? -1 : 1);
-  }
-
   function snapHeightFromEvent(event) {
-    const snap = getObjectSnap?.(event, commandFace?.userData?.face) ?? null;
+    const snap = snapQuery?.nearest?.(event) ?? null;
     const snappedHeight = heightFromSnap(commandFace?.userData?.face, snap);
     setActiveSnap(snappedHeight === null ? null : snap);
     return snappedHeight;
+  }
+
+  function updateDynamicInput() {
+    updateCursorInput(cursorInput, {
+      clientPoint: lastPointer,
+      text: `${input || formatNumber(currentHeight)} ${getUnitsLabel()}`,
+      visible: active,
+    });
+  }
+
+  function restoreControls() {
+    if (controls) controls.enabled = controlsWereEnabled;
   }
 
   function setHiddenEdges(visible) {
@@ -202,9 +223,10 @@ export function createPushCommand({
 
   function removePreview() {
     if (!preview) return;
-    scene.remove(preview);
-    disposeThreeObject(preview);
+    scene.remove(preview.group);
+    preview.dispose();
     preview = null;
+    pointerProjector = null;
   }
 
   function applyFacePlacement(object, face) {
@@ -241,87 +263,16 @@ export function createPushCommand({
     if (sourceGroup) sourceGroup.visible = visible;
   }
 
-  function solidFacePreview(face, height, options) {
-    const movedSolid = pushSolidForFace(face, height);
-    return movedSolid
-      ? createPushSolidGroupFromSolid(movedSolid, options)
-      : null;
-  }
-
-  function profileFeaturePreview(face, height, options) {
-    const solid = pushSolidForFace(face, height);
-    return solid ? createPushSolidGroupFromSolid(solid, options) : null;
-  }
-
   function updatePreview(height) {
     const cleanHeight = pushHeightValue(height);
     if (!active || !commandFace?.userData?.face || cleanHeight === null) return;
     currentHeight = cleanHeight;
-    removePreview();
-    const face = commandFace.userData.face;
-    const previewOptions = {
-      edgeColor: PUSH_SOLID_STYLE.edgeColor,
-      edgeLineWidth: PUSH_SOLID_STYLE.edgeLineWidth,
-      faceColor: PUSH_SOLID_STYLE.previewFaceColor,
-      name: 'webcad-push-preview',
-      renderOrder: 24,
-    };
-    const strategy = pushStrategyForFace(face);
-    preview = strategy === 'moveFace'
-      ? solidFacePreview(face, currentHeight, previewOptions)
-      : strategy === 'profileFeature'
-        ? profileFeaturePreview(face, currentHeight, previewOptions)
-        : createPushSolidGroup(face, currentHeight, previewOptions);
-    applyFacePlacement(preview, face);
-    if (!preview) {
-      setCommandSolidSourceVisible(true);
-      status(!meetsMinimum3dThickness(currentHeight) && strategy !== 'moveFace'
-        ? `Push no valido · espesor minimo 3D: ${MINIMUM_3D_THICKNESS}`
-        : strategy === 'moveFace'
-          ? `Push no valido · sin material suficiente o espesor inferior a ${MINIMUM_3D_THICKNESS}`
-          : `Push no valido · sin material suficiente (${formatNumber(currentHeight)})`);
-      render?.();
-      return;
-    }
-    const effectiveFaceDistance = Number(preview.userData?.solid?.metadata?.lastPushDistance);
-    if (face.sourceSolid && Number.isFinite(effectiveFaceDistance)) {
-      currentHeight = effectiveFaceDistance;
-    }
-    setCommandSolidSourceVisible(false);
-    preview.userData.preview = true;
-    const featureOperation = preview.userData?.solid?.metadata?.profileFeatures?.at?.(-1);
-    preview.userData.pushThrough = featureOperation?.through === true;
-    scene.add(preview);
-    const throughLabel = preview.userData.pushThrough ? ' · Hueco pasante' : '';
+    preview?.update(currentHeight);
     status(input
-      ? `Push: ${input} (${formatNumber(currentHeight)})${activeSnap ? ` · OSNAP ${snapLabel(activeSnap)}` : ''}${throughLabel}`
-      : `Push: ${formatNumber(currentHeight)}${activeSnap ? ` · OSNAP ${snapLabel(activeSnap)}` : ''}${throughLabel} · escriba distancia o clic para confirmar`);
+      ? `Push: ${input} (${formatNumber(currentHeight)})${activeSnap ? ` · OSNAP ${snapLabel(activeSnap)}` : ''}`
+      : `Push: ${formatNumber(currentHeight)} ${getUnitsLabel()}${activeSnap ? ` · OSNAP ${snapLabel(activeSnap)}` : ''} · escriba distancia o clic para confirmar`);
+    updateDynamicInput();
     render?.();
-  }
-
-  function referenceFromExistingSolid(event, face) {
-    if (!solidGroup.children.length) return null;
-    const rect = canvas.getBoundingClientRect();
-    pointer.x = ((event.clientX - rect.left) / Math.max(1, rect.width)) * 2 - 1;
-    pointer.y = -(((event.clientY - rect.top) / Math.max(1, rect.height)) * 2 - 1);
-    raycaster.setFromCamera(pointer, camera);
-    const hits = raycaster.intersectObjects(solidGroup.children, true)
-      .filter((candidate) => candidate?.point &&
-        candidate?.object?.userData?.type === 'webcad-push-solid');
-    const reference = hits
-      .map((hit) => ({ hit, height: pushDistanceToPoint(face, hit.point) }))
-      .find((candidate) => candidate.height !== null);
-    if (!reference) return null;
-    const { hit, height } = reference;
-    return {
-      height,
-      snap: {
-        type: 'surface',
-        point: { x: hit.point.x, y: hit.point.y, z: hit.point.z },
-        documentSolidId: hit.object?.userData?.documentSolidId ??
-          hit.object?.parent?.userData?.documentSolidId ?? null,
-      },
-    };
   }
 
   function addSolidFromFace(face, height, options = {}) {
@@ -362,10 +313,14 @@ export function createPushCommand({
     setCommandFaceVisible(true);
     commandFace = null;
     startPointer = null;
+    lastPointer = null;
     pointerDown = null;
     pointerDragged = false;
+    snapQuery = null;
     setActiveSnap(null);
     removePreview();
+    hideCursorInput(cursorInput);
+    restoreControls();
     status('Push cancelado');
     render?.();
     return true;
@@ -373,25 +328,27 @@ export function createPushCommand({
 
   function confirm() {
     if (!active || !commandFace?.userData?.face || pushHeightValue(currentHeight) === null) return false;
-    removePreview();
+    if (input && pushInputHeightForDirection(input, currentHeight) === null) {
+      status(`Push: distancia no valida (${input})`);
+      return false;
+    }
     const face = commandFace.userData.face;
     let finalSolid = null;
+    let failureDiagnostic = null;
+    const diagnosticOptions = {
+      onDiagnostic: (diagnostic) => { failureDiagnostic = diagnostic; },
+    };
     let through = false;
     const strategy = pushStrategyForFace(face);
     if (strategy === 'profileFeature') {
-      const featureSolid = pushSolidForFace(face, currentHeight);
+      const featureSolid = pushSolidForFace(face, currentHeight, diagnosticOptions);
       if (!featureSolid) {
         setCommandSolidSourceVisible(true);
-        status('Push no valido · no se pudo actualizar el solido soporte');
+        status(pushFailureMessage(failureDiagnostic));
         render?.();
         return false;
       }
       through = featureSolid.metadata?.profileFeatures?.at?.(-1)?.through === true;
-      const sourceGroup = commandSolidSourceGroup();
-      if (sourceGroup) {
-        solidGroup.remove(sourceGroup);
-        disposeThreeObject(sourceGroup);
-      }
       finalSolid = createPushSolidGroupFromSolid(featureSolid, {
         edgeColor: PUSH_SOLID_STYLE.edgeColor,
         edgeLineWidth: PUSH_SOLID_STYLE.edgeLineWidth,
@@ -400,24 +357,16 @@ export function createPushCommand({
         renderOrder: 20,
       });
       applyFacePlacement(finalSolid, face);
-      solidGroup.add(finalSolid);
     }
     else if (strategy === 'moveFace') {
-      const movedSolid = pushSolidForFace(face, currentHeight);
+      const movedSolid = pushSolidForFace(face, currentHeight, diagnosticOptions);
       if (!movedSolid) {
         setCommandSolidSourceVisible(true);
-        status(
-          `Push no valido · sin material suficiente o espesor inferior a ${MINIMUM_3D_THICKNESS}`,
-        );
+        status(pushFailureMessage(failureDiagnostic));
         render?.();
         return false;
       }
       currentHeight = Number(movedSolid.metadata?.lastPushDistance) || currentHeight;
-      const sourceGroup = commandSolidSourceGroup();
-      if (sourceGroup) {
-        solidGroup.remove(sourceGroup);
-        disposeThreeObject(sourceGroup);
-      }
       finalSolid = createPushSolidGroupFromSolid(movedSolid, {
         edgeColor: PUSH_SOLID_STYLE.edgeColor,
         edgeLineWidth: PUSH_SOLID_STYLE.edgeLineWidth,
@@ -426,11 +375,14 @@ export function createPushCommand({
         renderOrder: 20,
       });
       applyFacePlacement(finalSolid, face);
-      solidGroup.add(finalSolid);
     }
     else {
-      finalSolid = addSolidFromFace(face, currentHeight, {
+      finalSolid = createPushSolidGroup(face, currentHeight, {
+        edgeColor: PUSH_SOLID_STYLE.edgeColor,
+        edgeLineWidth: PUSH_SOLID_STYLE.edgeLineWidth,
+        faceColor: PUSH_SOLID_STYLE.faceColor,
         name: `webcad-push-solid-${commandFace.userData.faceId}`,
+        renderOrder: 20,
       });
       if (!finalSolid) {
         setCommandSolidSourceVisible(true);
@@ -439,6 +391,15 @@ export function createPushCommand({
         return false;
       }
     }
+    removePreview();
+    if (strategy === 'profileFeature' || strategy === 'moveFace') {
+      const sourceGroup = commandSolidSourceGroup();
+      if (sourceGroup) {
+        solidGroup.remove(sourceGroup);
+        disposeThreeObject(sourceGroup);
+      }
+    }
+    solidGroup.add(finalSolid);
     setCommandFaceVisible(false);
     onConsumeFace?.(commandFace, finalSolid, {
       height: currentHeight,
@@ -448,9 +409,13 @@ export function createPushCommand({
     input = '';
     commandFace = null;
     startPointer = null;
+    lastPointer = null;
     pointerDown = null;
     pointerDragged = false;
+    snapQuery = null;
     setActiveSnap(null);
+    hideCursorInput(cursorInput);
+    restoreControls();
     status(through
       ? `Push creado · hueco pasante (${formatNumber(currentHeight)})`
       : `Push creado · altura ${formatNumber(currentHeight)}`);
@@ -471,9 +436,34 @@ export function createPushCommand({
     input = '';
     currentHeight = 1;
     startPointer = pushStartPointerFromSelection(commandFace);
-    startPointerY = startPointer?.y ?? 0;
+    lastPointer = startPointer;
     canvas?.focus?.({ preventScroll: true });
-    setCommandSolidSourceVisible(false);
+    controlsWereEnabled = controls?.enabled !== false;
+    if (controls) controls.enabled = false;
+    setCommandSolidSourceVisible(true);
+    preview = createPushDragPreview(commandFace, {
+      camera,
+      initialDistance: currentHeight,
+      operationAtDistance: (distance) =>
+        pushOperationForFace(commandFace.userData.face, distance),
+      worldNormal: commandFace.userData.face.normal,
+    });
+    if (!preview) {
+      active = false;
+      setCommandFaceVisible(true);
+      restoreControls();
+      status('Push no disponible · no se pudo determinar la normal de la cara');
+      return false;
+    }
+    scene.add(preview.group);
+    pointerProjector = createPushPointerProjector({
+      axis: preview.axis,
+      camera,
+      controls,
+      startPointer,
+      viewport,
+    });
+    snapQuery = prepareObjectSnaps?.(commandFace.userData.face) ?? null;
     updatePreview(currentHeight);
     status('Push activo · mueva el cursor, escriba altura y confirme con clic o Enter');
     return true;
@@ -481,40 +471,39 @@ export function createPushCommand({
 
   function onPointerMove(event) {
     if (!active) return;
-    if (!startPointerY) startPointerY = event.clientY;
     if (!startPointer) startPointer = { x: event.clientX, y: event.clientY };
+    lastPointer = { x: event.clientX, y: event.clientY };
+    if (!pointerProjector) {
+      pointerProjector = createPushPointerProjector({
+        axis: preview?.axis,
+        camera,
+        controls,
+        startPointer,
+        viewport,
+      });
+    }
     if (pointerDown) {
       const dragDistance = Math.hypot(event.clientX - pointerDown.x, event.clientY - pointerDown.y);
       if (dragDistance > 4) pointerDragged = true;
     }
-    if (input) return;
     const snappedHeight = snapHeightFromEvent(event);
-    if (snappedHeight !== null) {
-      updatePreview(snappedHeight);
+    const pointerHeight = snappedHeight ??
+      pointerProjector?.distanceAt(event) ??
+      currentHeight;
+    if (input) {
+      const typedHeight = pushInputHeightForDirection(input, pointerHeight);
+      if (typedHeight !== null) updatePreview(typedHeight);
+      else updateDynamicInput();
       return;
     }
-    const surfaceReference = referenceFromExistingSolid(event, commandFace?.userData?.face);
-    if (surfaceReference) {
-      setActiveSnap(surfaceReference.snap);
-      updatePreview(surfaceReference.height);
-      return;
-    }
-    updatePreview(
-      pointerDistanceAlongFaceNormal(
-        event,
-        camera,
-        controls,
-        viewport,
-        commandFace?.userData?.face,
-        startPointer,
-      ) ?? pointerHeight(event, camera, controls, viewport, startPointerY),
-    );
+    if (snappedHeight === null) setActiveSnap(null);
+    if (Math.abs(pointerHeight) > 1e-9) updatePreview(pointerHeight);
   }
 
   function onPointerDown(event) {
     if (!active) return;
-    if (!startPointerY) startPointerY = event.clientY;
     if (!startPointer) startPointer = { x: event.clientX, y: event.clientY };
+    lastPointer = { x: event.clientX, y: event.clientY };
     pointerDown = { x: event.clientX, y: event.clientY };
     pointerDragged = false;
   }
@@ -529,17 +518,11 @@ export function createPushCommand({
       return;
     }
     pointerDown = null;
+    lastPointer = { x: event.clientX, y: event.clientY };
     if (!input) {
       const snappedHeight = snapHeightFromEvent(event);
       if (snappedHeight !== null) {
         updatePreview(snappedHeight);
-      }
-      else {
-        const surfaceReference = referenceFromExistingSolid(event, commandFace?.userData?.face);
-        if (surfaceReference) {
-          setActiveSnap(surfaceReference.snap);
-          updatePreview(surfaceReference.height);
-        }
       }
     }
     confirm();
@@ -560,17 +543,25 @@ export function createPushCommand({
     if (event.key === 'Backspace') {
       event.preventDefault();
       input = input.slice(0, -1);
-      const parsed = input ? inputHeight(parsePushInput(input)) : null;
+      const parsed = input
+        ? pushInputHeightForDirection(input, currentHeight)
+        : null;
       if (parsed !== null) updatePreview(parsed);
-      else status(input ? `Push: ${input}` : 'Push: mueva el cursor o escriba altura');
+      else {
+        status(input ? `Push: ${input}` : 'Push: mueva el cursor o escriba altura');
+        updateDynamicInput();
+      }
       return;
     }
     if (event.key.length === 1 && ALLOWED_INPUT.test(event.key)) {
       event.preventDefault();
       input += event.key;
-      const parsed = inputHeight(parsePushInput(input));
+      const parsed = pushInputHeightForDirection(input, currentHeight);
       if (parsed !== null) updatePreview(parsed);
-      else status(`Push: ${input}`);
+      else {
+        status(`Push: ${input}`);
+        updateDynamicInput();
+      }
     }
   }
 

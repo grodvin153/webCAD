@@ -18,6 +18,7 @@ export function bindApplicationEvents({
   dialogs,
   blockDialogs,
   hatchDialog,
+  imagePasteHandler,
 }) {
   const {
     canvas,
@@ -95,8 +96,10 @@ export function bindApplicationEvents({
     toolGroupElements,
   } = elements;
   const focusCanvas = () => canvas.focus({ preventScroll: true });
+  if (imagePasteHandler) root.addEventListener('paste', imagePasteHandler);
 
   menuCommandButtons.forEach((button) => {
+    if (button.classList.contains('tool-flyout-item')) return;
     button.addEventListener('click', () => runCommand(button.dataset.command));
   });
 
@@ -205,9 +208,18 @@ export function bindApplicationEvents({
       event.stopPropagation();
     });
   }
-  [circleToolMenuButton, arcToolMenuButton, blockToolMenuButton].forEach(bindToolGroupMenu);
+  toolGroupElements.forEach((group) => {
+    const button = group.querySelector('.tool-menu-button');
+    if (button) bindToolGroupMenu(button);
+  });
   toolFlyoutCommandButtons.forEach((button) => {
     button.addEventListener('pointerdown', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      runCommand(button.dataset.command);
+    });
+    button.addEventListener('click', (event) => {
+      if (event.detail !== 0) return;
       event.preventDefault();
       event.stopPropagation();
       runCommand(button.dataset.command);

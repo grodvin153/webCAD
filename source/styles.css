@@ -41,6 +41,10 @@ input {
   font: inherit;
 }
 
+[data-tool-mode][hidden] {
+  display: none !important;
+}
+
 .menu-bar {
   position: fixed;
   inset: 0 0 auto 0;
@@ -710,6 +714,9 @@ input {
 }
 
 .menu-button:disabled,
+.tool-button:disabled,
+.tool-menu-button:disabled,
+.tool-flyout-item:disabled,
 .submenu-item:disabled {
   color: #9aaab2;
   cursor: default;
@@ -717,6 +724,9 @@ input {
 }
 
 .menu-button:disabled:hover,
+.tool-button:disabled:hover,
+.tool-menu-button:disabled:hover,
+.tool-flyout-item:disabled:hover,
 .submenu-item:disabled:hover {
   background: transparent;
   color: #9aaab2;
@@ -1260,6 +1270,7 @@ input {
 }
 
 .view-mode-button:hover,
+.view-mode-button.is-active,
 .view-mode-button.is-return {
   border-color: #b6572a;
   background: #fff4ea;
@@ -1282,9 +1293,12 @@ input {
   pointer-events: none;
 }
 
-.canvas-wrap.is-three-mode .cursor-input,
 .canvas-wrap.is-three-mode .block-editor-bar {
   display: none;
+}
+
+.canvas-wrap.is-three-mode .cursor-input {
+  z-index: 16;
 }
 
 @media (max-width: 720px), (max-height: 540px) {

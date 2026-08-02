@@ -39,7 +39,7 @@ perfiles, edición de sólidos y guardado del modelo en proyectos `.webcad`.
 
 ## Versión
 
-Versión estable actual: **0.8.0**.
+Versión estable actual: **0.9.0**.
 
 ## Autoría y licencia
 

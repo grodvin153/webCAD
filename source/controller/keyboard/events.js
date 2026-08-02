@@ -35,6 +35,8 @@ export function createControllerKeyboardEventMethods(dependencies) {
         event.target instanceof HTMLTextAreaElement) {
       return;
     }
+    const threeModeActive = globalThis.window?.webcadThreeMode?.isActive?.() === true;
+    if (threeModeActive && event.key === 'Shift') return;
     if (event.key === 'Shift') {
       this.state.shiftKeyDown = true;
       orthogonalInference.lock(this.state);
@@ -80,6 +82,7 @@ export function createControllerKeyboardEventMethods(dependencies) {
       }
       return;
     }
+    if (threeModeActive) return;
     const deleteSelectionKey = event.key === 'Delete' ||
       (event.key === 'Backspace' && !this.state.distanceInput);
     if (
@@ -246,6 +249,7 @@ export function createControllerKeyboardEventMethods(dependencies) {
   }
 
   onKeyUp(event) {
+    if (globalThis.window?.webcadThreeMode?.isActive?.() === true) return;
     if (event.key === 'Shift') {
       this.state.shiftKeyDown = false;
       orthogonalInference.unlock(this.state);

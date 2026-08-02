@@ -10,7 +10,11 @@ import {
   rotatePointByQuaternion,
   solidLocalToWorld,
 } from './solid-placement.js';
-import { sampleSolidAnalyticEdges } from './analytic-edges.js';
+import {
+  deriveSolidAnalyticEdges,
+  pointOnAnalyticCurve,
+  sampleSolidAnalyticEdges,
+} from './analytic-edges.js';
 import { solidWithDerivedSurfaceTopology } from './three/manifold-boolean.js';
 
 const DEFAULT_TOLERANCE = 1e-7;
@@ -55,6 +59,14 @@ function add(first, second) {
 
 function scale(vector, factor) {
   return { x: vector.x * factor, y: vector.y * factor, z: vector.z * factor };
+}
+
+function cross(first, second) {
+  return {
+    x: first.y * second.z - first.z * second.y,
+    y: first.z * second.x - first.x * second.z,
+    z: first.x * second.y - first.y * second.x,
+  };
 }
 
 function worldProfilePoint(
@@ -215,6 +227,91 @@ function exactCurveCandidate(
   return candidate;
 }
 
+function derivedAnalyticCurveCandidate(
+  curve,
+  target,
+  mode,
+  sourceSolidId,
+  placement,
+  tolerance,
+) {
+  if (!['arc-circle', 'arc-ellipse'].includes(curve?.type)) return null;
+  const radiusX = Number(curve.radiusX);
+  const radiusY = Number(curve.radiusY);
+  if (!(radiusX > 0) || !(radiusY > 0)) return null;
+  const cleanPlacement = normalizeSolidPlacement(placement);
+  const worldCenter = solidLocalToWorld(curve.center, cleanPlacement);
+  const worldUAxis = rotatePointByQuaternion(curve.uAxis, cleanPlacement.quaternion);
+  const worldVAxis = rotatePointByQuaternion(curve.vAxis, cleanPlacement.quaternion);
+  const curveNormal = cross(worldUAxis, worldVAxis);
+  const normalLength = Math.hypot(curveNormal.x, curveNormal.y, curveNormal.z);
+  if (normalLength <= 1e-12 ||
+      Math.abs(dot(curveNormal, target.normal)) / normalLength < 1 - 1e-6) {
+    return null;
+  }
+  const localCenter = pointFromSketchPlane(worldCenter, target);
+  if (mode === 'section' && Math.abs(localCenter.z) > tolerance) return null;
+  const center = pointForSketchEditor(localCenter);
+  const rotation = Math.atan2(
+    -dot(worldUAxis, target.yAxis),
+    dot(worldUAxis, target.xAxis),
+  );
+  const circular = curve.type === 'arc-circle';
+  if (curve.closed === true) {
+    return circular
+      ? { type: 'circle', center, radius: radiusX, sourceSolidId }
+      : {
+        type: 'ellipse',
+        center,
+        radiusX,
+        radiusY,
+        rotation,
+        sourceSolidId,
+      };
+  }
+  const startAngle = Number(curve.startAngle);
+  const sweep = Number(curve.sweep);
+  if (!Number.isFinite(startAngle) || !(sweep > 0)) return null;
+  const direction = curve.clockwise === false ? -1 : 1;
+  const project = (angle) => pointForSketchEditor(pointFromSketchPlane(
+    solidLocalToWorld(pointOnAnalyticCurve(curve, angle), cleanPlacement),
+    target,
+  ));
+  const start = project(startAngle);
+  const end = project(startAngle + direction * sweep);
+  const midpoint = project(startAngle + direction * sweep * 0.5);
+  const candidate = circular ? {
+    type: 'arc',
+    center,
+    radius: radiusX,
+    start,
+    end,
+    sourceSolidId,
+  } : {
+    type: 'ellipse-arc',
+    center,
+    radiusX,
+    radiusY,
+    rotation,
+    start,
+    end,
+    sourceSolidId,
+  };
+  const startParameter = curveParameter(start, candidate, tolerance);
+  const endParameter = curveParameter(end, candidate, tolerance);
+  if (startParameter === null || endParameter === null) return null;
+  if (circular) {
+    candidate.startAngle = startParameter;
+    candidate.endAngle = endParameter;
+  }
+  else {
+    candidate.startParameter = startParameter;
+    candidate.endParameter = endParameter;
+  }
+  candidate.clockwise = partialCurveDirection(candidate, midpoint);
+  return candidate;
+}
+
 function candidateKey(candidate) {
   const center = pointKey(candidate.center, 1e-6);
   const shape = curveUsesEllipse(candidate)
@@ -227,7 +324,14 @@ function candidateKey(candidate) {
   return `${candidate.type}:${center}:${shape}:${fields.start.toFixed(6)}:${fields.end.toFixed(6)}:${candidate.clockwise}`;
 }
 
-function exactCurveCandidates(solid, targetPlane, mode, sourceSolidId, placement = null) {
+function exactCurveCandidates(
+  solid,
+  targetPlane,
+  mode,
+  sourceSolidId,
+  placement = null,
+  tolerance = DEFAULT_TOLERANCE,
+) {
   const target = normalizeSketchPlane(targetPlane);
   const cleanPlacement = normalizeSolidPlacement(placement);
   const candidates = [];
@@ -267,6 +371,17 @@ function exactCurveCandidates(solid, targetPlane, mode, sourceSolidId, placement
         if (candidate) candidates.push(candidate);
       });
     }));
+  });
+  deriveSolidAnalyticEdges(solid).curves.forEach((curve) => {
+    const candidate = derivedAnalyticCurveCandidate(
+      curve,
+      target,
+      mode,
+      sourceSolidId,
+      cleanPlacement,
+      tolerance,
+    );
+    if (candidate) candidates.push(candidate);
   });
   const unique = new Map();
   candidates.forEach((candidate) => {
@@ -575,6 +690,7 @@ export function projectModel3dEdgesToSketch(model3d, plane, options = {}) {
         'projection',
         record.id ?? null,
         record.placement,
+        tolerance,
       ));
       sampleSolidAnalyticEdges(solid).entries.forEach((entry) => {
         const localStart = entry.segment?.start;
@@ -650,6 +766,7 @@ export function sectionModel3dToSketch(model3d, plane, options = {}) {
         'section',
         record.id ?? null,
         record.placement,
+        tolerance,
       ));
       const signedDistance = (point) => pointFromSketchPlane(point, plane).z;
       (solid.edges ?? []).forEach((edge) => {
@@ -719,6 +836,7 @@ function derivedSupportBoundaries(support, plane, model3d = null) {
     'projection',
     sourceSolidId,
     record.placement,
+    1e-6,
   );
   return replaceAnalyticCurves(segments, candidates, 1e-6);
 }

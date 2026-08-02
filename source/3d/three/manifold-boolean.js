@@ -20,6 +20,7 @@ import {
   coplanarFaceNormalDotTolerance,
   coplanarFaceTolerance,
   manufacturingMeshTolerance,
+  meetsMinimum3dThickness,
 } from '../tolerances.js';
 import {
   pointFromExactProfilePlane,
@@ -52,6 +53,118 @@ export function initializeManifoldBoolean() {
 
 export function isManifoldBooleanReady() {
   return Boolean(manifoldApi);
+}
+
+function diagnosticBounds(points) {
+  if (!Array.isArray(points) || !points.length) return null;
+  return points.reduce((bounds, point) => ({
+    min: {
+      x: Math.min(bounds.min.x, Number(point?.x)),
+      y: Math.min(bounds.min.y, Number(point?.y)),
+      z: Math.min(bounds.min.z, Number(point?.z)),
+    },
+    max: {
+      x: Math.max(bounds.max.x, Number(point?.x)),
+      y: Math.max(bounds.max.y, Number(point?.y)),
+      z: Math.max(bounds.max.z, Number(point?.z)),
+    },
+  }), {
+    min: { x: Infinity, y: Infinity, z: Infinity },
+    max: { x: -Infinity, y: -Infinity, z: -Infinity },
+  });
+}
+
+function diagnosticSolid(solid) {
+  return {
+    id: solid?.metadata?.sourceSolidDocumentId ?? null,
+    vertexCount: solid?.vertices?.length ?? 0,
+    faceCount: solid?.faces?.length ?? 0,
+    bounds: diagnosticBounds(solid?.vertices),
+  };
+}
+
+function emitSubtractionDiagnostic(options, diagnostic) {
+  const event = {
+    operation: options?.operation ?? { type: 'subtract' },
+    target: options?.diagnosticTarget ?? null,
+    cutter: options?.diagnosticCutter ?? null,
+    coordinateSystem: options?.coordinateSystem ?? 'solid-local',
+    ...diagnostic,
+  };
+  options?.onDiagnostic?.(event);
+  if (globalThis.__WEBCAD_3D_SUBTRACTION_DEBUG__ === true) {
+    console.debug('webCAD subtraction diagnostic', event);
+  }
+  return event;
+}
+
+function manifoldSubtractionOverlap(source, cutter, tolerance) {
+  const sourceVolume = Math.abs(source.volume());
+  const cutterVolume = Math.abs(cutter.volume());
+  const effectiveTolerance = Math.max(Number(tolerance) || POSITION_EPSILON, POSITION_EPSILON);
+  const minimumUsefulVolume = Math.max(
+    sourceVolume * 1e-12,
+    effectiveTolerance ** 3 * 1e-3,
+    Number.EPSILON * Math.max(sourceVolume, 1) * 128,
+  );
+  let intersection = null;
+  try {
+    intersection = source.intersect(cutter);
+    const intersectionValid = intersection.status() === 'NoError';
+    const overlapVolume = intersectionValid && !intersection.isEmpty()
+      ? Math.abs(intersection.volume())
+      : 0;
+    const searchLength = effectiveTolerance * 4;
+    const minimumGap = source.minGap(cutter, searchLength);
+    if (!intersectionValid) {
+      return {
+        ok: false,
+        reason: 'invalid-overlap-test',
+        sourceVolume,
+        cutterVolume,
+        overlapVolume,
+        minimumGap,
+        minimumUsefulVolume,
+      };
+    }
+    if (intersection.isEmpty() || overlapVolume <= Number.EPSILON *
+        Math.max(sourceVolume, cutterVolume, 1) * 128) {
+      return {
+        ok: false,
+        reason: minimumGap <= effectiveTolerance
+          ? 'tangent-contact'
+          : 'no-intersection',
+        sourceVolume,
+        cutterVolume,
+        overlapVolume,
+        minimumGap,
+        minimumUsefulVolume,
+      };
+    }
+    if (overlapVolume < minimumUsefulVolume) {
+      return {
+        ok: false,
+        reason: 'below-useful-tolerance',
+        sourceVolume,
+        cutterVolume,
+        overlapVolume,
+        minimumGap,
+        minimumUsefulVolume,
+      };
+    }
+    return {
+      ok: true,
+      reason: 'overlap-confirmed',
+      sourceVolume,
+      cutterVolume,
+      overlapVolume,
+      minimumGap,
+      minimumUsefulVolume,
+    };
+  }
+  finally {
+    intersection?.delete?.();
+  }
 }
 
 export function subtractionCutterDistance(sourceSolid, requestedDistance, origin, normal) {
@@ -162,6 +275,9 @@ function exactProfileEntries(metadata) {
   if (baseProfile) entries.push(baseProfile);
   (metadata?.profileFeatures ?? []).forEach((feature) => {
     if (feature?.exactProfile) entries.push(feature.exactProfile);
+    (feature?.analyticProfiles ?? []).forEach((entry) => {
+      if (entry?.profile) entries.push(entry.profile);
+    });
   });
   return entries;
 }
@@ -766,9 +882,26 @@ function sharedBoundaryCutterManifold(
 }
 
 export function subtractFacePushSolid3d(sourceSolid, face, requestedDistance, options = {}) {
-  if (!manifoldApi || !isValidSolid3d(sourceSolid)) return null;
+  const diagnosticOptions = {
+    ...options,
+    diagnosticTarget: options.diagnosticTarget ?? diagnosticSolid(sourceSolid),
+  };
+  if (!manifoldApi || !isValidSolid3d(sourceSolid)) {
+    emitSubtractionDiagnostic(diagnosticOptions, {
+      phase: 'input-validation',
+      reason: manifoldApi ? 'invalid-target-solid' : 'kernel-unavailable',
+    });
+    return null;
+  }
   const distance = Number(requestedDistance);
-  if (!Number.isFinite(distance) || distance >= 0) return null;
+  if (!Number.isFinite(distance) || distance >= 0) {
+    emitSubtractionDiagnostic(diagnosticOptions, {
+      phase: 'input-validation',
+      reason: 'invalid-subtraction-distance',
+      requestedDistance,
+    });
+    return null;
+  }
   const runtimeFace = faceWithSharedAnalyticBoundarySamples(
     sourceSolid,
     face,
@@ -776,7 +909,21 @@ export function subtractFacePushSolid3d(sourceSolid, face, requestedDistance, op
   );
   const kernelFace = runtimeFace.face;
   const frame = subtractionCutterFrame(kernelFace, distance);
-  if (!frame) return null;
+  if (!frame) {
+    emitSubtractionDiagnostic(diagnosticOptions, {
+      phase: 'input-validation',
+      reason: 'invalid-cutter-profile',
+      requestedDistance: distance,
+    });
+    return null;
+  }
+  diagnosticOptions.coordinateSystem = options.coordinateSystem ?? {
+    type: 'face-local-frame',
+    origin: { x: frame.origin.x, y: frame.origin.y, z: frame.origin.z },
+    xAxis: { x: frame.xAxis.x, y: frame.xAxis.y, z: frame.xAxis.z },
+    yAxis: { x: frame.yAxis.x, y: frame.yAxis.y, z: frame.yAxis.z },
+    normal: { x: frame.direction.x, y: frame.direction.y, z: frame.direction.z },
+  };
   const kernelDistance = Number.isFinite(Number(options.kernelDistance))
     ? Number(options.kernelDistance)
     : subtractionCutterDistance(sourceSolid, distance, frame.origin, frame.direction.clone().negate());
@@ -839,7 +986,14 @@ export function subtractFacePushSolid3d(sourceSolid, face, requestedDistance, op
         kernelDistance,
         margin,
       );
-      if (!cutter) return null;
+      if (!cutter) {
+        emitSubtractionDiagnostic(diagnosticOptions, {
+          phase: 'cutter-construction',
+          reason: 'invalid-cutter-geometry',
+          effectiveTolerance: margin,
+        });
+        return null;
+      }
     }
     else {
       section = new manifoldApi.CrossSection(frame.contours, 'EvenOdd');
@@ -858,6 +1012,31 @@ export function subtractFacePushSolid3d(sourceSolid, face, requestedDistance, op
           1,
         ]);
     }
+    const cutterMesh = cutter.getMesh();
+    diagnosticOptions.diagnosticCutter = {
+      vertexCount: cutterMesh.vertProperties.length / cutterMesh.numProp,
+      triangleCount: cutterMesh.triVerts.length / 3,
+      profileLoopCount: frame.contours.length,
+      requestedDistance: distance,
+      kernelDistance,
+    };
+    const overlap = manifoldSubtractionOverlap(
+      source,
+      cutter,
+      Math.max(booleanWeldTolerance(sourceSolid), margin),
+    );
+    emitSubtractionDiagnostic(diagnosticOptions, {
+      phase: 'overlap-test',
+      reason: overlap.reason,
+      precheck: overlap,
+      effectiveTolerance: Math.max(booleanWeldTolerance(sourceSolid), margin),
+      volumes: {
+        before: overlap.sourceVolume,
+        cutter: overlap.cutterVolume,
+        overlap: overlap.overlapVolume,
+      },
+    });
+    if (!overlap.ok) return null;
     if (typeof options.inspectKernelOperands === 'function') {
       options.inspectKernelOperands({
         source: sourceKernelMesh ?? source.getMesh(),
@@ -867,7 +1046,15 @@ export function subtractFacePushSolid3d(sourceSolid, face, requestedDistance, op
       });
     }
     localResult = source.subtract(cutter);
-    if (localResult.status() !== 'NoError' || localResult.isEmpty()) return null;
+    if (localResult.status() !== 'NoError' || localResult.isEmpty()) {
+      emitSubtractionDiagnostic(diagnosticOptions, {
+        phase: 'boolean-result',
+        reason: localResult.isEmpty() ? 'result-empty' : 'kernel-error',
+        kernelStatus: localResult.status(),
+        volumes: { before: overlap.sourceVolume, after: 0 },
+      });
+      return null;
+    }
     if (usesSharedFrame) {
       result = localResult.transform(frameToWorld);
     }
@@ -878,9 +1065,42 @@ export function subtractFacePushSolid3d(sourceSolid, face, requestedDistance, op
     if (typeof options.inspectKernelMesh === 'function') {
       options.inspectKernelMesh(result.getMesh());
     }
-    return manifoldToSolid(result, sourceSolid, { ...options, operationType: 'subtract' });
+    const resultVolume = Math.abs(result.volume());
+    const removedVolume = Math.max(0, overlap.sourceVolume - resultVolume);
+    if (removedVolume < overlap.minimumUsefulVolume) {
+      emitSubtractionDiagnostic(diagnosticOptions, {
+        phase: 'boolean-result',
+        reason: 'below-useful-tolerance',
+        effectiveTolerance: overlap.minimumUsefulVolume,
+        volumes: {
+          before: overlap.sourceVolume,
+          after: resultVolume,
+          removed: removedVolume,
+        },
+      });
+      return null;
+    }
+    const solid = manifoldToSolid(result, sourceSolid, {
+      ...options,
+      operationType: 'subtract',
+    });
+    emitSubtractionDiagnostic(diagnosticOptions, {
+      phase: solid ? 'completed' : 'post-validation',
+      reason: solid ? 'success' : 'invalid-result-topology',
+      volumes: {
+        before: overlap.sourceVolume,
+        after: resultVolume,
+        removed: removedVolume,
+      },
+    });
+    return solid;
   }
   catch (error) {
+    emitSubtractionDiagnostic(diagnosticOptions, {
+      phase: 'kernel-exception',
+      reason: 'kernel-error',
+      error: error?.message ?? String(error),
+    });
     console.warn('No se pudo resolver la sustraccion volumetrica de Push', error);
     return null;
   }
@@ -1710,14 +1930,27 @@ function exactExtrusionProfiles(metadata) {
   (metadata?.profileFeatures ?? []).forEach((feature) => {
     const profile = feature?.exactProfile;
     const distance = Number(feature?.distance);
-    if (!profile || !Number.isFinite(distance)) return;
-    entries.push({
-      profile,
-      offset: {
-        x: (Number(profile.plane?.normal?.x) || 0) * distance,
-        y: (Number(profile.plane?.normal?.y) || 0) * distance,
-        z: (Number(profile.plane?.normal?.z) || 0) * distance,
-      },
+    if (profile && Number.isFinite(distance)) {
+      entries.push({
+        profile,
+        offset: {
+          x: (Number(profile.plane?.normal?.x) || 0) * distance,
+          y: (Number(profile.plane?.normal?.y) || 0) * distance,
+          z: (Number(profile.plane?.normal?.z) || 0) * distance,
+        },
+      });
+    }
+    (feature?.analyticProfiles ?? []).forEach((entry) => {
+      const analyticDistance = Number(entry?.distance);
+      if (!entry?.profile?.plane || !Number.isFinite(analyticDistance)) return;
+      entries.push({
+        profile: entry.profile,
+        offset: {
+          x: (Number(entry.profile.plane.normal?.x) || 0) * analyticDistance,
+          y: (Number(entry.profile.plane.normal?.y) || 0) * analyticDistance,
+          z: (Number(entry.profile.plane.normal?.z) || 0) * analyticDistance,
+        },
+      });
     });
   });
   return entries;
@@ -2242,7 +2475,9 @@ function flattenPlanarFaceNormals(topology, planarGroups) {
 }
 
 function resultMetadata(sourceSolid, topology, options) {
-  const operation = options.operation ? JSON.parse(JSON.stringify(options.operation)) : null;
+  const operations = Array.isArray(options.operations)
+    ? JSON.parse(JSON.stringify(options.operations))
+    : options.operation ? [JSON.parse(JSON.stringify(options.operation))] : [];
   const previousExactGeometry = sourceSolid.metadata?.exactGeometry ?? null;
   const previousOperations = previousExactGeometry?.operations ?? [];
   const exactBase = previousExactGeometry?.base ??
@@ -2264,14 +2499,15 @@ function resultMetadata(sourceSolid, topology, options) {
     curvedSideFaceIndices: topology.curvedSideFaceIndices,
     tangentEdges: topology.tangentEdges,
     curvedFeatureGeneratrices: [],
-    profileFeatures: operation
-      ? [...(sourceSolid.metadata?.profileFeatures ?? []), operation]
-      : [...(sourceSolid.metadata?.profileFeatures ?? [])],
+    profileFeatures: [
+      ...(sourceSolid.metadata?.profileFeatures ?? []),
+      ...operations,
+    ],
     exactGeometry: {
       status: 'pending',
       reason: 'boolean-result-exact-brep-not-implemented',
       base: exactBase,
-      operations: operation ? [...previousOperations, operation] : [...previousOperations],
+      operations: [...previousOperations, ...operations],
     },
   };
 }
@@ -2286,7 +2522,9 @@ function manifoldToSolid(result, sourceSolid, options) {
     const simplifyTolerance =
       Number.isFinite(requestedSimplifyTolerance) && requestedSimplifyTolerance > 0
         ? requestedSimplifyTolerance
-        : options.operationType === 'subtract' || options.operationType === 'union'
+        : options.operationType === 'subtract' ||
+            options.operationType === 'union' ||
+            options.operationType === 'plane-cut'
           ? coplanarFaceTolerance(sourceSolid)
           : null;
     simplified = simplifyTolerance
@@ -2303,11 +2541,15 @@ function manifoldToSolid(result, sourceSolid, options) {
         coplanarFaceTolerance(rawTopology),
       ),
     );
+    const classificationOperations = Array.isArray(options.operations)
+      ? options.operations
+      : options.operation ? [options.operation] : [];
     const classificationMetadata = {
       ...(sourceSolid.metadata ?? {}),
-      profileFeatures: options.operation
-        ? [...(sourceSolid.metadata?.profileFeatures ?? []), options.operation]
-        : [...(sourceSolid.metadata?.profileFeatures ?? [])],
+      profileFeatures: [
+        ...(sourceSolid.metadata?.profileFeatures ?? []),
+        ...classificationOperations,
+      ],
     };
     const surface = derivedSurfaceTopology(topology, classificationMetadata);
     topology.curvedSideFaceIndices = [...surface.curvedFaces];
@@ -2840,25 +3082,498 @@ export function rebuildSolidCadTopology(solid, {
 }
 
 export function booleanSolid3d(sourceSolid, toolSolid, options = {}) {
-  if (!manifoldApi || !isValidSolid3d(sourceSolid) || !isValidSolid3d(toolSolid)) return null;
   const operationType = options.operationType === 'subtract' ? 'subtract' : 'union';
+  const diagnosticOptions = {
+    ...options,
+    diagnosticTarget: options.diagnosticTarget ?? diagnosticSolid(sourceSolid),
+    diagnosticCutter: options.diagnosticCutter ?? diagnosticSolid(toolSolid),
+  };
+  if (!manifoldApi || !isValidSolid3d(sourceSolid) || !isValidSolid3d(toolSolid)) {
+    if (operationType === 'subtract') {
+      emitSubtractionDiagnostic(diagnosticOptions, {
+        phase: 'input-validation',
+        reason: !manifoldApi
+          ? 'kernel-unavailable'
+          : !isValidSolid3d(sourceSolid)
+            ? 'invalid-target-solid'
+            : 'invalid-cutter-geometry',
+      });
+    }
+    return null;
+  }
   let source = null;
   let tool = null;
   let result = null;
   try {
     source = solidToManifold(sourceSolid, 0x10000000);
     tool = solidToManifold(toolSolid, 0x20000000);
+    const overlap = operationType === 'subtract'
+      ? manifoldSubtractionOverlap(
+        source,
+        tool,
+        booleanWeldTolerance(sourceSolid),
+      )
+      : null;
+    if (overlap) {
+      emitSubtractionDiagnostic(diagnosticOptions, {
+        phase: 'overlap-test',
+        reason: overlap.reason,
+        precheck: overlap,
+        effectiveTolerance: booleanWeldTolerance(sourceSolid),
+        volumes: {
+          before: overlap.sourceVolume,
+          cutter: overlap.cutterVolume,
+          overlap: overlap.overlapVolume,
+        },
+      });
+      if (!overlap.ok) return null;
+    }
     result = operationType === 'subtract' ? source.subtract(tool) : source.add(tool);
-    if (result.status() !== 'NoError' || result.isEmpty()) return null;
-    return manifoldToSolid(result, sourceSolid, { ...options, operationType });
+    if (result.status() !== 'NoError' || result.isEmpty()) {
+      if (operationType === 'subtract') {
+        emitSubtractionDiagnostic(diagnosticOptions, {
+          phase: 'boolean-result',
+          reason: result.isEmpty() ? 'result-empty' : 'kernel-error',
+          kernelStatus: result.status(),
+        });
+      }
+      return null;
+    }
+    const resultVolume = Math.abs(result.volume());
+    const removedVolume = overlap
+      ? Math.max(0, overlap.sourceVolume - resultVolume)
+      : null;
+    if (overlap && removedVolume < overlap.minimumUsefulVolume) {
+      emitSubtractionDiagnostic(diagnosticOptions, {
+        phase: 'boolean-result',
+        reason: 'below-useful-tolerance',
+        effectiveTolerance: overlap.minimumUsefulVolume,
+        volumes: {
+          before: overlap.sourceVolume,
+          after: resultVolume,
+          removed: removedVolume,
+        },
+      });
+      return null;
+    }
+    const solid = manifoldToSolid(result, sourceSolid, { ...options, operationType });
+    if (operationType === 'subtract') {
+      emitSubtractionDiagnostic(diagnosticOptions, {
+        phase: solid ? 'completed' : 'post-validation',
+        reason: solid ? 'success' : 'invalid-result-topology',
+        volumes: {
+          before: overlap.sourceVolume,
+          after: resultVolume,
+          removed: removedVolume,
+        },
+      });
+    }
+    return solid;
   }
   catch (error) {
+    if (operationType === 'subtract') {
+      emitSubtractionDiagnostic(diagnosticOptions, {
+        phase: 'kernel-exception',
+        reason: 'kernel-error',
+        error: error?.message ?? String(error),
+      });
+    }
     console.warn('No se pudo resolver la operacion volumetrica de Push', error);
     return null;
   }
   finally {
     result?.delete?.();
     tool?.delete?.();
+    source?.delete?.();
+  }
+}
+
+function minimumSolidAxisSpan(solid) {
+  const spans = ['x', 'y', 'z'].map((axis) => {
+    const values = solid.vertices.map((point) => Number(point?.[axis]) || 0);
+    return Math.max(...values) - Math.min(...values);
+  }).filter((span) => span > booleanWeldTolerance(solid));
+  return spans.length ? Math.min(...spans) : 0;
+}
+
+function booleanSolid3dComponents(sourceSolid, toolSolid, options = {}) {
+  const operationType = options.operationType === 'subtract' ? 'subtract' : 'union';
+  if (!manifoldApi || !isValidSolid3d(sourceSolid) || !isValidSolid3d(toolSolid)) {
+    return {
+      ok: false,
+      reason: !manifoldApi
+        ? 'kernel-unavailable'
+        : !isValidSolid3d(sourceSolid)
+          ? 'invalid-target-solid'
+          : 'invalid-cutter-geometry',
+      solids: [],
+    };
+  }
+  let source = null;
+  let toolLocal = null;
+  let tool = null;
+  let result = null;
+  const components = [];
+  try {
+    source = solidToManifold(sourceSolid, 0x10000000);
+    toolLocal = solidToManifold(toolSolid, 0x20000000);
+    const transform = Array.isArray(options.toolTransform) &&
+      options.toolTransform.length === 16
+      ? options.toolTransform
+      : null;
+    if (transform) {
+      tool = toolLocal.transform(transform);
+    }
+    else {
+      tool = toolLocal;
+      toolLocal = null;
+    }
+    const overlap = operationType === 'subtract'
+      ? manifoldSubtractionOverlap(
+        source,
+        tool,
+        booleanWeldTolerance(sourceSolid),
+      )
+      : null;
+    if (overlap && !overlap.ok) {
+      return { ok: false, reason: overlap.reason, overlap, solids: [] };
+    }
+    result = operationType === 'subtract' ? source.subtract(tool) : source.add(tool);
+    if (result.status() !== 'NoError') {
+      return { ok: false, reason: 'kernel-error', overlap, solids: [] };
+    }
+    if (result.isEmpty()) {
+      return { ok: false, reason: 'result-empty', overlap, solids: [] };
+    }
+    if (overlap) {
+      const removedVolume = Math.max(0, overlap.sourceVolume - Math.abs(result.volume()));
+      if (removedVolume < overlap.minimumUsefulVolume) {
+        return {
+          ok: false,
+          reason: 'below-useful-tolerance',
+          overlap,
+          removedVolume,
+          solids: [],
+        };
+      }
+    }
+    components.push(...result.decompose());
+    if (!components.length) {
+      return { ok: false, reason: 'invalid-result', overlap, solids: [] };
+    }
+    const solids = components.map((component, componentIndex) => {
+      const operation = operationType === 'subtract' && options.operation
+        ? { ...options.operation, component: componentIndex + 1 }
+        : options.operation;
+      return manifoldToSolid(component, sourceSolid, {
+        ...options,
+        operation,
+        operationType,
+      });
+    });
+    if (solids.some((solid) => !solid)) {
+      return { ok: false, reason: 'invalid-result', overlap, solids: [] };
+    }
+    if (operationType === 'subtract' && solids.some((solid) =>
+      !meetsMinimum3dThickness(minimumSolidAxisSpan(solid)))) {
+      return { ok: false, reason: 'minimum-thickness', overlap, solids: [] };
+    }
+    return { ok: true, overlap, solids };
+  }
+  catch (error) {
+    console.warn('No se pudo resolver la booleana entre sólidos', error);
+    return { ok: false, reason: 'kernel-error', solids: [] };
+  }
+  finally {
+    deleteManifolds(components);
+    result?.delete?.();
+    tool?.delete?.();
+    toolLocal?.delete?.();
+    source?.delete?.();
+  }
+}
+
+export function unionSolid3dComponents(sourceSolid, toolSolid, options = {}) {
+  const result = booleanSolid3dComponents(sourceSolid, toolSolid, {
+    ...options,
+    operationType: 'union',
+  });
+  return result.ok ? result.solids : null;
+}
+
+export function subtractSolid3dComponents(sourceSolid, toolSolid, options = {}) {
+  return booleanSolid3dComponents(sourceSolid, toolSolid, {
+    ...options,
+    operationType: 'subtract',
+  });
+}
+
+function planePoint(point) {
+  const clean = {
+    x: Number(point?.x),
+    y: Number(point?.y),
+    z: Number(point?.z),
+  };
+  return Object.values(clean).every(Number.isFinite) ? clean : null;
+}
+
+export function planeFromThreePoints(points, tolerance = CAD_3D_EPSILON) {
+  const [first, second, third] = (points ?? []).map(planePoint);
+  if (!first || !second || !third) return null;
+  const origin = new THREE.Vector3(first.x, first.y, first.z);
+  const firstDirection = new THREE.Vector3(
+    second.x - first.x,
+    second.y - first.y,
+    second.z - first.z,
+  );
+  const secondDirection = new THREE.Vector3(
+    third.x - first.x,
+    third.y - first.y,
+    third.z - first.z,
+  );
+  const normal = firstDirection.clone().cross(secondDirection);
+  const scale = Math.max(firstDirection.length(), secondDirection.length(), 1);
+  const collinearTolerance = Math.max(
+    Number(tolerance) || CAD_3D_EPSILON,
+    scale * 1e-9,
+  );
+  if (normal.length() <= collinearTolerance * scale) return null;
+  normal.normalize();
+  return {
+    origin: first,
+    normal: { x: normal.x, y: normal.y, z: normal.z },
+    originOffset: origin.dot(normal),
+  };
+}
+
+function solidCutScale(solid) {
+  const xs = solid.vertices.map((point) => Number(point.x));
+  const ys = solid.vertices.map((point) => Number(point.y));
+  const zs = solid.vertices.map((point) => Number(point.z));
+  return Math.max(
+    Math.max(...xs) - Math.min(...xs),
+    Math.max(...ys) - Math.min(...ys),
+    Math.max(...zs) - Math.min(...zs),
+    1,
+  );
+}
+
+function deleteManifolds(manifolds) {
+  [...new Set(manifolds.filter(Boolean))].forEach((manifold) => manifold.delete?.());
+}
+
+function principalEllipse(center, firstVector, secondVector, normal) {
+  const basisX = firstVector.clone();
+  if (basisX.lengthSq() <= 1e-18) return null;
+  basisX.normalize();
+  const basisY = normal.clone().cross(basisX).normalize();
+  if (basisY.lengthSq() <= 1e-18) return null;
+  const firstX = firstVector.dot(basisX);
+  const firstY = firstVector.dot(basisY);
+  const secondX = secondVector.dot(basisX);
+  const secondY = secondVector.dot(basisY);
+  const covarianceX = firstX ** 2 + secondX ** 2;
+  const covarianceY = firstY ** 2 + secondY ** 2;
+  const covarianceXY = firstX * firstY + secondX * secondY;
+  const trace = covarianceX + covarianceY;
+  const discriminant = Math.hypot(
+    covarianceX - covarianceY,
+    covarianceXY * 2,
+  );
+  const radiusX = Math.sqrt(Math.max(0, (trace + discriminant) * 0.5));
+  const radiusY = Math.sqrt(Math.max(0, (trace - discriminant) * 0.5));
+  if (!(radiusX > CAD_3D_EPSILON) || !(radiusY > CAD_3D_EPSILON)) return null;
+  const angle = Math.atan2(covarianceXY * 2, covarianceX - covarianceY) * 0.5;
+  const uAxis = basisX.clone().multiplyScalar(Math.cos(angle))
+    .addScaledVector(basisY, Math.sin(angle))
+    .normalize();
+  const vAxis = normal.clone().cross(uAxis).normalize();
+  return {
+    center: { x: center.x, y: center.y, z: center.z },
+    uAxis: { x: uAxis.x, y: uAxis.y, z: uAxis.z },
+    vAxis: { x: vAxis.x, y: vAxis.y, z: vAxis.z },
+    radiusX,
+    radiusY,
+  };
+}
+
+export function analyticCutCurvesForPlane(sourceSolid, plane) {
+  if (!isValidSolid3d(sourceSolid) || !plane?.normal) return [];
+  const normal = new THREE.Vector3(
+    Number(plane.normal.x),
+    Number(plane.normal.y),
+    Number(plane.normal.z),
+  );
+  if (normal.lengthSq() <= 1e-18) return [];
+  normal.normalize();
+  const originOffset = Number(plane.originOffset);
+  if (!Number.isFinite(originOffset)) return [];
+  return deriveSolidAnalyticSideSurfaces(sourceSolid).flatMap((surface, index) => {
+    const axis = new THREE.Vector3(
+      Number(surface.offset?.x),
+      Number(surface.offset?.y),
+      Number(surface.offset?.z),
+    );
+    const center = new THREE.Vector3(
+      Number(surface.center?.x),
+      Number(surface.center?.y),
+      Number(surface.center?.z),
+    );
+    const uAxis = new THREE.Vector3(
+      Number(surface.uAxis?.x),
+      Number(surface.uAxis?.y),
+      Number(surface.uAxis?.z),
+    );
+    const vAxis = new THREE.Vector3(
+      Number(surface.vAxis?.x),
+      Number(surface.vAxis?.y),
+      Number(surface.vAxis?.z),
+    );
+    const radiusX = Number(surface.radiusX);
+    const radiusY = Number(surface.radiusY);
+    if (![axis.x, axis.y, axis.z, center.x, center.y, center.z,
+      uAxis.x, uAxis.y, uAxis.z, vAxis.x, vAxis.y, vAxis.z,
+      radiusX, radiusY].every(Number.isFinite) ||
+      !(radiusX > 0) || !(radiusY > 0) || axis.lengthSq() <= 1e-18) {
+      return [];
+    }
+    axis.normalize();
+    uAxis.normalize();
+    vAxis.normalize();
+    const denominator = normal.dot(axis);
+    if (Math.abs(denominator) <= 1e-9) return [];
+    const axialCenter = (originOffset - normal.dot(center)) / denominator;
+    const firstAxial = -normal.dot(uAxis) * radiusX / denominator;
+    const secondAxial = -normal.dot(vAxis) * radiusY / denominator;
+    const ellipse = principalEllipse(
+      center.clone().addScaledVector(axis, axialCenter),
+      uAxis.clone().multiplyScalar(radiusX).addScaledVector(axis, firstAxial),
+      vAxis.clone().multiplyScalar(radiusY).addScaledVector(axis, secondAxial),
+      normal,
+    );
+    if (!ellipse) return [];
+    const circular = Math.abs(ellipse.radiusX - ellipse.radiusY) <=
+      Math.max(ellipse.radiusX, ellipse.radiusY) * 1e-8;
+    return [{
+      ...ellipse,
+      id: `plane-cut-analytic-${index}`,
+      type: circular ? 'arc-circle' : 'arc-ellipse',
+      startAngle: 0,
+      endAngle: 0,
+      clockwise: true,
+      closed: true,
+      sweep: TWO_PI,
+      ownerRegionId: surface.regionId ?? null,
+      sideSurfaceId: surface.id,
+      operationType: 'plane-cut',
+      analyticSource: {
+        role: 'plane-cut-boundary',
+        sideSurfaceId: surface.id,
+      },
+    }];
+  });
+}
+
+export function splitSolidByPlane3d(sourceSolid, points, options = {}) {
+  if (!manifoldApi) return { ok: false, reason: 'kernel-unavailable', parts: [] };
+  if (!isValidSolid3d(sourceSolid)) {
+    return { ok: false, reason: 'invalid-source-solid', parts: [] };
+  }
+  const plane = planeFromThreePoints(points, options.pointTolerance);
+  if (!plane) return { ok: false, reason: 'collinear-points', parts: [] };
+
+  let source = null;
+  const allocated = [];
+  try {
+    source = solidToManifold(sourceSolid, 0x10000000);
+    if (source.status() !== 'NoError' || source.isEmpty()) {
+      return { ok: false, reason: 'invalid-source-solid', parts: [] };
+    }
+    const sourceVolume = Math.abs(source.volume());
+    const scale = solidCutScale(sourceSolid);
+    const minimumVolume = Math.max(
+      sourceVolume * 1e-10,
+      manufacturingMeshTolerance(sourceSolid) ** 3 * 64,
+      scale ** 3 * 1e-15,
+    );
+    const halves = source.splitByPlane(
+      [plane.normal.x, plane.normal.y, plane.normal.z],
+      plane.originOffset,
+    );
+    allocated.push(...halves);
+    if (halves.length !== 2 || halves.some((half) =>
+      half.status() !== 'NoError' || half.isEmpty() ||
+      Math.abs(half.volume()) <= minimumVolume)) {
+      return { ok: false, reason: 'plane-does-not-cross-interior', parts: [] };
+    }
+
+    const operationBase = {
+      type: 'cutSolidByPlane',
+      ...(options.operation ?? {}),
+      points: points.map((point) => ({ ...point })),
+      plane,
+    };
+    const generatedAnalyticCurves = analyticCutCurvesForPlane(sourceSolid, plane);
+    const parts = [];
+    for (const [sideIndex, half] of halves.entries()) {
+      const components = half.decompose();
+      allocated.push(...components);
+      if (!components.length) {
+        return { ok: false, reason: 'invalid-result', parts: [] };
+      }
+      for (const [componentIndex, component] of components.entries()) {
+        const volume = Math.abs(component.volume());
+        if (component.status() !== 'NoError' || component.isEmpty() ||
+            component.numTri() < 4 || volume <= minimumVolume) {
+          return { ok: false, reason: 'degenerate-result', parts: [] };
+        }
+        const side = sideIndex === 0 ? 'A' : 'B';
+        const operation = {
+          ...operationBase,
+          side,
+          component: componentIndex + 1,
+        };
+        const solid = manifoldToSolid(component, sourceSolid, {
+          ...options,
+          operation,
+          operationType: 'plane-cut',
+          metadata: {
+            ...(options.metadata ?? {}),
+            planeCut: {
+              plane,
+              side,
+              component: componentIndex + 1,
+            },
+            generatedAnalyticCurves,
+          },
+        });
+        if (!solid) return { ok: false, reason: 'invalid-result', parts: [] };
+        parts.push({
+          componentIndex,
+          side,
+          solid,
+          volume,
+        });
+      }
+    }
+    const resultVolume = parts.reduce((sum, part) => sum + part.volume, 0);
+    const volumeTolerance = Math.max(sourceVolume * 2e-7, minimumVolume * parts.length);
+    if (parts.length < 2 || Math.abs(resultVolume - sourceVolume) > volumeTolerance) {
+      return { ok: false, reason: 'invalid-result', parts: [] };
+    }
+    return {
+      ok: true,
+      parts,
+      plane,
+      sourceVolume,
+    };
+  }
+  catch (error) {
+    console.warn('No se pudo cortar el sólido por el plano', error);
+    return { ok: false, reason: 'kernel-error', parts: [] };
+  }
+  finally {
+    deleteManifolds(allocated);
     source?.delete?.();
   }
 }

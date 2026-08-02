@@ -1,5 +1,28 @@
 # Historial de cambios
 
+## 0.9.0 - 2026-08-02
+
+### Modelado y operaciones 3D
+
+- Añadidas herramientas interactivas para unir sólidos, restar uno o varios cortadores y dividir un sólido mediante un plano definido por tres puntos.
+- Incorporada la consolidación automática de extrusiones aditivas conectadas para obtener componentes materiales coherentes y editables.
+- Renovado Push con arrastre y previsualización en tiempo real, entrada numérica junto al cursor, snaps 3D, diagnósticos de fallo y protección frente a espesores o contactos degenerados.
+- Reforzadas las booleanas Manifold, la reconstrucción de regiones analíticas, las secciones por plano y los snaps sobre sólidos resultantes.
+
+### Persistencia paramétrica
+
+- Introducido el modelo 3D compacto versión 2: guarda extrusiones exactas, operaciones ordenadas, colocaciones y procedencia estable, y reconstruye la geometría runtime al abrir.
+- Eliminada del archivo `.webcad` la persistencia de mallas, triángulos, aristas visuales e índices derivados para evitar degradación y referencias inestables.
+- Añadido replay determinista para Push, uniones, restas, cortes y transformaciones, incluido soporte para undo/redo y reapertura editable.
+- Los modelos 3D experimentales versión 1 que dependían de malla se rechazan de forma explícita y segura, sin sobrescribir el archivo original.
+
+### Interfaz y flujo de trabajo
+
+- Unificada la barra lateral y sus menús para mostrar las herramientas adecuadas en los modos 2D, 3D y edición de croquis, cancelando correctamente la interacción al cambiar de modo.
+- Añadidos estados activos accesibles para selección, herramientas 3D, proyección y aristas ocultas.
+- Incorporado pegado directo de imágenes PNG, JPEG y WebP desde el portapapeles, con normalización a PNG e historial documental.
+- Ampliadas las regresiones de persistencia compacta, replay, consolidación aditiva, corte por plano, unión, resta, Push e interfaz por modos.
+
 ## 0.8.0 - 2026-07-29
 
 ### Edición y reconstrucción 3D

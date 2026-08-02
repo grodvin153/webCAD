@@ -2,6 +2,10 @@
 
 import * as THREE from 'three';
 
+import {
+  hideCursorInput,
+  updateCursorInput,
+} from '../../input/cursor-input.js';
 import { formatNumber, parseScalarExpression } from '../../input/entry.js';
 import {
   normalizeSolidPlacement,
@@ -134,7 +138,9 @@ export function solidTransformDisplacementStatus(displacement) {
 export function createPoint3dInput({
   camera,
   canvas,
+  cursorInput = null,
   getSnap = () => null,
+  getUnitsLabel = () => 'mm',
   getWorkplane = () => ({ origin: { x: 0, y: 0, z: 0 }, normal: { x: 0, y: 0, z: 1 } }),
   onHelper = () => {},
   onPreview = () => {},
@@ -187,6 +193,23 @@ export function createPoint3dInput({
 
   function activeAnchor() {
     return stage === 'displacement' ? fromReference : request?.anchor;
+  }
+
+  function updateDynamicInput(point = null) {
+    const anchor = activeAnchor();
+    const liveDistance = anchor && point
+      ? vector3(point).distanceTo(vector3(anchor))
+      : null;
+    const value = input || (Number.isFinite(liveDistance)
+      ? formatNumber(liveDistance)
+      : '');
+    updateCursorInput(cursorInput, {
+      clientPoint: lastPointerEvent
+        ? { x: lastPointerEvent.clientX, y: lastPointerEvent.clientY }
+        : null,
+      text: value ? `${value} ${getUnitsLabel()}` : '',
+      visible: Boolean(request && anchor),
+    });
   }
 
   function constrainedPoint(anchor, axis = activeAxis()) {
@@ -296,7 +319,16 @@ export function createPoint3dInput({
       if (anchor && candidateDirection.lengthSq() > POINT_EPSILON) {
         distanceDirection = pointObject(candidateDirection.normalize());
       }
-      onPreview(candidate, {
+      const inputPoint = input
+        ? resolvePoint3dFromInput(input, {
+            anchor,
+            axis: activeAxis(),
+            direction: distanceDirection,
+          })
+        : null;
+      const previewPoint = inputPoint ?? candidate;
+      updateDynamicInput(previewPoint);
+      onPreview(previewPoint, {
         axis: mustConstrain ? axis : null,
         inferred: Boolean(axis && !axisLocked()),
         locked: axisLocked(),
@@ -305,6 +337,7 @@ export function createPoint3dInput({
         stage,
       });
     }
+    else updateDynamicInput();
     return candidate;
   }
 
@@ -334,6 +367,7 @@ export function createPoint3dInput({
     inferenceLock = null;
     fromReference = null;
     stage = 'point';
+    hideCursorInput(cursorInput);
     completed(result, { usedFrom });
     return true;
   }
@@ -362,6 +396,7 @@ export function createPoint3dInput({
     lastPointerEvent = null;
     distanceDirection = null;
     stage = 'point';
+    hideCursorInput(cursorInput);
     if (options.anchor) onHelper(options.anchor);
     status();
   }
@@ -385,7 +420,11 @@ export function createPoint3dInput({
     }
     if (key === 'backspace') {
       input = input.slice(0, -1);
-      status();
+      if (lastPointerEvent) update({ ...lastPointerEvent, shiftKey: shiftDown });
+      else {
+        status();
+        updateDynamicInput(candidate);
+      }
       return true;
     }
     if (!input && request.allowFrom && stage === 'point' && key === 'd') {
@@ -412,18 +451,11 @@ export function createPoint3dInput({
     }
     if (event.key.length === 1 && INPUT_CHARACTER.test(event.key)) {
       input += event.key;
-      const parsed = resolvePoint3dFromInput(input, {
-        anchor: activeAnchor(),
-        axis: activeAxis(),
-        direction: distanceDirection,
-      });
-      status();
-      if (parsed) onPreview(parsed, {
-        axis: activeAxis(),
-        inferred: Boolean(inferredAxis && !axisLocked()),
-        locked: axisLocked(),
-        stage,
-      });
+      if (lastPointerEvent) update({ ...lastPointerEvent, shiftKey: shiftDown });
+      else {
+        status();
+        updateDynamicInput();
+      }
       return true;
     }
     return false;
@@ -442,6 +474,7 @@ export function createPoint3dInput({
       lastPointerEvent = null;
       distanceDirection = null;
       stage = 'point';
+      hideCursorInput(cursorInput);
     },
     confirm,
     hasInput: () => Boolean(input),
@@ -462,7 +495,9 @@ export function createPoint3dInput({
 export function createSolidTransformCommands({
   camera,
   canvas,
+  cursorInput = null,
   doc,
+  getUnitsLabel = () => 'mm',
   getSelectedSolidIds = () => [],
   getSolidIdAtPointer = () => null,
   getSolidObjects = () => [],
@@ -870,6 +905,7 @@ export function createSolidTransformCommands({
   const picker = createPoint3dInput({
     camera,
     canvas,
+    cursorInput,
     getSnap: (event, context) => getSnap(event, {
       ...context,
       mode,
@@ -877,6 +913,7 @@ export function createSolidTransformCommands({
       solidIds: [...solidIds],
     }),
     getWorkplane,
+    getUnitsLabel,
     onHelper: setHelper,
     onPreview(point, context) {
       onSnap(context.snap ?? null);

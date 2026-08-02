@@ -250,6 +250,7 @@ function worldCandidate(candidate, object) {
 export function solidObjectSnapCandidates(solidObjects, {
   excludeDocumentSolidIds = [],
   includeWorldOrigin = true,
+  visibleOnly = false,
 } = {}) {
   const candidates = includeWorldOrigin
     ? [{
@@ -263,8 +264,10 @@ export function solidObjectSnapCandidates(solidObjects, {
   const seenSolids = new Set();
   const excludedIds = new Set(excludeDocumentSolidIds);
   (solidObjects || []).forEach((group) => {
+    if (visibleOnly && group?.visible === false) return;
     if (excludedIds.has(group?.userData?.documentSolidId)) return;
     group?.traverse?.((object) => {
+      if (visibleOnly && object?.visible === false) return;
       if (excludedIds.has(object?.userData?.documentSolidId)) return;
       const solid = object?.userData?.analyticSolid ?? object?.userData?.solid;
       if (!solid || seenSolids.has(solid)) return;
@@ -274,6 +277,119 @@ export function solidObjectSnapCandidates(solidObjects, {
     });
   });
   return candidates;
+}
+
+function visibleSolidMeshes(solidObjects) {
+  const result = [];
+  (solidObjects || []).forEach((group) => {
+    if (group?.visible === false) return;
+    group?.traverse?.((object) => {
+      if (object?.isMesh && object.visible !== false &&
+          object.userData?.type === 'webcad-push-solid') {
+        object.updateWorldMatrix?.(true, false);
+        result.push(object);
+      }
+    });
+  });
+  return result;
+}
+
+function screenCandidate(candidate, camera, rect) {
+  const point = new THREE.Vector3(
+    candidate.point.x,
+    candidate.point.y,
+    candidate.point.z,
+  );
+  const projected = point.clone().project(camera);
+  if (projected.z < -1 || projected.z > 1) return null;
+  return {
+    candidate,
+    cameraDistance: camera.position.distanceTo(point),
+    point,
+    x: (projected.x + 1) * rect.width * 0.5,
+    y: (1 - projected.y) * rect.height * 0.5,
+  };
+}
+
+function bucketKey(x, y, size) {
+  return `${Math.floor(x / size)}:${Math.floor(y / size)}`;
+}
+
+export function createSolidObjectSnapQuery({
+  camera,
+  canvas,
+  solidObjects,
+  maxDistancePixels = 14,
+  acceptCandidate = null,
+  excludeDocumentSolidIds = [],
+  extraCandidates = [],
+  includeHidden = false,
+  visibleOnly = false,
+} = {}) {
+  if (!camera || !canvas) return null;
+  const rect = canvas.getBoundingClientRect();
+  const bucketSize = Math.max(1, Number(maxDistancePixels) || 14);
+  const occluders = includeHidden ? [] : visibleSolidMeshes(solidObjects);
+  const visibilityRaycaster = occluders.length ? new THREE.Raycaster() : null;
+  const candidates = [
+    ...solidObjectSnapCandidates(solidObjects, {
+      excludeDocumentSolidIds,
+      visibleOnly,
+    }),
+    ...(Array.isArray(extraCandidates) ? extraCandidates : []),
+  ]
+    .filter((candidate) => !acceptCandidate || acceptCandidate(candidate))
+    .map((candidate) => screenCandidate(candidate, camera, rect))
+    .filter(Boolean);
+  const buckets = new Map();
+  candidates.forEach((candidate) => {
+    const key = bucketKey(candidate.x, candidate.y, bucketSize);
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key).push(candidate);
+  });
+  let lastCandidateChecks = 0;
+
+  return {
+    candidateCount: candidates.length,
+    occluderCount: occluders.length,
+    getLastCandidateChecks: () => lastCandidateChecks,
+    nearest(event) {
+      if (!event) return null;
+      const currentRect = canvas.getBoundingClientRect();
+      const pointerX = event.clientX - currentRect.left;
+      const pointerY = event.clientY - currentRect.top;
+      const bucketX = Math.floor(pointerX / bucketSize);
+      const bucketY = Math.floor(pointerY / bucketSize);
+      const nearby = [];
+      for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
+        for (let offsetY = -1; offsetY <= 1; offsetY += 1) {
+          nearby.push(...(buckets.get(`${bucketX + offsetX}:${bucketY + offsetY}`) ?? []));
+        }
+      }
+      lastCandidateChecks = nearby.length;
+      let nearest = null;
+      nearby.forEach((entry) => {
+        const distance = Math.hypot(pointerX - entry.x, pointerY - entry.y);
+        if (distance > maxDistancePixels) return;
+        if (!entry.candidate.alwaysVisible && visibilityRaycaster && !pointVisibleAtCamera(
+          visibilityRaycaster,
+          occluders,
+          camera,
+          entry.point,
+        )) return;
+        const sameScreenPoint = nearest &&
+          Math.abs(distance - nearest.distancePixels) <= 0.25;
+        if ((nearest && distance > nearest.distancePixels + 0.25) ||
+            (sameScreenPoint && entry.cameraDistance >= nearest.cameraDistance)) return;
+        nearest = {
+          ...entry.candidate,
+          distancePixels: distance,
+          cameraDistance: entry.cameraDistance,
+        };
+      });
+      return nearest;
+    },
+  };
 }
 
 export function nearestSolidObjectSnap({
@@ -310,7 +426,8 @@ export function nearestSolidObjectSnap({
     ...(Array.isArray(extraCandidates) ? extraCandidates : []),
   ].forEach((candidate) => {
     if (acceptCandidate && !acceptCandidate(candidate)) return;
-    const projected = new THREE.Vector3(candidate.point.x, candidate.point.y, candidate.point.z).project(camera);
+    const projected = new THREE.Vector3(candidate.point.x, candidate.point.y, candidate.point.z)
+      .project(camera);
     if (projected.z < -1 || projected.z > 1) return;
     const x = rect.left + (projected.x + 1) * width * 0.5;
     const y = rect.top + (1 - projected.y) * height * 0.5;

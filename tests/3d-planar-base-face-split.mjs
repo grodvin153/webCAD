@@ -23,6 +23,7 @@ import {
 } from '../source/3d/sketch-reference.js';
 import { visibleEntitiesForThreeView } from '../source/3d/three/entity-visibility.js';
 import { profileFeaturePushSolid } from '../source/3d/three/profile-feature.js';
+import { hydrateCompactModel3d } from '../source/3d/three/model3d-replay.js';
 import {
   createPushSolidMeshFromSolid,
   movedSolidFacePush,
@@ -290,9 +291,9 @@ for (const [sideIndex, dividedFace] of dividedFaces.entries()) {
   addModel3dSolid(roundTripModel, subsequent, {
     id: `planar-base-side-${sideIndex}`,
   });
-  const reopened = parseSerializedModel3d(JSON.parse(JSON.stringify(
+  const reopened = hydrateCompactModel3d(parseSerializedModel3d(JSON.parse(JSON.stringify(
     serializeModel3d(roundTripModel),
-  )));
+  ))));
   const reopenedSolid = reopened.solids[0].solid;
   assert.equal(isValidSolid3d(reopenedSolid), true);
   assertClosedManifold(reopenedSolid);
